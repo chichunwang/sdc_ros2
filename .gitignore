@@ -10,7 +10,7 @@ __pycache__/
 
 # VS Code
 .vscode/
-.code-workspace
+*.code-workspace
 
 # OS files
 .DS_Store
