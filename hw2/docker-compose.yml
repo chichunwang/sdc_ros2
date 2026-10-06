@@ -26,7 +26,7 @@ services:
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       # >>> CHANGE THIS <<<  left side = where the dataset lives on YOUR computer
-      - ${HOME}/sdc_data:/ros_ws/data
+      - ./data:/ros_ws/data
       # Your code, so edits on the host show up in the container immediately.
       - ./workspace:/ros_ws/workspace
 
