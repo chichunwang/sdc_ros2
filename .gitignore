@@ -20,3 +20,10 @@ Thumbs.db
 *.tmp
 *.swp
 *~
+
+# Dataset / ROS bag
+data/
+*.db3
+*.mcap
+*.bag
+*.sqlite3

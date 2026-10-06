@@ -1,0 +1,42 @@
+services:
+  ros2_dev:
+    build: .
+    image: sdc_hw2_ros2
+    container_name: ros2_container
+    stdin_open: true
+    tty: true
+
+    # ROS 2 discovery is far less painful on the host network stack, and
+    # ipc:host lets the default DDS use shared memory for large point clouds.
+    network_mode: host
+    ipc: host
+    pid: host
+
+    # Point clouds are big; the default 64 MB /dev/shm is not enough.
+    shm_size: "2gb"
+
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - ROS_LOCALHOST_ONLY=1
+      # Change this if two people share one machine.
+      - ROS_DOMAIN_ID=0
+
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # >>> CHANGE THIS <<<  left side = where the dataset lives on YOUR computer
+      - ${HOME}/sdc_data:/ros_ws/data
+      # Your code, so edits on the host show up in the container immediately.
+      - ./workspace:/ros_ws/workspace
+
+    # rviz2 runs fine WITHOUT a GPU: Mesa falls back to software rendering
+    # (llvmpipe) and still holds the 30 Hz frame cap on this dataset.
+    # Uncomment below only if you have an NVIDIA GPU *and* nvidia-container-toolkit.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
