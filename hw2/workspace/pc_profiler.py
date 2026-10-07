@@ -42,9 +42,9 @@ class PointCloudProfiler(Node):
             return
 
         # 從 PointCloud2 取出 x, y, z
-        points = point_cloud2.read_points_numpy(
+        points = point_cloud2.read_points(
             msg,
-            field_names=['x', 'y', 'z'],
+            field_names=('x', 'y', 'z'),
             skip_nans=True
         )
 
@@ -72,9 +72,9 @@ class PointCloudProfiler(Node):
             return
 
         # XYZ 各欄
-        x = points[:, 0]
-        y = points[:, 1]
-        z = points[:, 2]
+        x = points['x']
+        y = points['y']
+        z = points['z']
 
         print(f'X range: [{np.min(x):.3f}, {np.max(x):.3f}] m')
         print(f'Y range: [{np.min(y):.3f}, {np.max(y):.3f}] m')
