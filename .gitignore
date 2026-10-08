@@ -20,6 +20,7 @@ Thumbs.db
 *.tmp
 *.swp
 *~
+tmp/
 
 # Dataset / ROS bag
 data/
