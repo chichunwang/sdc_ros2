@@ -4,6 +4,7 @@ install/
 log/
 
 # Python
+.venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -21,6 +22,7 @@ Thumbs.db
 *.swp
 *~
 tmp/
+.codex/
 
 # Dataset / ROS bag
 data/
