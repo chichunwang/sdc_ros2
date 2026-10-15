@@ -17,3 +17,7 @@ docker exec -it "docker name" bash
 ```bash
 exit
 ```
+關機
+```bash
+sudo shutdown -h now
+```
