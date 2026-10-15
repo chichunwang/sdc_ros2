@@ -23,6 +23,7 @@ Thumbs.db
 *~
 tmp/
 .codex/
+localreference/
 
 # Dataset / ROS bag
 data/
