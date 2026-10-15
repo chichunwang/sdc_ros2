@@ -1,3 +1,66 @@
+你可以在 **Ubuntu 主機的專案根目錄啟動 Codex CLI**，再讓它透過 Docker 執行 ROS 建置與測試。
+
+1. **先同步剛才更新的文件。**
+
+   上一輪修改在 Windows，尚未提交 Git。請透過 Git 或直接複製，把 `AGENTS.md`、`midterm01/` 的更新文件與官方 PDF 同步到 Ubuntu；資料保留在 Ubuntu 原位。
+
+2. **在 Ubuntu 終端機啟動：**
+
+   ```bash
+   cd ~/sdc_ros2
+   codex
+   ```
+
+   第一次啟動依畫面登入。Codex 會在啟動時載入專案的 `AGENTS.md`。[官方啟動說明](https://learn.chatgpt.com/docs/codex/cli)、[AGENTS.md 說明](https://learn.chatgpt.com/docs/agent-configuration/agents-md)。
+
+3. **進入 Codex 後，直接貼上這段交接提示：**
+
+   ```text
+   請接手這個 Midterm01 定位專案，使用繁體中文。
+
+   先遵守根目錄 AGENTS.md，閱讀：
+   - midterm01/README.md
+   - midterm01/docs/README.md
+   - midterm01/docs/KAGGLE_DATASET_SPEC.md
+   - midterm01/data/README.md
+   - midterm01/docs/ 裡的官方比賽 PDF
+
+   資料已建立在 ~/sdc_ros2/midterm01/data，
+   包含 Track1、Track2，以及兩組 MapAnything 點雲。
+
+   本次請依序完成：
+   1. 檢查 Git 狀態、既有環境與資料完整性，保存檢查報告。
+   2. 核對 PLY 時間、初始矩陣、尺度、座標與官方 frame 對應。
+   3. 建置 Midterm01 Docker 與 ROS package。
+   4. 處理阻礙首跑的依賴、唯讀地圖快取與 GUI 問題。
+   5. 使用現有前相機 NDT，先完成單幀，再完成 50 幀測試。
+   6. 保存命令、參數、輸出與耗時，更新文件中的實際進度。
+
+   保留既有修改、原始資料與舊結果。
+   Docker 管理在 Ubuntu 主機執行，ROS 與 colcon 在容器內執行。
+   請直接執行與驗證，遇到需要我提供資訊或操作的阻塞時再說明。
+   ```
+
+使用過程中常用這幾個指令：
+
+| 在 Codex 裡輸入 | 用途 |
+|---|---|
+| `/status` | 查看目前設定 |
+| `/permissions` | 查看或調整操作權限 |
+| `/diff` | 查看修改 |
+| `/quit` | 離開 |
+
+以上是 [官方 CLI 指令](https://learn.chatgpt.com/docs/developer-commands?surface=cli)。
+
+下次回到 **Ubuntu 終端機**，可接續最近一次對話：
+
+```bash
+cd ~/sdc_ros2
+codex resume --last
+```
+
+這會接續該目錄最近的 CLI 對話。[官方接續說明](https://learn.chatgpt.com/docs/developer-commands?surface=cli#codex-resume)
+---
 # 從桌面版轉到 Codex CLI
 
 繁體中文使用指南｜Windows / PowerShell 優先｜核對日期：2026-10-13
