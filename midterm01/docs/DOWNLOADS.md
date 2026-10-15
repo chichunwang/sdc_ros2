@@ -1,79 +1,54 @@
-# 需要自己下載的資料與程式
+# 官方資源與查漏補缺
 
-2026-10-15 更新：老師的 Localization 程式包已下載並完整放入 `workspace/src/localization/`，12 個來源檔案已比對一致。下方清單是所需資源總表，不表示每個項目都尚未取得；模板的 Python 依賴、地圖快取寫入與 GUI 配置仍需於 Ubuntu 接入時處理。
+更新：2026-10-16。**模板與 Ubuntu 資料已建立，先檢查既有內容，不重新下載整包。** 使用者確認資料位於 `~/sdc_ros2/midterm01/data`；實際資料樹與檢查方式見 [data/README](../data/README.md)，建置與首跑見 [專案 README](../README.md)。
 
-要直接把資料下載到 Ubuntu，依照 [Ubuntu 下載操作步驟](UBUNTU_DATA_DOWNLOAD.md) 使用 Kaggle CLI。可以透過目前的 SSH 終端機，也可以直接在 Ubuntu 操作。已確認 ACCESS_TOKEN 認證與 Track01 單檔下載成功；整包下載目前 404，可使用 `scripts/download_kaggle.py` 先預覽再逐檔下載 Track。工具依地圖與初始姿態檔辨識資料根目錄，處理 `Track1/Track1/` 等包裝層，保留內部目錄並排除獨立的 `3cameras_ply/`。
+## 已取得與待核對
 
-目前另已回報 Track01 網頁 ZIP 下載顯示找不到頁面，Track02 網頁下載正常；若不使用自訂工具，先處理 Track02，Track01 整包狀態需由助教／Kaggle 確認。單檔測試與預覽成功不表示 Track01 全部資料已下載完成。
+| 項目 | 目前狀態 |
+| --- | --- |
+| 官方題目 | 位於本目錄 [PDF](<SDC 2026 Midterm01 Competition -  Localization.pdf>)，不再使用 localreference 舊路徑 |
+| Localization package | 已在 `workspace/src/localization/`，含基礎 NDT 與 `processing_codes/txt_to_idx_x_y_yaw.py` |
+| Track1、Track2 | Ubuntu 截圖各有 map、init_guess、raw_ply、影像、bag 及 metadata；數量／內容待執行檢查 |
+| MapAnything 點雲 | Ubuntu 有兩組 `kaggle_track0N/TrackN_Mapanything_ply/{ply,index.csv,report.json}` |
+| 校正資料 camera_info | 截圖未顯示，先搜尋現有資料與下載包，不直接判定缺少 |
+| 官方 sample submission | 截圖未顯示，先搜尋；不可用 MapAnything index.csv 替代 |
 
-先用你的 Kaggle 帳號加入兩場競賽並接受規則。官方加入邀請在題目 PDF 第 16 頁。以下連結與資料內容取自該 PDF 第 8–12 頁；Kaggle 實際檔案、登入權限及規格以下載頁為準。
+官方欄位順序為 `idx,x,y,yaw`，兩條資料列數為 3011／3299，均不含表頭；使用者提供的原文與 topics 見 [Kaggle 規格](KAGGLE_DATASET_SPEC.md)。完整 ID、座標與 yaw 單位仍需核對正式範例／公告。
 
-## 第一版必須取得
+## 官方來源索引
 
-| 項目 | 下載來源 | 你要做的事 | 遠端 Ubuntu 建議位置 |
-| --- | --- | --- | --- |
-| 老師的 Localization 程式模板 | [Google Drive：Localization](https://drive.google.com/file/d/1dAnE_-QwlmxVQIdNu13cNBjqEZSL6vCp/view?usp=sharing) | 下載、解壓，找出完整 `localization/` ROS package | `~/sdc_ros2/midterm01/workspace/src/localization/` |
-| Track01 官方資料 | [Kaggle：Track01 data](https://www.kaggle.com/competitions/sdc-2026-midterm-01-track-01/data?select=Track1) | 下載並解壓 Track1，保留官方檔案結構 | `~/sdc_ros2/midterm01/data/Track1/` |
-| Track02 官方資料 | [Kaggle：Track02 data](https://www.kaggle.com/competitions/sdc-2026-localization-track-02/data?select=Track2) | 下載並解壓 Track2，保留官方檔案結構 | `~/sdc_ros2/midterm01/data/Track2/` |
-| Track01 sample submission | 同上 Track01 的 Kaggle Data 頁 | 取得官方提交範例，確認 ID、欄位與順序 | 建議放在 `data/Track1/sample_submission.csv` |
-| Track02 sample submission | 同上 Track02 的 Kaggle Data 頁 | 取得該 Track 的提交範例，分開保存 | 建議放在 `data/Track2/sample_submission.csv` |
+連結取自 PDF p.9、11；本次未重新登入 Kaggle／Drive 查驗網站最新內容或重新下載。
 
-若完整資料包已包含 sample submission，不需要再下載一份。上表的 CSV 名稱是建議的本地儲存名稱，不是對官方下載檔名的宣稱。
+| 資源 | 官方來源 | 用途 |
+| --- | --- | --- |
+| Localization | [Google Drive](https://drive.google.com/file/d/1dAnE_-QwlmxVQIdNu13cNBjqEZSL6vCp/view?usp=sharing) | 缺少原始模板時查對，不覆寫目前 package |
+| Track01 | [Kaggle Data](https://www.kaggle.com/competitions/sdc-2026-midterm-01-track-01/data?select=Track1) | 核對缺檔、取得該 Track sample |
+| Track02 | [Kaggle Data](https://www.kaggle.com/competitions/sdc-2026-localization-track-02/data?select=Track2) | 同上，使用對應地圖／sample |
+| Track01 三相機 | [Kaggle 3cameras_ply](https://www.kaggle.com/competitions/sdc-2026-midterm-01-track-01/data?select=3cameras_ply) | 核對已取得的 MapAnything 來源與結構 |
+| Track02 三相機 | [Kaggle 3cameras_ply](https://www.kaggle.com/competitions/sdc-2026-localization-track-02/data?select=3cameras_ply) | 同上 |
+| LoGeR 原始碼（選用） | [Google Drive](https://drive.google.com/file/d/1ZHeWxVrf86GDtHtFY7JyXY7w1vge3Fsa/view?usp=sharing) | 需要修改影像重建流程時再研究 |
 
-每條 Track 第一版會用到 `map.pcd`、`init_guess.txt` 與 `raw_ply/`。校正資料 `camera_info/` 也應一併保留，用於確認尺度與座標。官方完整包如包含影像、bag 及 `metadata.yaml`，請保留原始結構；開始配準時可先直接使用已重建的 `raw_ply/`。
+加入邀請在 PDF p.16，隊名要求見 p.18。保留原始下載內容及來源紀錄；sample 的實際檔名不預設為 `sample_submission.csv`。官方 PDF 對後處理目錄有 process／processing_codes 的差異，本 package 實際使用 `processing_codes/`。
 
-### 模板怎麼放？
+## 使用既有資料
 
-找到老師壓縮檔裡這一層：
-
-```text
-localization/
-├── package.xml
-├── CMakeLists.txt
-├── include/
-├── src/
-├── launch/
-└── 其他原有內容（含後處理工具）
-```
-
-將整個 package 放到 `workspace/src/localization/`。保留其中的標頭檔、launch、RViz、設定與後處理腳本；範本工作區的 `build/`、`install/`、`log/` 留待自己的環境重新產生。模板附帶的 Docker 設定先保留在解壓來源，取得後再比較依賴；本架構的容器設定位於 `midterm01/`。
-
-官方轉換腳本 `txt_to_idx_x_y_yaw.py` 應隨 Localization 模板取得。PDF 的目錄文字與截圖有 `process`／`processing_codes` 差異，下載後搜尋實際檔案，不需要另外找不明來源的同名程式。
-
-### 資料已在 Ubuntu 其他位置時
-
-可以直接使用現有資料。例如實際資料根目錄包含 `Track1/`、`Track2/`，在 `.env` 填入該根目錄的絕對 Linux 路徑：
+Ubuntu 專案 `midterm01/.env` 可沿用：
 
 ```dotenv
-MIDTERM_DATA_DIR=/你的實際資料根目錄
+MIDTERM_DATA_DIR=./data
 ```
 
-此行是格式示例，請換成真實路徑。Docker 會把它掛至 `/root/data/`。兩條 Track 的資料夾名稱若不同，調整 `config/tracks.json`；老師模板內的資料路徑也要在接入時同步核對。
+若改用其他資料位置，填同時含 `Track1/` 與 `Track2/` 的真實 Ubuntu 根目錄。它會唯讀掛載到容器 `/root/data`。`config/tracks.json` 只影響資料檢查工具；執行定位另核對 `map_path`／`data_path`、`ply_path`、`init_guess_file`。保留 HW2 的資料與工作區。
 
-## 後續改善才需要
+舊的 `UBUNTU_DATA_DOWNLOAD.md` 與 `scripts/download_kaggle.py` 已移除。歷史上 Kaggle CLI 2.2.4 的 ACCESS_TOKEN／單檔與清單成功，Track01 整包與網頁 ZIP 曾 404；這不再是當前「尚無資料」的證據，也不構成重設 token 或重下載的理由。若實際缺檔，依現在可用的 Kaggle 網頁／CLI 補取；不強制使用自訂腳本。
 
-| 項目 | 下載來源 | 何時需要 |
-| --- | --- | --- |
-| Track01 三相機點雲 | [Track01 3cameras_ply](https://www.kaggle.com/competitions/sdc-2026-midterm-01-track-01/data?select=3cameras_ply) | 前相機流程完成後，比較多視角點雲 |
-| Track02 三相機點雲 | [Track02 3cameras_ply](https://www.kaggle.com/competitions/sdc-2026-localization-track-02/data?select=3cameras_ply) | 同上，使用該 Track 的對應點雲 |
-| LoGeR 程式 | [Google Drive：LoGeR，選用](https://drive.google.com/file/d/1ZHeWxVrf86GDtHtFY7JyXY7w1vge3Fsa/view?usp=sharing) | 要自行修改影像重建流程時再下載 |
+## 接手檢查
 
-第一版已直接使用官方重建點雲，因此暫時不需要自己下載或訓練 LoGeR／MapAnything 模型。IMU、GNSS 與原始影像優先使用官方 Track 包內的資料；只有在決定研究這些改善時才解析。
+- [x] 模板與官方 PDF 在目前 Windows checkout 可直接讀取。
+- [x] 使用者確認 Ubuntu 的 Track1／Track2 與兩組 MapAnything 已建立。
+- [ ] Ubuntu `check_data.py --strict-count` 通過並保存 JSON。
+- [ ] 可解析 PLY 時間數量與唯一性、MapAnything index／report 完成核對。
+- [ ] 找到校正資料與兩條 official sample，確認完整 ID、座標與單位。
+- [ ] `.env`、實際容器掛載與程式輸入路徑一致。
 
-## 已有環境與本架構提供的內容
-
-- HW2 的 Ubuntu 資料已存在，但它是 `guanfu_road_clipped_ros2`，不能代替本次兩條 Track。
-- ROS 2 Humble 基底沿用專案 `hw2/` 的 Docker 配置；Midterm01 Dockerfile 會透過 apt 安裝 PCL 等編譯依賴，無須手動下載 PCL 原始碼。
-- 本架構已提供掛載、建置入口、資料結構檢查與實驗／報告目錄，並已有老師的完整 package 與基礎 NDT；接入差異與遠端建置尚待處理。
-- 在 Windows 下載後，仍需將大檔放到遠端 Ubuntu 的實際資料目錄。被 Git 忽略的資料不會隨一般程式同步傳過去。
-- 本次沒有代你下載資料、加入競賽、連線遠端 Ubuntu 或提交任何結果。
-
-## 下載完成檢查清單
-
-- [ ] 兩場 Kaggle 都已加入，能讀取各自 Data 頁。
-- [x] `workspace/src/localization/package.xml` 與 `CMakeLists.txt` 已放妥，並保留完整 package 內容。
-- [ ] 兩條 Track 各有自己的 `map.pcd`、`init_guess.txt`、`raw_ply/` 與校正資料。
-- [ ] 兩條 Track 的官方 sample submission 已分別保存。
-- [ ] `.env` 指向遠端 Ubuntu 上正確的 Midterm01 資料根目錄。
-- [ ] `bash scripts/dev.sh check-data --strict-count` 通過；此工具只驗證檔案結構與數量，座標及 CSV 內容另行核對。
-
+被 Git 忽略的大型資料不會同步到 Windows 或其他 checkout；新 PDF 與文件若尚未追蹤，也需明確納入程式／文件的交接。

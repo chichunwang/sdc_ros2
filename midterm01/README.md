@@ -1,129 +1,216 @@
 # Midterm01：影像點雲與 LiDAR 地圖定位
 
-單人完成。目標是將兩條 Track 的影像重建點雲配準到各自 LiDAR 地圖，估計每幀車輛 pose，產生可提交的 Kaggle CSV。
+單人完成兩條 Track：把影像重建的 3D 點雲對齊各自的 LiDAR 地圖，估計每幀車輛 pose，提交 Kaggle，並交付程式、報告與簡報。
 
-目前已建立環境與工作目錄，完整 `localization` 模板也已放入 `workspace/src/localization/`，其中包含基礎 NDT。已核對下載包，接入前需處理 Python 依賴、地圖快取寫入與 GUI 配置。Ubuntu 已成功預覽 Track01 清單，選取資料約 9.95 GiB，尚待下載與遠端建置；下載項目見 [資料與程式清單](docs/DOWNLOADS.md)。
+## 交接狀態（2026-10-16）
 
-## 架構
+**下一位執行者為 Ubuntu 裡的 Codex。模板與資料已建立，請從現有資料檢查與 NDT 參考版開始。**
+
+| 項目 | 目前狀態與證據 |
+| --- | --- |
+| 官方題目 | [比賽 PDF](<docs/SDC 2026 Midterm01 Competition -  Localization.pdf>)，本次讀取全部 24 頁，另核對 p.19–22 的公式與交付圖像 |
+| ROS package | `workspace/src/localization/` 已有 12 個程式／設定檔；包含基礎 NDT、地圖處理與 CSV 轉換 |
+| Ubuntu 資料 | 使用者確認位於 `~/sdc_ros2/midterm01/data`，截圖有兩條 Track 與兩組 MapAnything 點雲 |
+| 資料完整性 | 尚未由本次工具在 Ubuntu 檢查檔案數量、非空、timestamp、幾何或 sample submission |
+| 執行環境 | 有獨立 Docker 與建置腳本；既有 Ubuntu／ROS 環境由使用者確認，本次未連線查驗或建置 |
+| 定位與評分 | 尚無本次可核對的實跑紀錄、兩條 Track 分數或已超過 baseline 的證據 |
+
+本次可直接讀寫的是 Windows checkout；其中 `data/Track1`、`data/Track2` 為空，不能據此判定 Ubuntu 缺少資料。先保留 Ubuntu 已建立的資料，不重新下載或搬移。
+
+閱讀根目錄 [AGENTS.md](../AGENTS.md)，再看 [題目分析與交付要求](docs/README.md)、[Kaggle 資料與提交規格](docs/KAGGLE_DATASET_SPEC.md)、[資料樹與檢查](data/README.md)。[資源清單](docs/DOWNLOADS.md) 用於查漏補缺。
+
+## 專案結構與三層路徑
 
 ```text
 midterm01/
-├── README.md
-├── Dockerfile                    # 延伸既有 HW2 的 ROS 2 Humble 映像
-├── docker-compose.yml            # 獨立 Midterm01 容器與資料掛載
-├── docker-compose.gui.yml        # 選用：遠端 Ubuntu 的 X11 顯示
-├── .env.example                  # 遠端主機資料根目錄與容器設定
-├── config/tracks.json            # Track 路徑與公告幀數
-├── workspace/src/                # 老師的 localization package 放這裡
+├── Dockerfile / docker-compose.yml / docker-compose.gui.yml
+├── .env.example                  # Ubuntu 資料根目錄與容器設定
+├── config/tracks.json            # 只供 check_data.py 使用
+├── workspace/src/localization/   # 目前 NDT package、launch、轉換工具
 ├── scripts/
-│   ├── dev.sh                    # 遠端 Ubuntu：初始化、容器與檢查入口
-│   ├── build_workspace.sh        # 容器內：檢查 package 後執行 colcon
-│   ├── check_data.py             # 檔案完整性與 PLY 數量檢查
-│   └── download_kaggle.py        # Ubuntu：預覽、逐檔下載與 Track 根目錄對應
-├── data/                         # 原始資料，可改掛遠端既有目錄
-├── outputs/                      # runs、submissions、figures
-├── experiments/README.md         # 版本、設定、分數與問題紀錄
-├── reports/README.md              # 單人報告與簡報安排
-└── docs/DOWNLOADS.md              # 必需／選用下載清單
+│   ├── dev.sh                    # Ubuntu 主機：容器管理與檢查入口
+│   ├── build_workspace.sh        # 容器：colcon build
+│   └── check_data.py             # 主機或容器：基本檔案／數量檢查
+├── data/                         # Ubuntu 已建立，Git 忽略大型內容
+├── outputs/                      # runs、submissions、figures，Git 忽略結果
+├── docs/                         # 官方 PDF、題目分析、資源與 Kaggle 規格
+├── experiments/README.md         # 實驗版本與分數紀錄
+└── reports/README.md             # 報告與簡報安排
 ```
 
-`data/Track1`、`data/Track2` 與輸出子目錄由初始化腳本建立；大型資料、執行輸出及個人 `.env` 被 Git 忽略。說明文件與程式可正常追蹤。
+| Ubuntu 主機來源（相對 `midterm01/`） | Midterm01 容器 | 權限 |
+| --- | --- | --- |
+| `./workspace` | `/root/midterm` | 讀寫 |
+| `.env` 的 `MIDTERM_DATA_DIR`，預設 `./data` | `/root/data` | 唯讀 |
+| `./config` | `/root/config` | 唯讀 |
+| `./scripts` | `/root/scripts` | 唯讀 |
+| `./outputs` | `/root/outputs` | 讀寫 |
 
-## 執行環境與路徑
+Ubuntu 專案已知為 `~/sdc_ros2`；絕對路徑先用 `realpath` 確認。Windows 的 `C:\...` 不可作為 Ubuntu Docker bind mount 來源。Docker 管理指令在 **Ubuntu 主機** 執行；ROS／colcon 在 **配置好的容器** 執行。直接登入 Ubuntu 和 Remote SSH 終端機均可。
 
-你目前在 Windows 透過 VS Code Remote SSH 使用 Ubuntu，也可以直接在 Ubuntu 本機操作。課程執行端是該 Ubuntu，專案為 `~/sdc_ros2`；以下 Docker 指令在 **Ubuntu 主機** 執行，SSH 並非必要條件。資料下載操作見 [Ubuntu 下載步驟](docs/UBUNTU_DATA_DOWNLOAD.md)。
+獨立 Compose project 為 `sdc_midterm01`、service 為 `midterm01`、預設容器名 `sdc_midterm01`、ROS_DOMAIN_ID 為 1。HW2 的 `ros2_container` 及工作區保留原用途。
 
-| 遠端 Ubuntu 主機 | Midterm01 容器 |
-| --- | --- |
-| `~/sdc_ros2/midterm01/workspace/` | `/root/midterm/` |
-| `.env` 中的 `MIDTERM_DATA_DIR`，預設 `./data` | `/root/data/`，唯讀 |
-| `~/sdc_ros2/midterm01/config/` | `/root/config/`，唯讀 |
-| `~/sdc_ros2/midterm01/scripts/` | `/root/scripts/`，唯讀 |
-| `~/sdc_ros2/midterm01/outputs/` | `/root/outputs/` |
+## Ubuntu 已建立的資料
 
-獨立容器預設名 `sdc_midterm01`，Compose project 為 `sdc_midterm01`，ROS_DOMAIN_ID 預設為 1。HW2 仍使用自己的 `ros2_container` 與原有掛載。資料掛載使用明確的主機／容器對應，語法參考 [Docker Compose volumes 文件](https://docs.docker.com/reference/compose-file/services/#volumes)。
+以下依使用者截圖與文字確認，**不是本次遠端檔案完整性檢查結果**：
 
-## 1. 遠端 Ubuntu：初始化
+```text
+~/sdc_ros2/midterm01/data/
+├── Track1/
+│   ├── raw_ply/
+│   ├── Track1_images/
+│   ├── init_guess.txt
+│   ├── map.pcd
+│   ├── metadata.yaml
+│   └── Track1.db3
+├── Track2/
+│   ├── raw_ply/
+│   ├── Track2_images/
+│   ├── init_guess.txt
+│   ├── map.pcd
+│   ├── metadata.yaml
+│   └── Track2.db3
+├── kaggle_track01/Track1_Mapanything_ply/
+│   ├── ply/
+│   ├── index.csv
+│   └── report.json
+└── kaggle_track02/Track2_Mapanything_ply/
+    ├── ply/
+    ├── index.csv
+    └── report.json
+```
 
-先把這些新檔案同步到遠端專案，再執行：
+前相機 `raw_ply/` 是目前程式預設輸入。三相機點雲的實際資料夾名如上，與 PDF 泛稱的 `3cameras_ply/` 不同；不必改名。程式尚未讀取 MapAnything 的 `index.csv`／`report.json`，需核對檔名、尺度、座標與官方 frame 對應後，才改用 `ply_path`。截圖未顯示 `camera_info/` 與官方 sample submission；先搜尋，不直接判定缺少，也不把 MapAnything 索引當成 submission。
+
+## Ubuntu 主機：交接後先檢查
+
+先同步必要文件／程式並保留兩端既有修改。Git 不會同步資料、`.env` 與輸出；未追蹤的 PDF／文件也需明確納入同步。
+
+```bash
+cd ~/sdc_ros2
+git status --short
+cd midterm01
+pwd
+realpath data
+ls -ld data/Track1 data/Track2 \
+  data/kaggle_track01/Track1_Mapanything_ply \
+  data/kaggle_track02/Track2_Mapanything_ply
+python3 scripts/check_data.py --data-root "$(realpath data)" \
+  --strict-count --output outputs/runs/data_check_host.json
+```
+
+預期前相機 PLY 分別為 **3011／3299**。該工具只檢查 map／init_guess 存在且非空，以及資料夾第一層的 PLY 非空與數量；**不查 bag、校正、timestamp、MapAnything、ID 或 CSV**。更完整的唯讀核對指令見 [資料檢查](data/README.md)。若檢查失敗，先查真正的檔案／解壓層級，不覆寫既有資料。
+
+## Ubuntu 主機：設定與建置
 
 ```bash
 cd ~/sdc_ros2/midterm01
 bash scripts/dev.sh init
 ```
 
-這會建立資料與輸出目錄，並在 `.env` 不存在時複製範例設定。若資料已在 Ubuntu 其他位置，將 `.env` 的 `MIDTERM_DATA_DIR` 改成實際資料根目錄的絕對路徑。預設目錄結構是：
-
-```text
-資料根目錄/
-├── Track1/
-│   ├── map.pcd
-│   ├── init_guess.txt
-│   └── raw_ply/
-└── Track2/
-    ├── map.pcd
-    ├── init_guess.txt
-    └── raw_ply/
-```
-
-若 Track 目錄或點雲資料夾名稱不同，在 `config/tracks.json` 調整。這份 JSON 目前供資料檢查工具使用；接入老師程式時，仍須同步核對它的 launch 與 C++ 資料路徑。
-
-## 2. 放入需要自己下載的內容
-
-按 [下載清單](docs/DOWNLOADS.md) 取得：
-
-1. 老師的 Localization 模板：完整 package 放入 `workspace/src/localization/`。
-2. 官方 Track1 與 Track2：放入資料根目錄的對應子目錄。
-3. 各自的 official sample submission：保存原始欄位及 ID，後續轉檔時核對。
-
-HW2 的既有 bag 可留在原位置。第一次先用官方 `raw_ply/`；三相機點雲與 LoGeR 程式列為後續選用。
-
-## 3. 遠端 Ubuntu：建置並開啟容器
+`init` 只建立目錄，並在 `.env` 不存在時複製範例，不會下載或清空資料。目前資料位置可沿用 `MIDTERM_DATA_DIR=./data`；若改用其他位置，填入 Ubuntu 的實際根目錄，該目錄需同時含 Track1／Track2。確認 `.env` 後：
 
 ```bash
 bash scripts/dev.sh config
 bash scripts/dev.sh build
 bash scripts/dev.sh up
 bash scripts/dev.sh status
-```
-
-`config` 用來檢查解析後的遠端資料來源與掛載。`build` 會先檢查 `sdc_hw2_ros2:latest` 是否存在；缺少時使用專案 `hw2/` 的 Dockerfile 與 entrypoint 建置基底，再建立 Midterm01 映像並補上 PCL、Eigen 與 colcon 等依賴。建置基底時只傳入這兩個必要檔案，不包含 HW2 大型資料；此方式使用 [Docker 的 tar build context](https://docs.docker.com/build/concepts/context/#local-tarballs)。Docker daemon 權限依你現有 Ubuntu 的設定使用；若平常需 sudo，在需要 Docker 的腳本命令前加 `sudo`，`init` 則以一般帳號執行。
-
-`up` 需要映像已建好。原始資料以唯讀方式掛載，輸出使用 `/root/outputs`。目前配置先支援不開 GUI 的資料處理；需要 RViz 時，確認遠端 Ubuntu 的顯示環境後使用 `bash scripts/dev.sh --gui up` 加入 X11 overlay。顯示授權及 `DISPLAY` 需依你既有的遠端顯示方式設定。
-
-## 4. 遠端 Ubuntu：檢查資料與建置 ROS package
-
-```bash
-bash scripts/dev.sh check-data
-bash scripts/dev.sh check-data --strict-count --output /root/outputs/runs/data_check.json
+bash scripts/dev.sh check-data --strict-count \
+  --output /root/outputs/runs/data_check_container.json
 bash scripts/dev.sh build-workspace
 bash scripts/dev.sh shell
 ```
 
-資料檢查可用 `--track track01` 或 `--track track02`。它檢查地圖、初始姿態檔與 PLY 是否存在且非空，以及 PLY 數量是否符合公告；數量差異預設為 warning，`--strict-count` 則視為錯誤。這不是點雲內容、座標系、官方 frame ID、sample submission 或定位品質的驗證。
+先檢查既有容器與 `config` 解析結果，再 `up`。`build` 缺少 `sdc_hw2_ros2:latest` 時，會使用 `hw2/Dockerfile` 與 entrypoint 建置基底；然後建立 Midterm01 映像。沿用 Ubuntu 既有 Docker 權限，平常需要 sudo 時只對 Docker 動作加 sudo，`init` 以一般帳號執行。`build-workspace` 會確認 package 後執行 `colcon build --symlink-install`。
 
-`build-workspace` 在容器內執行 colcon；尚未放入老師 package 時會明確報錯。模板接入後，仍需確認它的完整依賴與資料契約。進入容器後，完成建置才能使用：
+CMake 依賴含 ROS 2 Humble、PCL、Eigen、Boost、`rosbag2_cpp`／`rosbag2_storage` 等，以 `CMakeLists.txt` 和 `package.xml` 為準；缺少依賴時依實際建置錯誤補齊，不把 Windows 上無法編譯當成 Ubuntu 結果。
+
+## 容器：先用無 GUI 的 NDT 單幀
+
+目前 `localization.launch.py` **固定啟動 RViz**，並把 map cache 設為資料目錄內的檔案；本架構資料是唯讀掛載。首跑可直接使用現有 executable：不啟用 bag、不指定 cache、不開 RViz，輸出寫到獨立 run。
+
+以下是依現有介面整理的待執行指令，本次尚未在 Ubuntu 執行。`smoke_track01` 若已存在，換成新 run 名稱，程式會覆寫同名結果。
 
 ```bash
-# 以下在容器內執行
+# 以下都在 Midterm01 容器內
+source /opt/ros/humble/setup.bash
 cd /root/midterm
 source install/setup.bash
+ros2 run localization localization --ros-args \
+  -p map_path:=/root/data/Track1 \
+  -p ply_path:=/root/data/Track1/raw_ply \
+  -p init_guess_file:=/root/data/Track1/init_guess.txt \
+  -p save_path:=/root/outputs/runs/smoke_track01 \
+  -p save_file:=result.txt \
+  -p max_frames:=1 \
+  -p keep_alive:=false
 ```
 
-接著讀取老師的 `localization.launch.py`，確認輸入、輸出與參數後再啟動。此階段尚未建立實際定位啟動腳本，避免使用未確認的模板介面。
+C++ 的 `map_cache_file` 預設為空，所以此命令停用快取；`bag_path` 預設為空，也不會讀 bag。這可先驗證讀檔、NDT 與寫入，不能證明 pose 正確。確認輸出有 1 行、每行 12 個有限數值，再看配準前後疊圖與座標。短序列改用新的 run 目錄及 `max_frames:=50`。
 
-純資料結構檢查也可直接在有 Python 3 的主機執行，不依賴 ROS：
+## 容器：完整兩條 Track 與轉檔
+
+在資料契約、單幀與短序列通過後，使用新的 run 名稱保存 R0。以下 `R0_ndt_20261016` 為命名例，請依實際日期／版本調整。**`ply_scale=3.0` 等預設值尚需實測確認，尤其不能直接套用到 MapAnything。**
 
 ```bash
-python3 scripts/check_data.py --data-root /實際資料根目錄 --track track01
+# 容器內；延續已 source 的環境
+for track in 1 2; do
+  ros2 run localization localization --ros-args \
+    -p map_path:="/root/data/Track${track}" \
+    -p ply_path:="/root/data/Track${track}/raw_ply" \
+    -p init_guess_file:="/root/data/Track${track}/init_guess.txt" \
+    -p save_path:="/root/outputs/runs/R0_ndt_20261016/track${track}" \
+    -p save_file:=result.txt \
+    -p max_frames:=0 \
+    -p keep_alive:=false || break
+done
 ```
 
-## 接下來的實作順序
+`max_frames=0` 表示處理所有可解析的 PLY；中途出錯／被中斷可能只有部分結果。執行成功不代表筆數或 ID 完整，必須另外檢查。保存原始碼版本與未提交差異、完整參數、輸出、時間及失敗 frame，參考 [實驗紀錄](experiments/README.md)。
 
-1. 接入模板，核對點雲尺度、座標系、外參、初始姿態與結果格式。
-2. 先跑通模板提供的單幀 NDT，再對照 ICP 或自訂改善，顯示配準前後疊圖。
-3. 連跑短片段，再完成兩條 Track，使用官方轉換工具產生 CSV。
-4. 加入局部地圖、下採樣、初始姿態預測與失敗回退，逐項記錄改善。
-5. 在 `experiments/` 整理實驗，於 `reports/` 整理報告與簡報。
+官方轉換工具實際位於 `processing_codes/`，目前 import 了 pandas／NumPy／SciPy；Dockerfile 未明確補上 pandas／SciPy。先檢查這些依賴，或由接手者移除未使用 import 並驗證轉換，再執行：
 
-目前已有老師提供的 NDT 參考實作，尚無自己的演算法改善或有效 Kaggle 成績。Ubuntu 上的 Docker 建置、ROS 編譯與真實資料測試需在實際執行環境驗證，先完成 Python 依賴、地圖快取寫入與 GUI 的接入調整。
+```bash
+# 容器內；先確認兩條完整結果與轉檔依賴
+mkdir -p /root/outputs/submissions/R0_ndt_20261016
+python3 src/localization/processing_codes/txt_to_idx_x_y_yaw.py \
+  /root/outputs/runs/R0_ndt_20261016/track1/result.txt \
+  /root/outputs/submissions/R0_ndt_20261016/result_1.csv
+python3 src/localization/processing_codes/txt_to_idx_x_y_yaw.py \
+  /root/outputs/runs/R0_ndt_20261016/track2/result.txt \
+  /root/outputs/submissions/R0_ndt_20261016/result_2.csv
+```
+
+CSV 表頭順序 **`idx,x,y,yaw`**，Track01 **3011** 列、Track02 **3299** 列，均不含表頭。轉檔程式以行號產生從 0 起的 ID，yaw 以弧度輸出；這是程式行為，正式 ID 集合／順序、座標與單位仍須核對官方 sample／公告。確認沒有缺漏、重複、NaN、Inf 或額外 index 欄後，再做 Kaggle 提交並記錄實際分數。
+
+## 已核對的程式行為與風險
+
+| 項目 | 現況與接手時的處理 |
+| --- | --- |
+| PLY 時間 | 第一層 `.ply` 檔名需含 `_ts_<正整數奈秒>`，否則略過；依時間排序，沒有重複時間檢查，也不讀 index.csv |
+| 初始姿態 | `init_guess.txt` 前四列為 4×4 矩陣，容許逗號；只初始化第一幀。實際檔案、剛體矩陣與 frame 仍待核對 |
+| 尺度與外參 | 所有 source XYZ 先乘 `ply_scale`，預設 3.0；目前主流程未另套相機到車體外參。先確認點雲定義，避免漏套或重複套用 |
+| 濾波與局部地圖 | source 清理非有限點、voxel 0.3；map voxel 1.0；依上幀 pose 裁切半寬 100／半高 30。這些已是現有流程 |
+| NDT | resolution 8.0、step 0.8、epsilon 0.05、最多 30 iterations。以原始 source 和初始 pose 配準，最終矩陣直接作為 candidate，不再乘一次初始 pose |
+| 品質與回退 | 目前只查收斂及有限值；NDT 失敗保留前一 pose。`min_input_points=10` 已宣告但未用於點數判斷；空 submap、壞 PLY 等會終止 |
+| GNSS／IMU | `bag_path` 才啟用；要求兩個 topic 分別為 PoseStamped／Imu。依 bag timestamp 讀不晚於 PLY 的最新訊息，尚未融合，也未限制訊息過期 |
+| 快取 | launch 固定使用資料目錄的 `map_downsampled_1m.pcd`；可能嘗試寫入唯讀掛載。已有快取時跳過下採樣，不檢查 leaf／map 版本是否吻合 |
+| RViz／批次 | launch 無條件開 RViz；`keep_alive` 預設 true，跑完仍 spin。批次用上方 `ros2 run` 或後續新增 launch 開關 |
+| 結果 | 每幀 12 數值（3×4 矩陣按列攤平），不帶時間／ID；順序錯誤會一路傳到 CSV。預設開檔會覆寫同名結果 |
+| 舊視覺化 | `visualization.cpp` 仍讀 Radar／PCD 與占位路徑，不能直接回放本次 PLY；定位節點本身已有 cloud／TF／path |
+
+RViz 需要時先在 **Ubuntu 主機** 確認既有顯示環境，再使用 `bash scripts/dev.sh --gui up` 加入 X11 overlay；`DISPLAY`、X11 socket 與授權要現場核對。容器內可另啟動 `rviz2 -d /root/midterm/src/localization/config/localization.rviz` 配合定位節點；觀察 submap 即可，需全域地圖時才設 `publish_global_map:=true`。
+
+## 接手後的完成順序
+
+1. 保存 Ubuntu 資料檢查報告，核對 raw_ply 與 MapAnything 的時間、尺度、座標、初始矩陣和 sample。
+2. 編譯並完成無 GUI 單幀／短序列，處理依賴與快取／launch 落差。
+3. 保存目前 NDT 的兩條 Track 完整 R0 和 Kaggle 分數，與助教 baseline 分開記錄。
+4. 依失敗片段比較初始姿態預測、品質門檻、重試／回退；再考慮 ICP、多尺度、三相機或 IMU／GNSS，逐項實驗。
+5. 固定最佳版本，整理兩條 Track CSV、可重現 README、報告及 4–6 分鐘簡報。
+
+官方 PDF 公告：Kaggle 與簡報寄送 **2026-10-29 09:00**、課堂簡報 **10/29**、E3 程式與報告 **2026-11-05 23:59**；時區與最新公告另核對。兩條 Track 都須超過 baseline。報告需說明自己的貢獻與解題過程，不能把模板既有功能列為自創。詳細評分與交付命名見 [題目分析](docs/README.md)。
+
+## 本次交接文件驗證
+
+已在 Windows 通過 Markdown 本地連結、程式區塊配對、Bash 範例與現有腳本的語法檢查、內嵌 Python 語法、Python 檔案語法、package XML、範例 ROS 參數名稱及 `git diff --check`。`dev.sh help`／`check_data.py --help` 可執行。這些屬靜態與入口檢查，不代表 Ubuntu Docker 建置、C++ 編譯、資料完整性或實際定位已通過。
