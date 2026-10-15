@@ -2,7 +2,7 @@
 
 單人完成。目標是將兩條 Track 的影像重建點雲配準到各自 LiDAR 地圖，估計每幀車輛 pose，產生可提交的 Kaggle CSV。
 
-目前已建立環境與工作目錄；老師的 `localization` 模板、Track 資料與定位實作尚待接入。先看 [需要自己下載的資料與程式](docs/DOWNLOADS.md)。
+目前已建立環境與工作目錄，完整 `localization` 模板也已放入 `workspace/src/localization/`，其中包含基礎 NDT。已核對下載包，接入前需處理 Python 依賴、地圖快取寫入與 GUI 配置；詳見 [模板檢查紀錄](docs/TEMPLATE_AUDIT.md)。Track 資料位置與遠端建置尚待確認，下載項目見 [資料與程式清單](docs/DOWNLOADS.md)。
 
 ## 架構
 
@@ -120,9 +120,9 @@ python3 scripts/check_data.py --data-root /實際資料根目錄 --track track01
 ## 接下來的實作順序
 
 1. 接入模板，核對點雲尺度、座標系、外參、初始姿態與結果格式。
-2. 完成單幀 ICP，顯示配準前後疊圖。
+2. 先跑通模板提供的單幀 NDT，再對照 ICP 或自訂改善，顯示配準前後疊圖。
 3. 連跑短片段，再完成兩條 Track，使用官方轉換工具產生 CSV。
 4. 加入局部地圖、下採樣、初始姿態預測與失敗回退，逐項記錄改善。
 5. 在 `experiments/` 整理實驗，於 `reports/` 整理報告與簡報。
 
-目前的架構不包含已完成的定位演算法或有效 Kaggle 成績。Ubuntu 上的 Docker 建置、ROS 編譯與真實資料測試需在實際執行環境驗證；檔案放妥後依上述步驟接續。
+目前已有老師提供的 NDT 參考實作，尚無自己的演算法改善或有效 Kaggle 成績。Ubuntu 上的 Docker 建置、ROS 編譯與真實資料測試需在實際執行環境驗證，先完成模板檢查紀錄中的接入事項。

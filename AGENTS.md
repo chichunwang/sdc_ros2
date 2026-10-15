@@ -33,12 +33,12 @@ Midterm01 開工前，先閱讀：
 - 必須完成兩條路線：Track01 公告為 3011 幀，Track02 公告為 3299 幀；每條路線使用各自的地圖與初始資料。
 - 輸入包含前相機點雲 `raw_ply/`、LiDAR 地圖 `map.pcd`、含雜訊的 `init_guess.txt`；另有三相機點雲、影像、校正資料、IMU 與 GNSS 可供改善。
 - 核心工作是實作 scan matching，取得每幀車輛 pose，轉成符合官方規格的 Kaggle CSV；兩條 Track 均須超過助教 baseline。
-- 第一版建議直接使用已提供的前相機點雲與 ICP，先完成讀取、配準、序列輸出及有效提交，再逐步測試局部地圖、下採樣、初始姿態預測與失敗回退。
+- 老師模板已提供前相機點雲的基礎 NDT；先跑通並保存參考結果，再比較 ICP 或自訂 NDT 改善。模板也已有基本下採樣與局部地圖，後續需用實驗證明自己的改動效果。
 - NDT、多尺度配準、三相機及 IMU／GNSS 是後續候選改善，應依實際失敗案例與對照實驗決定是否加入。先建立參考版，再評估效果。
 - 題目已提供重建點雲，LoGeR 程式是選用資源；不必先重跑影像重建才能開始定位。
 - 最終需整理程式、可重現的 README、兩條 Track 最佳結果 `result_1.csv`／`result_2.csv`、報告與課堂簡報。
 
-截至 2026-10-15，已完成題目分析並在 Windows checkout 建立 `midterm01/` 基礎架構；其中 `workspace/src/` 預留給老師的完整 `localization` package，尚無定位演算法或實測分數。老師模板與 Track 資料尚未放入本 checkout。使用者已確認遠端 Ubuntu 有 ROS 執行環境與 HW2 bag；Midterm01 模板與 Track1／Track2 在遠端的存放狀態尚未查驗。後續依實際執行端更新，不以 Windows checkout 推斷遠端資料缺失。
+截至 2026-10-15，已建立 `midterm01/` 基礎架構，完整老師 package 已放入 `midterm01/workspace/src/localization/`，12 個來源檔案與使用者下載的 `SDC-midterm01` 相同。已確認模板內含基礎 NDT，接入差異記於 `midterm01/docs/TEMPLATE_AUDIT.md`；Python 轉檔依賴、唯讀資料掛載與地圖快取、RViz 啟動方式尚待處理。尚無遠端建置或實測定位分數。使用者遠端 Ubuntu 已有 ROS 與 HW2 bag；Midterm01 Track 資料的遠端位置仍待確認。
 
 ## 實際開發與執行環境
 

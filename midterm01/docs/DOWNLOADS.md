@@ -1,5 +1,7 @@
 # 需要自己下載的資料與程式
 
+2026-10-15 更新：老師的 Localization 程式包已下載並完整放入 `workspace/src/localization/`，12 個來源檔案已比對一致。下方清單是所需資源總表，不表示每個項目都尚未取得；本次下載包的環境差異見 [模板檢查紀錄](TEMPLATE_AUDIT.md)。
+
 先用你的 Kaggle 帳號加入兩場競賽並接受規則。官方加入邀請在題目 PDF 第 16 頁。以下連結與資料內容取自該 PDF 第 8–12 頁；Kaggle 實際檔案、登入權限及規格以下載頁為準。
 
 ## 第一版必須取得
@@ -58,14 +60,14 @@ MIDTERM_DATA_DIR=/你的實際資料根目錄
 
 - HW2 的 Ubuntu 資料已存在，但它是 `guanfu_road_clipped_ros2`，不能代替本次兩條 Track。
 - ROS 2 Humble 基底沿用專案 `hw2/` 的 Docker 配置；Midterm01 Dockerfile 會透過 apt 安裝 PCL 等編譯依賴，無須手動下載 PCL 原始碼。
-- 本架構已提供掛載、建置入口、資料結構檢查與實驗／報告目錄；目前尚未包含官方模板或定位演算法。
+- 本架構已提供掛載、建置入口、資料結構檢查與實驗／報告目錄，並已有老師的完整 package 與基礎 NDT；接入差異與遠端建置尚待處理。
 - 在 Windows 下載後，仍需將大檔放到遠端 Ubuntu 的實際資料目錄。被 Git 忽略的資料不會隨一般程式同步傳過去。
 - 本次沒有代你下載資料、加入競賽、連線遠端 Ubuntu 或提交任何結果。
 
 ## 下載完成檢查清單
 
 - [ ] 兩場 Kaggle 都已加入，能讀取各自 Data 頁。
-- [ ] `workspace/src/localization/package.xml` 與 `CMakeLists.txt` 已放妥。
+- [x] `workspace/src/localization/package.xml` 與 `CMakeLists.txt` 已放妥，並保留完整 package 內容。
 - [ ] 兩條 Track 各有自己的 `map.pcd`、`init_guess.txt`、`raw_ply/` 與校正資料。
 - [ ] 兩條 Track 的官方 sample submission 已分別保存。
 - [ ] `.env` 指向遠端 Ubuntu 上正確的 Midterm01 資料根目錄。

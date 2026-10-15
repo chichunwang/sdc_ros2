@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>localization</name>
+  <version>0.0.0</version>
+  <description>Localization package migrated to ROS 2 Humble.</description>
+
+  <maintainer email="ee904@todo.todo">ee904</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>pcl_conversions</depend>
+  <depend>rosbag2_cpp</depend>
+  <depend>rosbag2_storage</depend>
+  <depend>libpcl-all-dev</depend>
+  <depend>eigen</depend>
+  <depend>boost</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
