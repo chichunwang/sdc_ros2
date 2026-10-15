@@ -1,0 +1,19 @@
+{
+  "tracks": {
+    "track01": {
+      "directory": "Track1",
+      "expected_frames": 3011,
+      "point_cloud_directory": "raw_ply",
+      "map_file": "map.pcd",
+      "initial_guess_file": "init_guess.txt"
+    },
+    "track02": {
+      "directory": "Track2",
+      "expected_frames": 3299,
+      "point_cloud_directory": "raw_ply",
+      "map_file": "map.pcd",
+      "initial_guess_file": "init_guess.txt"
+    }
+  }
+}
+

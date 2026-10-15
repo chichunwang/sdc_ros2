@@ -14,16 +14,17 @@
 | `hw2/workspace/` | HW2 的 Python 節點、launch 與 RViz 設定 |
 | `hw3/` | Markov chain 天氣模型、隨機模擬與穩態分布的 Python 練習 |
 | `docs/` | 作業說明、終端機指令與開發工具使用文件 |
-| `midterm01/` | Midterm01 的實作與專案文件工作目錄 |
+| `midterm01/` | Midterm01 的 Docker、ROS 工作區、資料檢查、下載清單、實驗與報告架構 |
 | `localreference/` | 本機參考資料，目前包含 Midterm01 題目 PDF 與分析；已被 Git 忽略 |
 | `tmp/` | 產生的預覽、擷取結果及其他暫存檔；已被 Git 忽略 |
 
 Midterm01 開工前，先閱讀：
 
-1. `localreference/midterm01/README.md`：題目分析、單人實作計畫、期限與繳交清單。
-2. `localreference/midterm01/SDC 2026 Midterm01 Competition -  Localization.pdf`：課程正式題目，共 24 頁。
-3. 取得老師模板後，再讀取模板自身的說明、建置設定、定位程式與結果轉換腳本。
-4. Docker 配置來源：[SDC Assignment 2 - ITRI Dataset Visualization](https://hackmd.io/@26f-sdc/rkh6TD-czg)，並對照本機 `hw2/` 的設定與下方路徑說明。
+1. `midterm01/README.md`：目前建立的架構、三層環境路徑與執行方式。
+2. `midterm01/docs/DOWNLOADS.md`：老師模板、兩條 Track 及 sample submission 的下載與放置方式。
+3. 本機如有 `localreference/midterm01/README.md` 與題目 PDF，再閱讀詳細分析與課程要求；此目錄被 Git 忽略，遠端可能沒有副本。
+4. 取得老師模板後，再讀取模板自身的說明、建置設定、定位程式與結果轉換腳本。
+5. Docker 配置來源：[SDC Assignment 2 - ITRI Dataset Visualization](https://hackmd.io/@26f-sdc/rkh6TD-czg)，並對照專案設定與下方路徑說明。
 
 若參考檔被移動，先搜尋目前位置；不要直接依過期路徑重新建立或覆蓋檔案。課程要求以正式題目及後續公告為準，分析文件中的演算法建議不是強制規定。
 
@@ -37,7 +38,7 @@ Midterm01 開工前，先閱讀：
 - 題目已提供重建點雲，LoGeR 程式是選用資源；不必先重跑影像重建才能開始定位。
 - 最終需整理程式、可重現的 README、兩條 Track 最佳結果 `result_1.csv`／`result_2.csv`、報告與課堂簡報。
 
-截至 2026-10-15，已完成題目分析；本次可直接檢查的 Windows checkout 尚未放入老師的定位模板與 Track 資料，尚無實測定位分數。使用者已確認遠端 Ubuntu 有 ROS 執行環境與資料，截圖也顯示 HW2 bag 存在；Midterm01 模板與 Track1／Track2 在遠端的存放狀態尚未查驗。後續依實際執行端的檔案與結果更新，不以 Windows checkout 推斷遠端資料缺失。
+截至 2026-10-15，已完成題目分析並在 Windows checkout 建立 `midterm01/` 基礎架構；其中 `workspace/src/` 預留給老師的完整 `localization` package，尚無定位演算法或實測分數。老師模板與 Track 資料尚未放入本 checkout。使用者已確認遠端 Ubuntu 有 ROS 執行環境與 HW2 bag；Midterm01 模板與 Track1／Track2 在遠端的存放狀態尚未查驗。後續依實際執行端更新，不以 Windows checkout 推斷遠端資料缺失。
 
 ## 實際開發與執行環境
 
@@ -89,6 +90,8 @@ Windows 與遠端 Ubuntu 是兩份 checkout。Git 可同步已追蹤的程式；
 
 ## 實作時的重要約定
 
+Midterm01 現有架構使用自己的 `midterm01/docker-compose.yml` 與選用 GUI overlay，延伸 HW2 基底映像，預設建立獨立的 `sdc_midterm01` 容器。其 `workspace/` 掛到 `/root/midterm`、`.env` 指定的遠端資料根目錄唯讀掛到 `/root/data`、`outputs/` 掛到 `/root/outputs`。這是新加入、尚待遠端建置驗證的配置；上方 HW2 掛載表則描述原有環境。
+
 - 使用繁體中文說明與撰寫專案文件，保留必要的英文技術名稱。
 - 先檢查相關檔案與 Git 狀態，保留使用者既有修改；變更限制在目前任務，不順便重構其他作業。
 - 明確區分 Windows／PowerShell、遠端 Ubuntu／Bash 與 Docker 容器三層環境；Docker 管理指令以遠端 Ubuntu 為執行端，ROS 2 與 `colcon` 以已配置好的 ROS 環境／容器為執行端。給指令時標明在哪一層執行。
@@ -104,7 +107,9 @@ Windows 與遠端 Ubuntu 是兩份 checkout。Git 可同步已追蹤的程式；
 
 ## 建置與驗證入口
 
-目前沒有適用於整個根目錄的統一建置或測試指令。Docker 的基礎配置參考使用者指定的 HW2 講義與專案中的設定；實際在遠端 Ubuntu 核對 Compose、容器與掛載。Midterm01 取得模板後，再核對其依賴、ROS 2 package 與執行方式。
+目前沒有適用於整個根目錄的統一建置或測試指令。Midterm01 的主機端入口為 `midterm01/scripts/dev.sh`：在遠端 Ubuntu 的 `~/sdc_ros2/midterm01` 執行 `init`、`config`、`build`、`up`，再使用 `check-data`、`build-workspace` 與 `shell`。先依下載清單取得模板與資料，並調整 `.env`。HW2 容器設定仍保留原有用途。
+
+`midterm01/scripts/check_data.py` 只檢查檔案存在、非空與 PLY 數量；`midterm01/config/tracks.json` 目前只供此工具使用，接入老師程式時仍需核對 launch／C++ 的路徑與資料契約。`build-workspace` 在未找到 ROS package 時會失敗，不把空工作區當作成功建置。
 
 Midterm01 題目示範在配置好的容器內執行：
 

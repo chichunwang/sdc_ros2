@@ -1,0 +1,10 @@
+.git
+.env
+data
+outputs
+workspace
+reports
+experiments
+docs
+**/__pycache__
+
