@@ -38,11 +38,11 @@ Midterm01 開工前，先閱讀：
 - 題目已提供重建點雲，LoGeR 程式是選用資源；不必先重跑影像重建才能開始定位。
 - 最終需整理程式、可重現的 README、兩條 Track 最佳結果 `result_1.csv`／`result_2.csv`、報告與課堂簡報。
 
-截至 2026-10-15，已建立 `midterm01/` 基礎架構，完整老師 package 已放入 `midterm01/workspace/src/localization/`，12 個來源檔案與使用者下載的 `SDC-midterm01` 相同。已確認模板內含基礎 NDT，接入差異記於 `midterm01/docs/TEMPLATE_AUDIT.md`；Python 轉檔依賴、唯讀資料掛載與地圖快取、RViz 啟動方式尚待處理。尚無遠端建置或實測定位分數。使用者遠端 Ubuntu 已有 ROS 與 HW2 bag；Midterm01 Track 資料的遠端位置仍待確認。
+截至 2026-10-15，已建立 `midterm01/` 基礎架構，完整老師 package 已放入 `midterm01/workspace/src/localization/`，12 個來源檔案與使用者下載的 `SDC-midterm01` 相同。已確認模板內含基礎 NDT；Python 轉檔依賴、唯讀資料掛載與地圖快取、RViz 啟動方式尚待處理。尚無 Ubuntu 建置或實測定位分數。Ubuntu 已有 ROS 與 HW2 bag；Midterm01 資料下載步驟見 `midterm01/docs/UBUNTU_DATA_DOWNLOAD.md`，實際資料位置待下載後確認。
 
 ## 實際開發與執行環境
 
-使用者目前在 **Windows** 操作，並透過 **VS Code Remote SSH 連接遠端 Ubuntu**。ROS 課程的執行環境與資料位於遠端 Ubuntu；後續 ROS／Docker 操作優先以這台遠端主機為準，不預設改用 Windows 本機 Docker 或 WSL。
+使用者目前在 **Windows** 操作，並透過 **VS Code Remote SSH 連接 Ubuntu**，需要時也可以直接使用 Ubuntu 本機。ROS 課程的執行環境與資料位於這台 Ubuntu；SSH 是目前的連線方式，不是未來操作的必要條件。給予 Ubuntu 主機指令時，應同時適用 SSH 終端機與直接登入，不預設改用 Windows 本機 Docker 或 WSL。
 
 | 層級 | 已知位置與用途 | 證據／確認範圍 |
 | --- | --- | --- |
@@ -110,6 +110,12 @@ Midterm01 現有架構使用自己的 `midterm01/docker-compose.yml` 與選用 G
 目前沒有適用於整個根目錄的統一建置或測試指令。Midterm01 的主機端入口為 `midterm01/scripts/dev.sh`：在遠端 Ubuntu 的 `~/sdc_ros2/midterm01` 執行 `init`、`config`、`build`、`up`，再使用 `check-data`、`build-workspace` 與 `shell`。先依下載清單取得模板與資料，並調整 `.env`。HW2 容器設定仍保留原有用途。
 
 `midterm01/scripts/check_data.py` 只檢查檔案存在、非空與 PLY 數量；`midterm01/config/tracks.json` 目前只供此工具使用，接入老師程式時仍需核對 launch／C++ 的路徑與資料契約。`build-workspace` 在未找到 ROS package 時會失敗，不把空工作區當作成功建置。
+
+Ubuntu 的 Kaggle CLI 2.2.4 已由使用者確認 ACCESS_TOKEN 認證，且 Track01 單檔測試下載成功；整包下載仍回傳 404，確切原因未明。使用者已成功執行全清單預覽：`Track1/` 12,053 個檔案約 9.95 GiB；`3cameras_ply/` 3,013 個檔案約 13.74 GiB，未選取後者；bag 與影像路徑包含 `Track1/Track1/` 雙層。
+
+後續使用者提供截圖：Track01 手動網頁 ZIP 下載也顯示找不到頁面，Track02 回報正常；尚未確認 Track02 已完整下載並解壓。問題較集中在 Track01 的整包下載，但 ZIP 是否缺失、生成失敗或其他後端原因仍未知。使用者詢問不採自訂腳本的方式，不將腳本視為強制流程；可先處理 Track02，Track01 由助教／Kaggle 確認整包狀態。腳本用單檔 API、整包指令用另一 API；目前確認的是單一測試 CSV 與清單預覽成功，不宣稱全部 Track01 已下載。
+
+`midterm01/scripts/download_kaggle.py` 使用既有 CLI 翻頁與逐檔下載，預設僅預覽，加入 `--download` 才下載 Track 及對應 sample/submission CSV。它以同層 `map.pcd`／`init_guess.txt` 辨識內容根目錄，對應本地 `data/Track1`／`data/Track2` 並保留內部子目錄；多組根目錄或目的路徑衝突時停止。預覽會顯示必要檔案、PLY 數量及子目錄提交範例候選檔。跳過大小相符的既有檔案，不下載獨立的 `3cameras_ply/`；不搬移舊版已下載的雙層目錄。新版已通過 16 項模擬測試，尚待 Ubuntu 整理與完整下載驗證；不需因整包 404 要求使用者重設已可用的 token。
 
 Midterm01 題目示範在配置好的容器內執行：
 

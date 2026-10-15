@@ -1,6 +1,10 @@
 # 需要自己下載的資料與程式
 
-2026-10-15 更新：老師的 Localization 程式包已下載並完整放入 `workspace/src/localization/`，12 個來源檔案已比對一致。下方清單是所需資源總表，不表示每個項目都尚未取得；本次下載包的環境差異見 [模板檢查紀錄](TEMPLATE_AUDIT.md)。
+2026-10-15 更新：老師的 Localization 程式包已下載並完整放入 `workspace/src/localization/`，12 個來源檔案已比對一致。下方清單是所需資源總表，不表示每個項目都尚未取得；模板的 Python 依賴、地圖快取寫入與 GUI 配置仍需於 Ubuntu 接入時處理。
+
+要直接把資料下載到 Ubuntu，依照 [Ubuntu 下載操作步驟](UBUNTU_DATA_DOWNLOAD.md) 使用 Kaggle CLI。可以透過目前的 SSH 終端機，也可以直接在 Ubuntu 操作。已確認 ACCESS_TOKEN 認證與 Track01 單檔下載成功；整包下載目前 404，可使用 `scripts/download_kaggle.py` 先預覽再逐檔下載 Track。工具依地圖與初始姿態檔辨識資料根目錄，處理 `Track1/Track1/` 等包裝層，保留內部目錄並排除獨立的 `3cameras_ply/`。
+
+目前另已回報 Track01 網頁 ZIP 下載顯示找不到頁面，Track02 網頁下載正常；若不使用自訂工具，先處理 Track02，Track01 整包狀態需由助教／Kaggle 確認。單檔測試與預覽成功不表示 Track01 全部資料已下載完成。
 
 先用你的 Kaggle 帳號加入兩場競賽並接受規則。官方加入邀請在題目 PDF 第 16 頁。以下連結與資料內容取自該 PDF 第 8–12 頁；Kaggle 實際檔案、登入權限及規格以下載頁為準。
 

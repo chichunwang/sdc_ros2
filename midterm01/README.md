@@ -2,7 +2,7 @@
 
 單人完成。目標是將兩條 Track 的影像重建點雲配準到各自 LiDAR 地圖，估計每幀車輛 pose，產生可提交的 Kaggle CSV。
 
-目前已建立環境與工作目錄，完整 `localization` 模板也已放入 `workspace/src/localization/`，其中包含基礎 NDT。已核對下載包，接入前需處理 Python 依賴、地圖快取寫入與 GUI 配置；詳見 [模板檢查紀錄](docs/TEMPLATE_AUDIT.md)。Track 資料位置與遠端建置尚待確認，下載項目見 [資料與程式清單](docs/DOWNLOADS.md)。
+目前已建立環境與工作目錄，完整 `localization` 模板也已放入 `workspace/src/localization/`，其中包含基礎 NDT。已核對下載包，接入前需處理 Python 依賴、地圖快取寫入與 GUI 配置。Ubuntu 已成功預覽 Track01 清單，選取資料約 9.95 GiB，尚待下載與遠端建置；下載項目見 [資料與程式清單](docs/DOWNLOADS.md)。
 
 ## 架構
 
@@ -18,7 +18,8 @@ midterm01/
 ├── scripts/
 │   ├── dev.sh                    # 遠端 Ubuntu：初始化、容器與檢查入口
 │   ├── build_workspace.sh        # 容器內：檢查 package 後執行 colcon
-│   └── check_data.py             # 檔案完整性與 PLY 數量檢查
+│   ├── check_data.py             # 檔案完整性與 PLY 數量檢查
+│   └── download_kaggle.py        # Ubuntu：預覽、逐檔下載與 Track 根目錄對應
 ├── data/                         # 原始資料，可改掛遠端既有目錄
 ├── outputs/                      # runs、submissions、figures
 ├── experiments/README.md         # 版本、設定、分數與問題紀錄
@@ -30,7 +31,7 @@ midterm01/
 
 ## 執行環境與路徑
 
-你在 Windows 編輯，實際課程執行端是 VS Code Remote SSH 連接的 Ubuntu，專案為 `~/sdc_ros2`。以下 Docker 指令在**遠端 Ubuntu** 執行。
+你目前在 Windows 透過 VS Code Remote SSH 使用 Ubuntu，也可以直接在 Ubuntu 本機操作。課程執行端是該 Ubuntu，專案為 `~/sdc_ros2`；以下 Docker 指令在 **Ubuntu 主機** 執行，SSH 並非必要條件。資料下載操作見 [Ubuntu 下載步驟](docs/UBUNTU_DATA_DOWNLOAD.md)。
 
 | 遠端 Ubuntu 主機 | Midterm01 容器 |
 | --- | --- |
@@ -125,4 +126,4 @@ python3 scripts/check_data.py --data-root /實際資料根目錄 --track track01
 4. 加入局部地圖、下採樣、初始姿態預測與失敗回退，逐項記錄改善。
 5. 在 `experiments/` 整理實驗，於 `reports/` 整理報告與簡報。
 
-目前已有老師提供的 NDT 參考實作，尚無自己的演算法改善或有效 Kaggle 成績。Ubuntu 上的 Docker 建置、ROS 編譯與真實資料測試需在實際執行環境驗證，先完成模板檢查紀錄中的接入事項。
+目前已有老師提供的 NDT 參考實作，尚無自己的演算法改善或有效 Kaggle 成績。Ubuntu 上的 Docker 建置、ROS 編譯與真實資料測試需在實際執行環境驗證，先完成 Python 依賴、地圖快取寫入與 GUI 的接入調整。
