@@ -2,7 +2,13 @@
 
 單人完成兩條 Track：把影像重建的 3D 點雲對齊各自的 LiDAR 地圖，估計每幀車輛 pose，提交 Kaggle，並交付程式、報告與簡報。
 
-## 交接狀態（2026-10-16）
+手動編輯、建置、單幀／50 幀／完整測試、RViz、轉檔與結果比較，請依 [手動開發操作手冊](docs/MANUAL_WORKFLOW.md) 操作。
+
+## Ubuntu 實測進度（2026-10-17）
+
+已在 Ubuntu 完成 Git／資料核對、Docker 與 ROS package 建置；兩條 Track 的單幀和 50 幀測試均完成，輸出列數／有限值通過，NDT fallback 均為 0。單幀耗時 Track1 97.6／Track2 14.9 秒；50 幀耗時 Track1 322.5／Track2 118.5 秒（含地圖讀取）。兩條 Track 單幀與 50 幀實跑的參數、耗時及驗證見 [首跑報告](docs/UBUNTU_FIRST_RUN_20261017.md)，完整證據在 `outputs/runs/handoff_20261017/`。未取得 Kaggle 分數；尺度與車體提交 frame 尚未完成官方確認。
+
+## 交接背景（2026-10-16，歷史紀錄）
 
 **下一位執行者為 Ubuntu 裡的 Codex。模板與資料已建立，請從現有資料檢查與 NDT 參考版開始。**
 
@@ -127,9 +133,9 @@ CMake 依賴含 ROS 2 Humble、PCL、Eigen、Boost、`rosbag2_cpp`／`rosbag2_st
 
 ## 容器：先用無 GUI 的 NDT 單幀
 
-目前 `localization.launch.py` **固定啟動 RViz**，並把 map cache 設為資料目錄內的檔案；本架構資料是唯讀掛載。首跑可直接使用現有 executable：不啟用 bag、不指定 cache、不開 RViz，輸出寫到獨立 run。
+2026-10-17 已修正 `localization.launch.py`：`use_rviz` 預設 false、`map_cache_file` 預設空字串，輸出預設在 outputs。直接執行 executable 的首跑方式仍適用：不啟用 bag、不指定 cache、不開 RViz，輸出寫到新的獨立 run。
 
-以下是依現有介面整理的待執行指令，本次尚未在 Ubuntu 執行。`smoke_track01` 若已存在，換成新 run 名稱，程式會覆寫同名結果。
+以下為可重現的命令範例；實際測試使用首跑報告中的獨立目錄與完整參數檔。`smoke_track01` 若已存在，換成新 run 名稱，程式會覆寫同名結果。
 
 ```bash
 # 以下都在 Midterm01 容器內
@@ -168,7 +174,7 @@ done
 
 `max_frames=0` 表示處理所有可解析的 PLY；中途出錯／被中斷可能只有部分結果。執行成功不代表筆數或 ID 完整，必須另外檢查。保存原始碼版本與未提交差異、完整參數、輸出、時間及失敗 frame，參考 [實驗紀錄](experiments/README.md)。
 
-官方轉換工具實際位於 `processing_codes/`，目前 import 了 pandas／NumPy／SciPy；Dockerfile 未明確補上 pandas／SciPy。先檢查這些依賴，或由接手者移除未使用 import 並驗證轉換，再執行：
+官方轉換工具實際位於 `processing_codes/`；2026-10-17 已移除未使用的 pandas／NumPy／SciPy imports 並驗證轉換，目前只需 Python 標準函式庫：
 
 ```bash
 # 容器內；先確認兩條完整結果與轉檔依賴
@@ -194,8 +200,8 @@ CSV 表頭順序 **`idx,x,y,yaw`**，Track01 **3011** 列、Track02 **3299** 列
 | NDT | resolution 8.0、step 0.8、epsilon 0.05、最多 30 iterations。以原始 source 和初始 pose 配準，最終矩陣直接作為 candidate，不再乘一次初始 pose |
 | 品質與回退 | 目前只查收斂及有限值；NDT 失敗保留前一 pose。`min_input_points=10` 已宣告但未用於點數判斷；空 submap、壞 PLY 等會終止 |
 | GNSS／IMU | `bag_path` 才啟用；要求兩個 topic 分別為 PoseStamped／Imu。依 bag timestamp 讀不晚於 PLY 的最新訊息，尚未融合，也未限制訊息過期 |
-| 快取 | launch 固定使用資料目錄的 `map_downsampled_1m.pcd`；可能嘗試寫入唯讀掛載。已有快取時跳過下採樣，不檢查 leaf／map 版本是否吻合 |
-| RViz／批次 | launch 無條件開 RViz；`keep_alive` 預設 true，跑完仍 spin。批次用上方 `ros2 run` 或後續新增 launch 開關 |
+| 快取 | launch 的 `map_cache_file` 預設空字串停用；若手動啟用，需指定 outputs 中區分 Track／leaf／map 版本的路徑。已有快取時跳過下採樣，不檢查版本是否吻合 |
+| RViz／批次 | launch 的 `use_rviz` 預設 false；`keep_alive` 預設 true，跑完仍 spin。批次明確指定 `keep_alive:=false` |
 | 結果 | 每幀 12 數值（3×4 矩陣按列攤平），不帶時間／ID；順序錯誤會一路傳到 CSV。預設開檔會覆寫同名結果 |
 | 舊視覺化 | `visualization.cpp` 仍讀 Radar／PCD 與占位路徑，不能直接回放本次 PLY；定位節點本身已有 cloud／TF／path |
 

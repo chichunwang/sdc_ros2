@@ -1,5 +1,9 @@
 # sdc_ros2 專案說明與協作約定
 
+## 2026-10-17 Ubuntu 接手更新
+
+本次已直接存取 `/home/ricky/sdc_ros2`，完成資料／frame 檢查與 Docker、ROS package 建置，兩條 Track 的單幀及 50 幀測試均完成（零 fallback，非精度保證）。首跑紀錄與限制以 `midterm01/docs/UBUNTU_FIRST_RUN_20261017.md` 為準，證據在 `midterm01/outputs/runs/handoff_20261017/`。launch 已有 `use_rviz`（預設 false）及空字串停用的 `map_cache_file`，CSV 轉換已移除未使用套件。以下 2026-10-16 環境證據及「本次僅 Windows」敘述屬歷史交接，不代表目前 Ubuntu 狀態；仍保留資料唯讀、唯一 run、不重套外參與不宣稱 Kaggle 成績的規則。
+
 ## 專案與目前任務
 
 這是 SDC 自駕車課程工作區，包含 ROS 2 感測器處理、點雲／Radar、機率模型及車輛定位作業。主要工作為 **Midterm01：將影像重建的 3D 點雲配準到 LiDAR 地圖，估計兩條 Track 每幀的 pose**。使用者單人完成一組，個人貢獻依實際工作記為 100%，不安排找組員或雙人分工。

@@ -1,0 +1,44 @@
+# 新版 GNSS／IMU 約束定位（主機執行；各命令依序等待完成）
+# 原有貼上紀錄保留在下方。新版務必帶 --profile sensor_guided。
+# cd /home/ricky/sdc_ros2/midterm01_gpu
+# bash scripts/dev.sh up
+# bash scripts/dev.sh build-workspace --packages-select cuda_ndt_backend localization
+# python3 scripts/benchmark.py --track 1 --frames 3011 --profile sensor_guided
+# python3 scripts/benchmark.py --track 2 --frames 3299 --profile sensor_guided
+# 改成 --frames 50 即可試跑；新版 run 名稱含 sensor_guided_cuda_robust_icp。
+# 詳細方法、驗證與限制見 SENSOR_GUIDED_20261017.md。
+
+ startup map excluded.
+{
+  "created_utc": "2026-10-17T08:33:26.396212+00:00",
+  "track": 1,
+  "backend": "cuda_ndt",
+  "cuda_mode": "D2D",
+  "frames": 3011,
+  "expected_frames": 3011,
+  "elapsed_seconds": 354.99242548999973,
+  "time_scope": "Docker exec + ROS startup + map initialization + all frames; no build. See map_cache_file for explicit cache use.",
+  "map_cache_file": "",
+  "map_cache_hit_at_start": false,
+  "returncode": 0,
+  "failed_alignments": 8,
+  "timing_sums": {
+    "load_seconds": 208.445216523,
+    "filter_seconds": 4.5725007,
+    "crop_seconds": 8.726748465999998,
+    "ndt_seconds": 37.963295255,
+    "fitness_seconds": 8.646438179,
+    "publish_seconds": 6.924557109999999,
+    "total_seconds": 275.292741346
+  },
+  "validation_errors": [],
+  "output_complete_and_finite": true,
+  "accuracy": "Not evaluated against ground truth or Kaggle; convergence is not an accuracy guarantee.",
+  "pose_diagnostics_not_accuracy": {
+    "rotation_orthogonality_max_error": 2.307884346630651e-06,
+    "rotation_det_min": 0.9999981899608044,
+    "rotation_det_max": 1.000000506671513,
+    "max_adjacent_translation_m": 10.822716798070491
+  }
+}
+

@@ -1,10 +1,6 @@
 import csv
 import math
 import argparse
-import pandas as pd
-import numpy as np
-from scipy.signal import savgol_filter
-from scipy.ndimage import gaussian_filter1d
 
 def rotation_matrix_to_yaw(pose):
     r11 = pose[0]

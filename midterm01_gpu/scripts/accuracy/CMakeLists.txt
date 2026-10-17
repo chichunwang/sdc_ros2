@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.18)
+project(alignment_evaluator LANGUAGES C CXX)
+find_package(PCL REQUIRED COMPONENTS common io filters kdtree)
+add_executable(alignment_evaluator alignment_evaluator.cpp)
+target_compile_features(alignment_evaluator PRIVATE cxx_std_17)
+target_include_directories(alignment_evaluator PRIVATE ${PCL_INCLUDE_DIRS})
+target_link_libraries(alignment_evaluator PRIVATE ${PCL_LIBRARIES})

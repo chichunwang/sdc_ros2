@@ -1,0 +1,20 @@
+# 在 Ubuntu 主機執行；每條定位命令完成後再執行下一條。
+cd /home/ricky/sdc_ros2/midterm01_gpu
+bash scripts/dev.sh up
+
+# 修改程式後需要重編；只改 --frames 不用重編。
+bash scripts/dev.sh build-workspace --packages-select cuda_ndt_backend localization
+
+# 前 50 幀試跑：
+python3 scripts/benchmark.py --track 1 --frames 50 --profile sensor_guided
+
+# 完整兩條 Track（新版預設選 cuda_robust_icp）：
+python3 scripts/benchmark.py --track 1 --frames 3011 --profile sensor_guided
+python3 scripts/benchmark.py --track 2 --frames 3299 --profile sensor_guided
+
+# 每次終端顯示 Run: 路徑。CSV 為該目錄的 diagnostic.csv。
+# 完整 CSV 筆數應為 3011／3299；先看 validation.json 驗證結果。
+# 完整時間看 pipeline_elapsed_seconds（含感測器前處理及 ROS 執行）。
+# map 快取的雜湊核對、版本紀錄與建置不在此計時內。
+# 使用者已回報本次新版 Track1 Kaggle 分數 1.22369；Track2 尚未回報。
+# 後續完整測試與提交由使用者手動執行，再回報結果。

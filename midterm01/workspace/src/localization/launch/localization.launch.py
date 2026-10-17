@@ -1,8 +1,10 @@
 import os
+from datetime import datetime
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -16,7 +18,9 @@ def generate_launch_description():
         DeclareLaunchArgument('ply_path', default_value=PathJoinSubstitution([LaunchConfiguration('data_path'), 'raw_ply'])),
         DeclareLaunchArgument('init_guess_file', default_value=PathJoinSubstitution([LaunchConfiguration('data_path'), 'init_guess.txt'])),
 
-        DeclareLaunchArgument('save_path', default_value='/root/midterm/src/localization/result/'),
+        DeclareLaunchArgument('save_path', default_value='/root/outputs/runs/launch_' + datetime.now().strftime('%Y%m%dT%H%M%S_%f')),
+        DeclareLaunchArgument('use_rviz', default_value='false'),
+        DeclareLaunchArgument('map_cache_file', default_value='', description='Empty disables cache; use a unique absolute outputs path for explicit caches'),
         DeclareLaunchArgument('save_file', default_value='Track1_result.txt'),
         
         DeclareLaunchArgument('log_level', default_value='info'),
@@ -49,7 +53,7 @@ def generate_launch_description():
                 'use_sim_time': False,
                 'map_path': LaunchConfiguration('data_path'),
                 'map_file': 'map.pcd',
-                'map_cache_file': 'map_downsampled_1m.pcd',
+                'map_cache_file': ParameterValue(LaunchConfiguration('map_cache_file'), value_type=str),
                 'bag_path': LaunchConfiguration('bag_path'),
                 'ply_path': LaunchConfiguration('ply_path'),
                 'init_guess_file': LaunchConfiguration('init_guess_file'),
@@ -62,6 +66,7 @@ def generate_launch_description():
         )
         rviz_node = Node(
             package='rviz2', executable='rviz2', name='display_result', output='screen',
+            condition=IfCondition(LaunchConfiguration('use_rviz')),
             arguments=['-d', os.path.join(pkg_share, 'config', 'localization.rviz')],
             parameters=[{'use_sim_time': False}],
         )

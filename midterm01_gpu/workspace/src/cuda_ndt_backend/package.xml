@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>cuda_ndt_backend</name>
+  <version>0.1.0</version>
+  <description>Pinned fast_gicp CUDA NDT subset, built for the local GPU.</description>
+  <maintainer email="ee904@todo.todo">ee904</maintainer>
+  <license>BSD-3-Clause</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>libpcl-all-dev</depend>
+  <depend>eigen</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

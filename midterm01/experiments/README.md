@@ -17,3 +17,7 @@ R0 使用目前程式已有的前相機 **基礎 NDT**，包含清理、下採�
 結果放 `outputs/runs/<run>/track1`、`track2`，提交候選放 `outputs/submissions/<run>/`，避免覆寫。結果被 Git 忽略，需另外保存與交接；本目錄追蹤實驗說明與必要設定。
 
 未實跑不填估計分數，不把收斂／fitness 或 GNSS 當成正式 ATE。切換 MapAnything 時先核對 index、時間、尺度及座標；不要同時換全部參數後宣稱單一因素有效。
+
+## 2026-10-17 首跑實測
+
+兩條 Track 均已完成既有前相機 NDT 單幀與前 50 幀。輸出列數及有限值通過，fallback 都是 0；單幀耗時為 97.6／14.9 秒，50 幀為 322.5／118.5 秒（Track1／Track2，含讀取地圖）。保持 ply_scale=3.0 與原始 NDT 預設，未更動演算法。Track1 有 0.796 m 相鄰步長、Track2 短序列 yaw 變化約 0.507 rad，精度與穩定性仍待查。完整參數、frame manifest、疊圖及限制見 [實測報告](../docs/UBUNTU_FIRST_RUN_20261017.md)，完整兩條 Track R0 與 Kaggle 評分尚未執行。

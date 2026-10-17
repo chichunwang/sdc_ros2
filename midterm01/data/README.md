@@ -1,5 +1,9 @@
 # Ubuntu 已建立的 Midterm01 資料
 
+2026-10-17 已直接檢查 Ubuntu 資料：兩條前相機及 MapAnything 各為 3011／3299 幀，無空 PLY、無重複或不可解析時間。MapAnything index 與前相機時間／編號逐列一致；`camera_info` 已找到，位置為 `TrackN/TrackN_images/camera_info/`。兩份 bag SQLite quick_check 通過；前相機每個 PLY timestamp 均存在於 bag 的前相機 **bag timestamp**，且有同名影像。完整檢查範圍、幾何抽樣與限制見 [實測報告](../docs/UBUNTU_FIRST_RUN_20261017.md)。未找到官方 submission sample。
+
+以下為歷史交接與檢查命令。
+
 2026-10-16：使用者確認實際位置為 **`~/sdc_ros2/midterm01/data`**。下列資料樹依使用者截圖記錄；本次助理只能存取 Windows checkout，未直接讀取 Ubuntu 的大型檔案。
 
 ```text

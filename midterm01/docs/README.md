@@ -1,5 +1,9 @@
 # Midterm01 題目分析與交付要求
 
+2026-10-17 Ubuntu 實測：Docker／colcon 已成功，資料時間與索引已核對，兩條 Track 單幀及 50 幀結果見 [實測報告](UBUNTU_FIRST_RUN_20261017.md)。launch 已新增預設關閉的 RViz 開關並預設停用快取，轉檔已移除未使用的外部套件。尚未取得 Kaggle 分數；尺度／車體 frame／提交單位仍待官方契約確認。
+
+以下為 2026-10-16 的歷史分析，涉及「尚未執行」與舊 launch 行為時，以前述實測報告為準。
+
 更新：2026-10-16。依同目錄 [官方 PDF](<SDC 2026 Midterm01 Competition -  Localization.pdf>) 全部 24 頁、使用者提供的 Kaggle 說明、目前原始碼與 Ubuntu 資料截圖整理。使用者單人完成；本次在 Windows 靜態分析，未連線 Ubuntu 或取得定位分數。
 
 **程式與資料都已建立，下一步是檢查 Ubuntu 既有資料、跑通目前 NDT，再保存兩條 Track 的參考結果。** 建置與執行入口見 [專案 README](../README.md)，資料實際目錄見 [data/README](../data/README.md)。

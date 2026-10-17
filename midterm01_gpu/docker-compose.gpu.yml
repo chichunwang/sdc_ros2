@@ -1,0 +1,7 @@
+# Docker 28.3+ enables native CDI by default. No NVIDIA runtime registration
+# or Docker daemon restart is required after generating the NVIDIA CDI spec.
+services:
+  midterm01_gpu:
+    devices:
+      - "nvidia.com/gpu=all"
+
