@@ -1,11 +1,13 @@
-# 執行輸出
+# CPU 參考版執行輸出
 
-容器 `/root/outputs/` 對應 Ubuntu `~/sdc_ros2/midterm01/outputs/`。初始化腳本建立：
+本目錄保留既有 CPU 結果。後續新開發／測試統一使用 [GPU 工作區](../../midterm01_gpu/README.md) 的 `outputs/`，不搬移或覆寫 CPU 證據。
 
-- `runs/`：每次實驗的 TXT、版本／參數、資料與輸出檢查、診斷。
-- `submissions/`：各候選 CSV；最終選定 `result_1.csv`、`result_2.csv`。
-- `figures/`：點雲疊圖、軌跡圖、報告圖片。
+CPU 容器 `sdc_midterm01` 的 `/root/outputs/` 對應主機 `/home/ricky/sdc_ros2/midterm01/outputs/`。GPU 容器同名 `/root/outputs/` 對應 `midterm01_gpu/outputs/`。VS Code 在主機應查看主機專案內的目錄。
 
-目前定位程式／launch 的預設結果在 package 內，需執行時明確設定 `save_path`，不會自動使用這裡。參考命令見 [專案 README](../README.md)。程式會覆寫同名 TXT，使用新 run 名稱，例如 `runs/R0_ndt_20261016/track1/`。
+- `runs/handoff_20261017/`：兩條 Track 單幀／前 50 幀首跑證據，見 [首跑報告](../docs/UBUNTU_FIRST_RUN_20261017.md)。
+- `runs/first_test_9vBOV7le/track1_n0_xLOSykY4/`：使用者 CPU Track1 完整 3011 筆 TXT、log、命令與退出碼；尚未產生 CSV。原 root:root／700 已修正可讀，見 [完成與權限紀錄](../docs/CPU_TRACK1_COMPLETED_20261017.md)。
+- `submissions/`／`figures/`：CPU 衍生候選與圖片；不與 GPU 版本成績混用。
 
-map cache 也應寫到此處的獨立目錄，區分 Track、地圖版本與 voxel；目前 launch 尚未完成此調整，首跑停用快取。此目錄的執行結果被 Git 忽略，不能只靠 Git 同步或還原最佳 CSV。
+若遇到看似空目錄，先核對容器／主機掛載，再檢查目錄的讀取與進入權限；指定 run 的 chmod 與另存 CSV 方法見 [GPU 操作手冊](../../midterm01_gpu/doc/MANUAL_WORKFLOW.md#cpu-結果看不到與-chmod)。不 chmod 原始資料或主機 `/root`。
+
+CPU launch 已預設 outputs 下唯一時間路徑，RViz 預設關閉、map cache 空字串停用；舊文所述固定 package 輸出／固定 data cache 已過時。手動重現仍明確指定新 run，避免覆寫結果。結果與快取遵守 Git 忽略規則，最佳 CSV 與證據需另外備份。

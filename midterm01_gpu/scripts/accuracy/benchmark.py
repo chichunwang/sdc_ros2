@@ -11,12 +11,32 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
-import tempfile
 import time
+from zoneinfo import ZoneInfo
+
+if __package__:
+    from .geometry_report import summarize_guided_updates, validate_geometry
+else:
+    from geometry_report import summarize_guided_updates, validate_geometry
 
 
 def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def create_run_directory(directory, prefix):
+    """以台北時間命名；同分鐘重複執行時遞增序號，保留既有結果。"""
+    stamp = datetime.datetime.now(ZoneInfo("Asia/Taipei")).strftime("%y%m%d%H%M")
+    name = f"{prefix}_{stamp}"
+    directory.mkdir(parents=True, exist_ok=True)
+    sequence = 1
+    while True:
+        run = directory / (name if sequence == 1 else f"{name}_{sequence}")
+        try:
+            run.mkdir()
+            return run
+        except FileExistsError:
+            sequence += 1
 
 
 def main():
@@ -26,6 +46,16 @@ def main():
     parser.add_argument("--backend", choices=("cuda_ndt", "pcl_ndt", "cuda_robust_icp"), help="default legacy=cuda_ndt; sensor_guided=cuda_robust_icp")
     parser.add_argument("--cuda-mode", choices=("P2D", "D2D"), default="D2D")
     parser.add_argument("--profile", choices=("legacy", "sensor_guided"), default="legacy", help="legacy: previous-pose NDT; sensor_guided: GNSS/IMU plus bounded robust map refinement")
+    parser.add_argument("--sensor-fusion", choices=("fixed", "heading_rts", "motion_rts"), default="fixed",
+                        help="fixed: previous fixed heading bias; heading_rts: gated GNSS/IMU bias smoother; motion_rts: also smooth raw GNSS position/velocity")
+    parser.add_argument("--fusion-gnss-std", type=float, default=.3, help="fusion model GNSS std, m; not calibrated accuracy")
+    parser.add_argument("--fusion-xy-accel-psd", type=float, default=4., help="motion_rts acceleration PSD, m^2/s^3")
+    parser.add_argument("--fusion-bias-rw-deg", type=float, default=.12, help="bias random walk std, deg/sqrt(s)")
+    parser.add_argument("--fusion-course-window", type=float, default=2., help="GNSS course block length, s (>=1)")
+    parser.add_argument("--geometry-mode", choices=("off", "diagnostic", "directional"), default="off",
+                        help="off: scored point-to-point; diagnostic: same objective plus geometry CSV; directional: quality-weighted anisotropic map residual")
+    parser.add_argument("--geometry-normal-gain", type=float, default=2.)
+    parser.add_argument("--geometry-tangent-weight", type=float, default=.05)
     parser.add_argument("--resolution", type=float, help="NDT voxel resolution; default legacy=8 m, sensor_guided=2 m")
     parser.add_argument("--compare", type=Path, help="Optional reference result.txt; differences are not ground-truth errors.")
     parser.add_argument("--map-cache", type=Path, help="Explicit derived map cache under GPU outputs; only reuse for the same Track/map/voxel. Disabled by default.")
@@ -34,6 +64,19 @@ def main():
         args.backend = "cuda_robust_icp" if args.profile == "sensor_guided" else "cuda_ndt"
     if args.backend == "cuda_robust_icp" and args.profile != "sensor_guided":
         parser.error("--backend cuda_robust_icp requires --profile sensor_guided")
+    if args.sensor_fusion != "fixed" and args.profile != "sensor_guided":
+        parser.error("--sensor-fusion requires --profile sensor_guided")
+    if args.geometry_mode != "off" and (args.profile != "sensor_guided" or args.backend != "cuda_robust_icp"):
+        parser.error("Geometry requires --profile sensor_guided --backend cuda_robust_icp")
+    if (not math.isfinite(args.geometry_normal_gain) or not 0 < args.geometry_normal_gain <= 10
+            or not math.isfinite(args.geometry_tangent_weight) or not 0 <= args.geometry_tangent_weight <= 1):
+        parser.error("Geometry gain must be in (0,10]; tangent weight in [0,1]")
+    fusion_settings = {"fusion": args.sensor_fusion, "gnss-std": args.fusion_gnss_std,
+                       "xy-accel-psd": args.fusion_xy_accel_psd, "bias-rw-deg": args.fusion_bias_rw_deg,
+                       "course-window": args.fusion_course_window}
+    if (not all(math.isfinite(value) and value > 0 for key, value in fusion_settings.items() if key != "fusion")
+            or args.fusion_course_window < 1):
+        parser.error("Fusion parameters must be finite and positive; course window >= 1 second")
     if args.resolution is None:
         args.resolution = 2.0 if args.profile == "sensor_guided" else 8.0
     if args.frames < 1 or not math.isfinite(args.resolution) or args.resolution <= 0:
@@ -80,7 +123,12 @@ def main():
         parser.error(f"Only {len(files)} timestamped PLY files available")
 
     profile_prefix = "sensor_guided_" if args.profile == "sensor_guided" else ""
-    run = Path(tempfile.mkdtemp(prefix=f"track{args.track}_{profile_prefix}{args.backend}_{args.cuda_mode.lower()}_{args.frames}f_", dir=root / "outputs/runs"))
+    if args.sensor_fusion != "fixed":
+        profile_prefix += args.sensor_fusion + "_"
+    if args.geometry_mode != "off":
+        profile_prefix += "geometry_" + args.geometry_mode + "_"
+    run = create_run_directory(root / "outputs/runs", f"track{args.track}_{profile_prefix}{args.backend}_{args.cuda_mode.lower()}")
+    print(f"Run: {run}", flush=True)
     container_run = "/root/outputs/runs/" + run.name
     params = {
         "map_path": f"/root/data/Track{args.track}", "map_file": "map.pcd",
@@ -96,6 +144,8 @@ def main():
         "cuda_translation_epsilon": 0.01, "cuda_rotation_epsilon": 0.002,
         "localization_profile": args.profile,
         "sensor_prior_file": container_run + "/sensor_prior.csv" if args.profile == "sensor_guided" else "",
+        "geometry_mode": args.geometry_mode, "geometry_normal_gain": args.geometry_normal_gain,
+        "geometry_tangent_weight": args.geometry_tangent_weight,
     }
     write_json(run / "params.json", params)
     # JSON is valid YAML and preserves the ROS parameter scalar types.
@@ -105,20 +155,38 @@ def main():
         writer.writerow(["idx", "timestamp_ns", "filename"])
         writer.writerows((i, stamp, name) for i, (stamp, name) in enumerate(files[:args.frames]))
     sensor_preparation_seconds = 0.0
+    pipeline_sources = (Path(__file__), root / "scripts/prepare_sensor_prior.py", root / "scripts/sensor_fusion.py", Path(__file__).with_name("geometry_report.py"))
+    write_json(run / "pipeline_source_sha256.json", {
+        str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in pipeline_sources
+    })
+    snapshot = run / "pipeline_sources"
+    snapshot.mkdir()
+    for path in pipeline_sources:
+        (snapshot / path.name).write_bytes(path.read_bytes())
+    localization_snapshot = run / "localization_sources"
+    for path in (root / "workspace/src/localization").rglob("*"):
+        if path.is_file() and '__pycache__' not in path.parts:
+            destination = localization_snapshot / path.relative_to(root / "workspace/src/localization")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(path.read_bytes())
+    write_json(run / "sensor_preparation_params.json", fusion_settings)
     if args.profile == "sensor_guided":
         prep_start = time.perf_counter()
         prep = ["docker", "exec", container, "bash", "-c",
                 "source /opt/ros/humble/setup.bash && exec python3 /root/scripts/prepare_sensor_prior.py "
                 f"--bag /root/data/Track{args.track}/Track{args.track}.db3 --frames "
-                + shlex.quote(container_run + "/frames.csv") + " --output " + shlex.quote(params["sensor_prior_file"])]
+                + shlex.quote(container_run + "/frames.csv") + " --output " + shlex.quote(params["sensor_prior_file"])
+                + " " + " ".join("--" + key + " " + shlex.quote(str(value)) for key, value in fusion_settings.items())]
         write_json(run / "sensor_command.json", prep)
         with (run / "sensor_preparation.log").open("w") as log:
-            subprocess.run(prep, stdout=log, stderr=subprocess.STDOUT, check=True)
+            prep_result = subprocess.run(prep, stdout=log, stderr=subprocess.STDOUT)
         sensor_preparation_seconds = time.perf_counter() - prep_start
-    write_json(run / "pipeline_source_sha256.json", {
-        str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in (Path(__file__), root / "scripts/prepare_sensor_prior.py")
-    })
+        if prep_result.returncode != 0:
+            write_json(run / "validation.json", {"track": args.track, "profile": args.profile,
+                       "sensor_fusion": args.sensor_fusion, "returncode": prep_result.returncode,
+                       "sensor_preparation_seconds": sensor_preparation_seconds,
+                       "output_complete_and_finite": False, "validation_errors": ["Sensor preparation failed; inspect sensor_preparation.log"]})
+            return 1
     command = ["docker", "exec", container, "bash", "-c",
                "source /opt/ros/humble/setup.bash && source /root/midterm/install/setup.bash && "
                "exec ros2 run localization localization --ros-args --params-file " + shlex.quote(container_run + "/params.yaml")]
@@ -135,7 +203,6 @@ def main():
         "/root/midterm/install/localization/lib/localization/localization",
         "/root/midterm/install/cuda_ndt_backend/lib/libcuda_ndt_backend.so"], text=True))
     (run / "cpu_processes_before.txt").write_text(subprocess.run(["ps", "-C", "localization", "-o", "pid,pcpu,etime,args"], capture_output=True, text=True).stdout)
-    print(f"Run: {run}", flush=True)
     monitor_log = (run / "gpu_samples.csv").open("w")
     monitor = subprocess.Popen(["nvidia-smi", "--query-gpu=timestamp,utilization.gpu,memory.used,power.draw", "--format=csv,nounits", "-lms", "200"], stdout=monitor_log, stderr=subprocess.STDOUT)
     start = time.perf_counter()
@@ -191,12 +258,15 @@ def main():
         "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "track": args.track, "backend": args.backend, "cuda_mode": args.cuda_mode,
         "profile": args.profile, "sensor_preparation_seconds": sensor_preparation_seconds,
+        "sensor_fusion": args.sensor_fusion,
+        "geometry_mode": args.geometry_mode,
         "pipeline_elapsed_seconds": elapsed + sensor_preparation_seconds,
         "frames": len(poses), "expected_frames": args.frames, "elapsed_seconds": elapsed,
         "time_scope": "Docker exec + ROS startup + map initialization + all frames; no build. See map_cache_file for explicit cache use.",
         "map_cache_file": cache_file,
         "map_cache_hit_at_start": cache_hit,
         "returncode": returncode, "failed_alignments": sum(row["converged"] != "1" for row in timings),
+        "failed_alignments_scope": "rejected map updates with a current sensor-prior pose still emitted" if args.profile == "sensor_guided" else "registration not converged",
         "timing_sums": timing_sums, "validation_errors": errors, "output_complete_and_finite": not errors,
         "accuracy": "Not evaluated against ground truth or Kaggle; convergence is not an accuracy guarantee.",
     }
@@ -214,6 +284,18 @@ def main():
                                                for a, b in zip(poses[1:], poses[:-1])), default=0),
         }
     if args.profile == "sensor_guided":
+        prior_metadata = json.loads((run / "sensor_prior.json").read_text())
+        if args.sensor_fusion != "fixed":
+            fusion_meta = prior_metadata.get("sensor_fusion", {})
+            summary["sensor_fusion_diagnostics_not_accuracy"] = fusion_meta
+            if fusion_meta.get("mode") != args.sensor_fusion:
+                errors.append("Sensor fusion metadata does not match requested mode")
+            with (run / "sensor_prior.fusion.csv").open() as stream:
+                fusion_rows = list(csv.DictReader(stream))
+            if ([int(row["timestamp_ns"]) for row in fusion_rows] != [stamp for stamp, _ in files[:args.frames]]):
+                errors.append("Fusion diagnostics timestamps/count mismatch")
+            if any(not math.isfinite(float(value)) for row in fusion_rows for key, value in row.items() if key != "timestamp_ns"):
+                errors.append("Nonfinite sensor fusion diagnostics")
         with (run / "guidance.csv").open() as stream:
             guidance = list(csv.DictReader(stream))
         if len(guidance) != args.frames:
@@ -228,12 +310,21 @@ def main():
             "max_xy_correction_m": max((math.hypot(float(row["dx"]), float(row["dy"])) for row in guidance), default=0),
             "max_yaw_correction_deg": max((abs(math.degrees(float(row["dyaw"]))) for row in guidance), default=0),
         }
+        update_summary, update_errors = summarize_guided_updates(guidance)
+        summary["guidance_not_accuracy"].update(update_summary)
+        errors.extend(update_errors)
         if summary["guidance_not_accuracy"]["max_xy_correction_m"] > 1.500001 or summary["guidance_not_accuracy"]["max_yaw_correction_deg"] > 8.000001:
             errors.append("Sensor correction exceeded configured default bounds")
         if any(not math.isfinite(float(row[key])) for row in guidance for key in ("prior_cost", "final_cost", "dx", "dy", "dz", "dyaw")):
             errors.append("Nonfinite guidance metrics")
         if any(float(row["final_cost"]) > float(row["prior_cost"]) + 1e-8 for row in guidance):
             errors.append("Map update worsened regularized objective")
+        summary["output_complete_and_finite"] = not errors
+    if args.geometry_mode != "off":
+        geometry_summary, geometry_errors = validate_geometry(run, [stamp for stamp, _ in files[:args.frames]],
+                                args.geometry_mode, args.geometry_normal_gain, args.geometry_tangent_weight)
+        summary["geometry_diagnostics_not_accuracy"] = geometry_summary
+        errors.extend(geometry_errors)
         summary["output_complete_and_finite"] = not errors
     if args.compare:
         reference = [[float(value) for value in line.split()] for line in args.compare.read_text().splitlines()]

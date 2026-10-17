@@ -1,0 +1,18 @@
+# 幾何可信度／方向性權重候選：完整測試與 Kaggle 上傳由使用者執行。
+# Ubuntu 主機執行，每條完成後再執行下一條。
+# 本機已完成 GPU workspace Release 建置；移機或再改 C++ 才需先重編。
+cd /home/ricky/sdc_ros2/midterm01_gpu
+
+python3 scripts/benchmark.py --track 1 --frames 3011 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
+python3 scripts/benchmark.py --track 2 --frames 3299 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
+
+# Run: 路徑的名稱包含 geometry_directional。
+# 先看 validation.json：returncode=0、output_complete_and_finite=true、validation_errors=[]。
+# Track1 3011／Track2 3299 筆；候選為各自 run/diagnostic.csv。
+# geometry.csv／geometry_config.json 是幾何診斷，不是上傳檔。
+# 使用者已完整測試／提交：Track1 1.15275、Track2 0.30576；詳見 doc/GEOMETRY_RESULTS_20261017.md。
+# 新最佳 CSV 另存 outputs/latest_geometry_submission.txt 指向的目錄，舊 1.16951／0.31967 仍保留。
+
+# 要只看診斷、保留原配準權重：--geometry-mode diagnostic
+# 要回前一版已評分配準權重：--geometry-mode off
+# 新模式預設 off；normal gain=2、tangent weight=0.05，先不要同時修改其他參數。

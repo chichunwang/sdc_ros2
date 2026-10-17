@@ -28,6 +28,7 @@ def generate_launch_description():
         DeclareLaunchArgument('cuda_ndt_mode', default_value='D2D'),
         DeclareLaunchArgument('localization_profile', default_value='legacy'),
         DeclareLaunchArgument('sensor_prior_file', default_value=''),
+        DeclareLaunchArgument('geometry_mode', default_value='off'),
     ]
     parameter_types = {
         'map_voxel_leaf_size': float, 'input_voxel_leaf_size': float,
@@ -39,6 +40,7 @@ def generate_launch_description():
         'cuda_translation_epsilon': float, 'cuda_rotation_epsilon': float,
         'sensor_max_xy_correction': float, 'sensor_max_yaw_correction_deg': float,
         'sensor_smoothing_alpha': float,
+        'geometry_normal_gain': float, 'geometry_tangent_weight': float,
     }
     arguments += [
         DeclareLaunchArgument(name, default_value='', description='Optional override; omitted uses localization.h default')
@@ -71,6 +73,7 @@ def generate_launch_description():
                 'cuda_ndt_mode': LaunchConfiguration('cuda_ndt_mode'),
                 'localization_profile': LaunchConfiguration('localization_profile'),
                 'sensor_prior_file': ParameterValue(LaunchConfiguration('sensor_prior_file'), value_type=str),
+                'geometry_mode': ParameterValue(LaunchConfiguration('geometry_mode'), value_type=str),
 
                 **overrides,
             }],

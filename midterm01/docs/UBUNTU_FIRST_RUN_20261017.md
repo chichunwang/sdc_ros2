@@ -1,5 +1,7 @@
 # Ubuntu 接手與首跑實測（2026-10-17）
 
+> 本文件只記 Ubuntu 接手時的 CPU 單幀／前 50 幀實測。後續指定 CPU Track1 完整結果見 [完成紀錄](CPU_TRACK1_COMPLETED_20261017.md)；目前開發主入口為 [GPU 工作區](../../midterm01_gpu/README.md)，新版成績與完整兩條 Track 見 [sensor_guided 實測](../../midterm01_gpu/SENSOR_GUIDED_20261017.md)。下文「尚未完整測試／未取得分數」均指首跑當時。
+
 本次直接在 `/home/ricky/sdc_ros2` 執行，起始 Git 工作樹乾淨；保留原始資料、HW2 容器與舊結果。完整證據位於 `outputs/runs/handoff_20261017/`（Git 忽略，不會隨 Git 同步）。原始 commit、修改前後 diff、Docker image ID、Compose 掛載與命令分別留存。
 
 ## 環境與建置

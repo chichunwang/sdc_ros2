@@ -121,6 +121,9 @@ private:
     double sensor_max_xy_correction_ = 1.5;
     double sensor_max_yaw_correction_deg_ = 8.0;
     double sensor_smoothing_alpha_ = 0.25;
+    std::string geometry_mode_ = "off";
+    double geometry_normal_gain_ = 2.0;
+    double geometry_tangent_weight_ = 0.05;
     
 
     double map_voxel_leaf_size_ = 1.0;

@@ -1,111 +1,101 @@
 # sdc_ros2 專案說明與協作約定
 
-## 2026-10-17 Ubuntu 接手更新
+## 目前工作入口（2026-10-17）
 
-本次已直接存取 `/home/ricky/sdc_ros2`，完成資料／frame 檢查與 Docker、ROS package 建置，兩條 Track 的單幀及 50 幀測試均完成（零 fallback，非精度保證）。首跑紀錄與限制以 `midterm01/docs/UBUNTU_FIRST_RUN_20261017.md` 為準，證據在 `midterm01/outputs/runs/handoff_20261017/`。launch 已有 `use_rviz`（預設 false）及空字串停用的 `map_cache_file`，CSV 轉換已移除未使用套件。以下 2026-10-16 環境證據及「本次僅 Windows」敘述屬歷史交接，不代表目前 Ubuntu 狀態；仍保留資料唯讀、唯一 run、不重套外參與不宣稱 Kaggle 成績的規則。
+使用者已指定：**Midterm01 後續開發、建置與測試統一使用 `midterm01_gpu/`**。`midterm01/` 保留原 CPU 程式、結果、共用原始資料與官方文件；不搬移、覆寫或重新計算既有 CPU 結果。Windows 靜態交接與 Ubuntu 首跑屬不同階段，現況以本機證據及下列文件為準。
 
-## 專案與目前任務
+- GPU 主入口：[midterm01_gpu/README.md](midterm01_gpu/README.md)。日常操作與權限：[GPU 操作手冊](midterm01_gpu/doc/MANUAL_WORKFLOW.md)。另遵守 [GPU 工作約定](midterm01_gpu/AGENTS.md)。
+- 目前使用 `--profile sensor_guided`，後端為 `cuda_robust_icp`：GNSS／IMU 先驗、CUDA 最近鄰搜尋、CPU 正則化四自由度細修。這是 CPU／GPU 協作，並非新版 NDT。
+- 程式為相容重現，省略 profile 仍預設 `legacy`／`cuda_ndt`；文件主流程必須明確加 `--profile sensor_guided`。不得把文件推薦寫成程式預設已改。
+- 最新已評分為 `--profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional`；使用者兩條完整序列 3011／3299 筆通過本機核對，截圖回報 Track1 **1.15275**／baseline **1.79075**、Track2 **0.30576**／baseline **1.92587**，截圖當下第 3／第 1 名。相較 geometry off 的 1.16951／0.31967，總分降低 1.43%／4.35%；改動與 SHA256 見 [幾何成績紀錄](midterm01_gpu/doc/GEOMETRY_RESULTS_20261017.md)，上一輪保留於 [heading_rts 紀錄](midterm01_gpu/doc/HEADING_RTS_RESULTS_20261017.md)。省略 fusion 仍是 fixed、geometry 仍是 off；motion_rts 只有短測。舊 Track2 文字 0.56063 與歷史截圖前最佳 0.56083 的差異保留，不回填到未核對的舊 CSV；排名不是即時查榜。
+- CPU Track1 完整結果已讀取核對：`midterm01/outputs/runs/first_test_9vBOV7le/track1_n0_xLOSykY4/result.txt` 有 3011 筆有限矩陣、退出碼 0、log 記錄 0 次失敗，耗時 14813.444 秒。權限已由 root:root 的 `700` 修正為可讀取的 `755`；沒有改動結果內容。見 [CPU 完成與權限紀錄](midterm01/docs/CPU_TRACK1_COMPLETED_20261017.md)。不能據此宣稱 CPU 精度合格或 Track2 完整 CPU 已完成。
+- **後續完整 Track 測試由使用者手動執行並回報結果**；沒有新明確指示，不自行啟動下一輪完整序列。文件更新／讀取既有輸出不需要重跑定位。
 
-這是 SDC 自駕車課程工作區，包含 ROS 2 感測器處理、點雲／Radar、機率模型及車輛定位作業。主要工作為 **Midterm01：將影像重建的 3D 點雲配準到 LiDAR 地圖，估計兩條 Track 每幀的 pose**。使用者單人完成一組，個人貢獻依實際工作記為 100%，不安排找組員或雙人分工。
+## 學習目的與算法改進原則（2026-10-17 使用者指定）
 
-2026-10-16 交接：後續由 **Ubuntu 裡的 Codex** 繼續。使用者已確認資料位於 `~/sdc_ros2/midterm01/data`；下一步是檢查既有資料、建置與保存目前 NDT 參考結果。不要重新以「尚未下載模板／資料」作為開工前提。
+- 使用者修課的首要目的是學習，提升自己思考、推導算法，以及將知識應用在真實世界的能力。後續合作以使用者能理解、解釋並延伸方法為目標。
+- 改進順序為：觀察問題與證據 → 提出可解釋的假說 → 討論模型／算法及適用前提 → 實作與驗證。主動說明數學、物理意義與取捨，讓使用者參與推理與方案選擇；對已授權工作持續完成必要實作與驗證，不新增例行確認關卡。
+- 優先找適合問題、可泛化到其他序列與真實場景的算法。非必要不以特定 Track、幀區間或排行榜回饋的特定化調參作為提高分數的主要手段，不以大量盲目參數搜尋取代模型分析。
+- 必要調參仍可進行，但需說明其必要性、參數的物理／統計意義、假說與驗證方法，例如依感測器噪聲、實測標定、模型適用範圍或數值穩定性設定。對不同 Track 的設定差異，需有可說明的資料／標定依據，不能只因分數較低就視為通用改進。
+- 消融實驗用於理解算法機制與驗證假說；Kaggle 分數作為結果證據之一。保存算法變更與參數變更的區別、成功／失敗結果及限制，不把局部診斷或單次分數改善當作泛化證明。
+- 詳細紀錄見 [GPU 學習與開發原則](midterm01_gpu/doc/DEVELOPMENT_PRINCIPLES.md)。本次僅記錄原則，不因此改動現有算法、參數或結果。
 
-## 目錄與閱讀順序
+## 專案與目錄
+
+這是 SDC 自駕車課程工作區，主要任務是 Midterm01：將影像重建 3D 點雲配準到 LiDAR 地圖，估計兩條 Track 每幀 pose。使用者單人完成一組，個人貢獻依實際工作記為 100%，不安排組員或雙人分工。
 
 | 位置 | 用途 |
 | --- | --- |
-| `hw2/` | 原有 ROS 2 Humble Docker、感測器分析工具與工作區，保留既有用途 |
+| `midterm01_gpu/` | 目前主要 ROS 2 Humble／CUDA 開發、測試與結果 |
+| `midterm01/` | CPU 參考版本、共用 data／config、官方題目與交付文件 |
+| `hw2/` | 原有 ROS 2 Humble Docker、感測器分析工具，保留既有用途 |
 | `hw3/` | Markov chain、模擬與穩態分布練習 |
 | `docs/` | 通用作業／工具說明 |
-| `midterm01/` | 本次定位專案、獨立 Docker、程式、資料與實驗／報告目錄 |
-| `tmp/` | 忽略的暫存、PDF 擷取與預覽，不作為交接必要依賴 |
+| `tmp/` | 忽略的暫存／擷取／預覽，不作為交接依賴 |
 
-Midterm01 開工先讀：
+開工先讀 GPU README、GPU AGENTS 與操作手冊，再依任務閱讀：
 
-1. `midterm01/README.md`：狀態、三層路徑、首跑與已知問題。
-2. `midterm01/docs/SDC 2026 Midterm01 Competition -  Localization.pdf`：官方題目，共 24 頁。注意檔名在 `-` 後有兩個空白。
-3. `midterm01/docs/README.md`：題目分析、評分、期限、改善與交付安排。
-4. `midterm01/docs/KAGGLE_DATASET_SPEC.md`：使用者提供的 Kaggle 原文、topics、CSV 欄位及筆數。
-5. `midterm01/data/README.md`：使用者已建立的資料樹、Ubuntu 檢查方式與 MapAnything 對應。
-6. `midterm01/workspace/src/localization/` 的 `CMakeLists.txt`、`package.xml`、`include/localization/localization.h`、`src/localization.cpp`、`launch/localization.launch.py`、`processing_codes/txt_to_idx_x_y_yaw.py`。
+1. [官方題目 PDF](<midterm01/docs/SDC 2026 Midterm01 Competition -  Localization.pdf>)，共 24 頁；檔名在 `-` 後有兩個空白。
+2. [題目分析與交付要求](midterm01/docs/README.md)、[Kaggle 規格](midterm01/docs/KAGGLE_DATASET_SPEC.md)、[資料說明](midterm01/data/README.md)。
+3. [新版演算法與實測](midterm01_gpu/SENSOR_GUIDED_20261017.md)、[架構教學](midterm01_gpu/doc/ALGORITHM_WALKTHROUGH_20261017.md)。
+4. GPU `scripts/accuracy/benchmark.py`、`scripts/prepare_sensor_prior.py`；`workspace/src/localization/` 的 CMake、package、標頭、`localization.cpp`、`sensor_guided.cpp`、launch、轉檔；`workspace/src/cuda_ndt_backend/` 的 CMake 與 `nearest_neighbor.cu`。
+5. 只有重現舊版本時才讀 [CPU 首跑](midterm01/docs/UBUNTU_FIRST_RUN_20261017.md)、[CUDA NDT](midterm01_gpu/CUDA_NDT_20261017.md)、[CPU／D2D 短序列比較](midterm01_gpu/ACCURACY_COMPARISON_20261017.md)。
 
-資源索引在 `midterm01/docs/DOWNLOADS.md`。參考檔已移入 `midterm01/docs/`，不要依過期的 `localreference/` 路徑重建副本。`docs/UBUNTU_DATA_DOWNLOAD.md` 與 `scripts/download_kaggle.py` 目前均不存在，不恢復舊流程，也不引用為現有入口。正式要求以官方 PDF、Kaggle 及後續公告為準；分析建議不是課程強制演算法。
+資源索引在 `midterm01/docs/DOWNLOADS.md`。不重建 `localreference/`，不引用不存在的 `docs/UBUNTU_DATA_DOWNLOAD.md` 或 `scripts/download_kaggle.py`。正式要求以 PDF、Kaggle 及後續公告為準；分析建議不是課程指定演算法。
 
-## 已知環境與證據範圍
+## Ubuntu／Docker 路徑與隔離
 
-| 層級 | 位置／設定 | 確認範圍 |
+已直接核對專案為 `/home/ricky/sdc_ros2`；換環境仍先用 `pwd`／`realpath`。Docker 指令在 Ubuntu 主機執行，ROS／colcon 在對應容器執行。不因 Windows 缺少資料／Docker 就要求重新下載或改裝 WSL。
+
+| 項目 | GPU（目前使用） | CPU（保留參考） |
 | --- | --- | --- |
-| Windows | `C:\Users\ricky\Downloads\Project\sdc_ros2` | 本次可直接讀寫的 checkout；本地 Track1／Track2 是空目錄 |
-| Ubuntu 主機 | 使用者確認 `~/sdc_ros2`；資料在 `~/sdc_ros2/midterm01/data` | 使用者文字確認與截圖；本次未 SSH 實測 |
-| Midterm01 容器 | Compose service `midterm01`、project `sdc_midterm01`、預設容器 `sdc_midterm01` | 由目前設定推得；實際容器狀態待 Ubuntu 查驗 |
-| HW2 容器 | service `ros2_dev`、映像 `sdc_hw2_ros2:latest`、容器 `ros2_container`、工作目錄 `/ros_ws` | 原有 HW2 設定，與 Midterm01 容器分開 |
+| Compose project | `sdc_midterm01_gpu` | `sdc_midterm01` |
+| Compose service | `midterm01_gpu` | `midterm01` |
+| 預設容器 | `sdc_midterm01_gpu` | `sdc_midterm01` |
+| ROS domain | 2 | 1 |
+| 主機 workspace → `/root/midterm` | `midterm01_gpu/workspace` | `midterm01/workspace` |
+| 主機 outputs → `/root/outputs` | `midterm01_gpu/outputs` | `midterm01/outputs` |
 
-Ubuntu 可直接登入或使用 VS Code Remote SSH；不必依賴 SSH 才能執行指令。先在 Ubuntu 用 `pwd`／`realpath` 確認絕對路徑，不把 `~` 預先展開成猜測的 `/home/...`。Windows 缺少 Docker／ROS／資料不代表 Ubuntu 缺少，不要求改裝 Windows Docker、WSL 或重下載 Ubuntu 已有內容。
+兩個容器內的同名路徑屬不同掛載，**GPU 容器的 `/root/outputs` 看不到 CPU 結果**。主機 VS Code 應開啟 `/home/ricky/sdc_ros2` 並讀主機路徑，不是主機 `/root/outputs`。
 
-現有 Midterm01 Compose 的主機來源均相對於 `midterm01/` 解析：
+GPU Compose 相對 `midterm01_gpu/` 解析：
 
-| Ubuntu 主機來源 | 容器目標 | 權限 |
+| 主機來源 | 容器目標 | 權限 |
 | --- | --- | --- |
+| `.env` 的 `MIDTERM_GPU_DATA_DIR`，預設 `../midterm01/data` | `/root/data` | 唯讀 |
 | `./workspace` | `/root/midterm` | 讀寫 |
-| `.env` 的 `MIDTERM_DATA_DIR`，預設 `./data` | `/root/data` | 唯讀 |
-| `./config` | `/root/config` | 唯讀 |
+| `../midterm01/config` | `/root/config` | 唯讀 |
+| `../midterm01/scripts/check_data.py` | `/root/reference/check_data.py` | 唯讀 |
 | `./scripts` | `/root/scripts` | 唯讀 |
 | `./outputs` | `/root/outputs` | 讀寫 |
 
-Dockerfile 延伸 HW2 基底映像；`dev.sh build` 缺少基底時只傳入 `hw2/Dockerfile` 和 `hw2/ros_entrypoint.sh` 建置。Docker 配置來源為使用者指定的 [HW2 講義](https://hackmd.io/@26f-sdc/rkh6TD-czg)，其 `sdc_hw2/` 對應本專案 `hw2/`，不移動現有目錄來迎合講義名稱。HW2 的 `guanfu_road_clipped_ros2` bag 已有存在紀錄，不能當作 Midterm01 Track 資料。
+資料只有 `midterm01/data` 一份；GPU workspace 是獨立程式快照，不共用或自動同步 CPU build／install。GPU Dockerfile 延伸 `sdc_midterm01_ros2:latest`；CPU 映像延伸 HW2 基底。保留 HW2 目錄、`ros2_container` 與作業 bag，不將 `guanfu_road_clipped_ros2` 當 Midterm Track。GPU 啟停只用自己的 `scripts/dev.sh`，不重啟 Docker daemon、不停止／重建 CPU project。只針對使用者指定的 CPU 輸出修正讀取權限時，限縮到該 run；不 chmod `/root` 或 data，不用 `chmod -R 777`。
 
-Windows／Ubuntu 是兩份 checkout。Git 同步程式；忽略的資料、`.env`、建置產物與輸出須留在各自環境。同步前檢查兩端 Git 狀態，保留既有修改；正式 PDF 與新 Markdown 目前仍需納入實際同步範圍，不能假設未追蹤檔會隨 Git 傳到 Ubuntu。
+## 已驗證資料與程式契約
 
-## 資料已建立的狀態
+- `midterm01/data/Track1`／`Track2` 各含 raw_ply、影像、init_guess、map、metadata 與 bag；兩組 MapAnything 各含 ply、index、report。前相機及 MapAnything 各為 3011／3299 幀，時間／索引核對、bag quick_check 與校正檔位置見 CPU 首跑報告。不要把先前整包下載 404 當目前阻塞或重設已可用 token；確認缺檔才補下載。
+- `camera_info` 在 `TrackN/TrackN_images/camera_info/`；本地尚未找到 official submission sample。MapAnything index 不是提交範例，不能直接套前相機尺度、改名或重套校正。
+- PLY 掃描第一層並由 `_ts_<正整數奈秒>` 排序，不能解析的檔名會略過。每個新 run 保存 frame manifest；時間保持整數精度。
+- 定義 `p_map = T_map_source × (ply_scale × p_raw)`，沿用 `ply_scale=3.0`，尚非正式尺度校準結論。不重複套初始矩陣或外參；source→map 轉為車體 pose 前須確認 frame 契約。
+- `legacy` 使用第一幀 init_guess、之後前一接受 pose；`sensor_guided` 每幀使用 GNSS／IMU 先驗與 bounded robust 細修，拒絕地圖更新時回到當下先驗。CUDA 執行錯誤直接失敗，不靜默改 CPU。
+- 新版由前處理工具依 bag timestamp 產生 `sensor_prior.csv`；benchmark 的 `bag_path` 仍空，不代表新版未使用 bag。GNSS frame_id 空字串、完整外參契約待確認；GNSS 是輸入，不是真值。同步／平滑使用較晚觀測，這是離線方法。
+- 每幀 TXT 是按列攤平的 3×4 共 12 個數值，不含 timestamp；CSV 為 `idx,x,y,yaw`，idx 由 0 起，yaw=atan2(R10,R00) 為弧度。格式被 Kaggle 接受不能代替 frame／單位契約驗證。
+- launch 已有 `use_rviz=false`、空字串停用 `map_cache_file`、outputs 下唯一預設路徑；批次 `keep_alive=false`。舊 Radar／PCD `visualization.cpp` 不能直接當 RGB PLY 回放器。
 
-使用者於 2026-10-16 確認下列內容在 Ubuntu `midterm01/data/`：
+## 工作順序與驗證
 
-- `Track1/`、`Track2/`：各有 `raw_ply/`、`Track1_images/` 或 `Track2_images/`、`init_guess.txt`、`map.pcd`、`metadata.yaml`、`Track1.db3` 或 `Track2.db3`。
-- `kaggle_track01/Track1_Mapanything_ply/` 與 `kaggle_track02/Track2_Mapanything_ply/`：各有 `ply/`、`index.csv`、`report.json`。
+入口為 `midterm01_gpu/scripts/dev.sh`，日常指令見 GPU 操作手冊。修改 C++ 後在 GPU workspace Release 重建；只改 benchmark 幀數不用重編。每次用 `outputs/runs/` 新的唯一目錄，保存 commit／未提交差異、參數、來源 SHA256、frame、結果、耗時與失敗；不覆寫 CPU 或既有最佳 CSV。
 
-截圖證明目錄與檔案名稱，未證明 PLY 筆數、非空、幾何／時間正確或下載完整。`camera_info/` 與 official sample submission 在截圖未見，先搜尋實際位置再判定是否缺少。MapAnything 的 `index.csv` 是待檢查的點雲索引，不直接視為 Kaggle submission。
+目前沒有全 repo 統一測試入口。`check_data.py` 只檢查必要檔、非空、第一層 PLY 數量，不驗證 bag、校正、時間、CSV 或幾何。`config/tracks.json` 不會自動改 launch／C++。只執行與修改相符的檢查；真實資料報告必須保留，不能用合成測試冒充實測精度。
 
-歷史上 Track01 整包下載曾 404，但單檔與清單成功；使用者現已建立資料，不再以舊 404 當作當前阻塞，也不重設已可用的 token。除非確認缺檔，才補下載。
-
-## 程式現況與必須先處理的落差
-
-已存在完整 `localization` package 與基礎 NDT。以目前原始碼為準，不再宣稱「只有空架構」「尚無定位演算法」或要求先重寫 ICP：
-
-- PLY 只掃描指定資料夾的第一層；檔名必須含 `_ts_<正整數奈秒>`，依解析出的時間排序，逐幀載入。無法解析的檔名會略過，現有檢查工具不會發現此差異。
-- `LoadInitialPose()` 讀取 `init_guess.txt` 前四列的 4×4 矩陣，只用作第一幀；後續使用上一幀接受的 pose。
-- 預設 `ply_scale=3.0`、map voxel 1.0、input voxel 0.3、submap 半寬 100／半高 30、NDT resolution 8.0／step 0.8／epsilon 0.05／30 iterations。這些是程式預設，尚非最佳或已校準設定。
-- bag 預設停用；傳入 `bag_path` 才讀 GNSS／IMU，依 **bag timestamp** 保留不晚於 PLY 的最近訊息。目前 NDT 未利用它們修正 pose；資料過期、header timestamp、座標與外參仍需查驗。
-- NDT 成功判定只有收斂與有限值；失敗保留上一個 pose。`min_input_points` 已宣告，但目前未用於點數判斷。壞 PLY、空 submap 等會提早結束，不能以「有結果檔／正常退出」推定輸出完整。
-- 每幀結果是 3×4 矩陣按列攤平的 12 個數值，沒有 timestamp。轉換腳本依行號產生從 0 起的 `idx`，yaw 為 `atan2(R10,R00)` 的弧度；正式 ID、座標與單位須再對照 sample。
-
-Ubuntu 首跑優先事項：
-
-1. 驗證資料結構／數量及可解析的 PLY 時間，核對初始矩陣、尺度、座標系及車體外參；MapAnything 另外核對 `index.csv`、`report.json`，不要直接套前相機尺度或改名。
-2. `localization.launch.py` 無條件開 RViz，沒有 `use_rviz` 參數；無 GUI 首跑用 README 的 `ros2 run localization localization`。如要改 launch，新增明確開關再測試，不捏造尚不存在的參數。
-3. launch 固定 `map_cache_file=map_downsampled_1m.pcd`，會在唯讀資料目錄讀寫快取。首跑 `ros2 run` 省略該參數以停用快取；後續將快取改到 outputs 並區分 Track、voxel 與地圖版本。既有快取會略過下採樣，不能靜默沿用不符設定的檔案。
-4. Python 轉換腳本 import `pandas`、`numpy`、`scipy`，目前實際轉換僅用標準函式庫。Dockerfile 未明確安裝 pandas／scipy；先檢查，決定補依賴或移除未使用 import 後驗證。
-5. launch 的預設結果路徑在 package 內，執行時明確改到 `/root/outputs/runs/<run>/`，避免覆寫既有結果。`keep_alive` 預設 true，批次執行設 false。
-6. `visualization.cpp` 仍是 Radar／PCD 舊介面且含占位路徑，不直接當成影像 PLY 回放工具；優先使用定位節點的點雲／TF／path。
-
-## 建置、驗證與工作順序
-
-Ubuntu 主機入口在 `midterm01/scripts/dev.sh`。完整首跑指令見 `midterm01/README.md`，依序：
-
-1. 檢查 Git、實際資料與既有容器；`init` 只建立缺少的目錄和 `.env`，確認資料根目錄設定。
-2. 可先用主機 Python 執行 `scripts/check_data.py --strict-count`；再做 `config`、`build`、`up`、`status`、容器 `check-data` 與 `build-workspace`。
-3. 容器 source ROS 與 workspace；無 GUI、無 bag、無快取跑單幀，再跑固定短序列，保存參數／版本／輸出及耗時。
-4. 保存兩條 Track 的目前 NDT 參考版 R0，再依失敗案例做單因素改善；ICP、多尺度、三相機與感測器融合均是候選實驗，不是課程指定順序。
-5. 確認 CSV 內容、取得實際 Kaggle 評分後，才宣稱超過 baseline；保存最佳 `result_1.csv`／`result_2.csv`、報告及重現方法。
-
-目前沒有整個 repo 的統一測試入口。`build-workspace` 沒有 package 會失敗。`check_data.py` 只查必要檔存在、非空、第一層 PLY 數量，不查 bag、校正、時間、索引、CSV 或幾何。`config/tracks.json` 只供該工具使用，不會自動更改 launch／C++。修改 C++ 後重新建置；對真實資料執行的檢查需保存報告，不能拿模擬或 Windows 空目錄的結果代替。
+GPU map 快取只能寫 outputs，由 benchmark 核對 Track、map SHA256 與 leaf sidecar，預設停用；不得靜默沿用不符快取。效能比較固定 Release、相同資料片段、cache／GUI 條件，分開讀 map、配準、前處理及建置時間。新版 `timings.csv.ndt_ms` 為歷史欄名，實際是 CUDA 搜尋＋CPU 細修；不能寫成 NDT 計算時間。
 
 ## 正式要求與協作規則
 
-- 使用繁體中文說明與撰寫文件，保留必要英文技術名詞；限定目前任務範圍，保留使用者既有修改。
-- 兩條 Track 都需完成並超過助教 baseline。CSV 表頭順序 `idx,x,y,yaw`，資料列分別恰為 3011／3299，不含表頭；完整 ID／順序及車輛 pose 規格另核對官方 sample。
-- 分清程式內部弧度、提交單位與評分旋轉誤差的度。PDF p.19 是「平移 RMSE + 0.2 × 旋轉 RMSE」；不能把 PCL fitness 或 GNSS 當正式 ATE。
-- 不重複套外參或初始矩陣。明確定義 source 到 map 的變換，再確認是否需轉為車體 pose。
-- 保存 commit／未提交差異、參數、資料來源、frame 對應、輸出、耗時、失敗與兩條 Track 分數。原有下採樣／局部地圖／NDT 不宣稱為自己的新增貢獻。
-- 大型資料、bag、建置產物與執行輸出遵守 `.gitignore`，不強制加入 Git，也不取消現有忽略規則。
-- PDF 公告 Kaggle 截止與簡報寄送為 **2026-10-29 09:00**，當天課堂簡報 **4–6 分鐘**；E3 程式與報告為 **2026-11-05 23:59**。時區、網站最新限制、baseline 與單人檔名仍需官方確認。寄信／提交是待使用者執行或另行授權的事項，不因 PDF 提到就自動操作。
-- 本次只完成 Windows 靜態核對與文件更新；未連線 Ubuntu、未編譯 C++、未跑實際點雲、未取得 Kaggle 分數。後續依實測更新「已完成／待確認」，不得把計畫寫成成功結果。
+- 使用繁體中文說明／文件，保留英文技術名詞及使用者既有修改。`doc/command_paste.txt` 的手動紀錄優先保留，可複製流程另放 `doc/run_sensor_guided.txt`。
+- 兩條 Track 都需完成並超過助教 baseline；CSV 表頭順序 `idx,x,y,yaw`、資料列恰為 3011／3299。完整 ID／順序及車體規格須對照官方 sample／公告。
+- 分清內部弧度、提交單位與評分旋轉誤差的度。PDF p.19 是「平移 RMSE + 0.2 × 旋轉 RMSE」，PCL fitness、地圖殘差、GNSS 差異、GPU 使用率和收斂都不是正式 ATE。
+- 保留實際 Kaggle 分數與來源；本地模板 R0 不等於助教 baseline，舊 CUDA D2D 成績不等於 CPU 成績。下採樣／submap／原 NDT 不宣稱自己的新增貢獻。
+- 資料、bag、`.env`、build／install／log 與 outputs 遵守 `.gitignore`，不強制加入 Git。Windows／Ubuntu 兩份 checkout 僅靠 Git 同步程式／已追蹤文件；忽略的最佳 CSV 與證據另行保存，不假設會同步。
+- PDF 公告 Kaggle 截止與簡報寄送 **2026-10-29 09:00**，當天簡報 **4–6 分鐘**；E3 程式與報告 **2026-11-05 23:59**。時區、網站最新限制、Track2 baseline 與單人檔名另依官方確認。
+- 寄信、Kaggle 提交與 E3 上傳由使用者執行或另行明確授權，不因 PDF 提到就自動操作。後續工作依實測更新，計畫不能寫成成功結果。

@@ -32,7 +32,7 @@ include_directories(
 
 add_definitions(${PCL_DEFINITIONS})
 
-add_executable(localization src/localization.cpp src/sensor_guided.cpp)
+add_executable(localization src/localization.cpp src/sensor_guided.cpp src/geometry_weighting.cpp)
 ament_target_dependencies(localization
   rosbag2_cpp
   rosbag2_storage
@@ -95,9 +95,12 @@ install(
 
 if(BUILD_TESTING)
   enable_testing()
-  add_executable(sensor_guided_test tests/sensor_guided_test.cpp src/sensor_guided.cpp)
+  add_executable(sensor_guided_test tests/sensor_guided_test.cpp src/sensor_guided.cpp src/geometry_weighting.cpp)
   target_link_libraries(sensor_guided_test ${PCL_LIBRARIES} Eigen3::Eigen cuda_ndt_backend::cuda_ndt_backend)
   add_test(NAME sensor_guided_contract COMMAND sensor_guided_test)
+  add_executable(geometry_weighting_test tests/geometry_weighting_test.cpp src/sensor_guided.cpp src/geometry_weighting.cpp)
+  target_link_libraries(geometry_weighting_test ${PCL_LIBRARIES} Eigen3::Eigen cuda_ndt_backend::cuda_ndt_backend)
+  add_test(NAME geometry_weighting_contract COMMAND geometry_weighting_test)
 endif()
 
 ament_package()

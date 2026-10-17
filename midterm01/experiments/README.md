@@ -1,23 +1,21 @@
-# 實驗紀錄
+# Midterm01 實驗索引
 
-R0 使用目前程式已有的前相機 **基礎 NDT**，包含清理、下採樣、局部地圖與失敗保留前一 pose。先保存完整參考結果，再以同資料／片段逐項比較改善。R0 不是助教 baseline，也不是已完成的實驗。
+更新：2026-10-17。後續開發／測試統一在 [GPU 工作區](../../midterm01_gpu/README.md)，完整測試由使用者手動執行並回報。此處保存跨版本索引，實際 run 依版本分別在 CPU／GPU outputs，不搬移舊結果。
 
-| 實驗 | 版本／commit | 點雲來源 | 主要改動 | Track01 分數 | Track02 分數 | 耗時 | 結果位置 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| R0 | 待記錄 | raw_ply | 目前基礎 NDT 參考版 | 待測 | 待測 | 待測 | 待產生 |
+| 版本／實驗 | 已核對範圍 | Track1 Kaggle | Track2 Kaggle | 證據 |
+| --- | --- | --- | --- | --- |
+| 原 CPU PCL NDT R0 | 兩條單幀／前 50 幀，0 fallback；50 幀 322.519／118.509 秒 | 未取得 | 未取得 | [首跑](../docs/UBUNTU_FIRST_RUN_20261017.md) |
+| 使用者 CPU 完整 Track1 | 3011 筆有限矩陣、退出碼 0、log 0 次失敗，14813.444 秒 | 未取得對應成績 | 指定 run 未見完整 Track2 | [CPU 完成紀錄](../docs/CPU_TRACK1_COMPLETED_20261017.md) |
+| GPU workspace 內 CPU Release／CUDA D2D | 兩條前 50 幀，CPU Release 與原 R0 逐 byte 相同；D2D 有較大 pose 跳動 | 不由短序列推算 | 不由短序列推算 | [速度](../../midterm01_gpu/CUDA_NDT_20261017.md)、[幾何比較](../../midterm01_gpu/ACCURACY_COMPARISON_20261017.md) |
+| 舊 CUDA D2D 完整 Track1 | 雖 3011 筆完整，路線停滯／姿態翻轉 | 使用者截圖 **573.36983** | 未回報 | [失效分析](../../midterm01_gpu/SENSOR_GUIDED_20261017.md) |
+| 目前 sensor_guided／cuda_robust_icp | 兩條完整 3011／3299 筆，本機契約與修正限制檢查通過 | 使用者截圖 **1.22369**，同圖 baseline **1.79075** | 未回報 | [新版方法、完整結果與候選 SHA256](../../midterm01_gpu/SENSOR_GUIDED_20261017.md) |
 
-每次記錄：
+自己的 CPU R0 不等於助教 baseline；舊 D2D 分數不能寫成原 CPU 分數。Track1 新版成績來自使用者手動提交／截圖，未另行查榜，不能推及 Track2 或各元件單獨貢獻。
 
-- 要驗證的問題、固定資料片段／frame manifest、資料來源與版本。
-- commit 及未提交差異、完整命令與參數；包含尺度、voxel、submap、NDT、cache、bag 是否啟用。
-- 輸出原始 TXT／CSV、行數／ID 檢查、完整耗時與環境。
-- 成功／失敗 frame、點數、收斂／fitness、姿態變化、fallback 與疊圖；目前節點尚未輸出完整逐幀診斷表，依需求補上。
-- 兩條 Track 的實際 Kaggle 分數、官方 baseline 數字及比較結論。
+新版完整測試的同步＋ROS 時間為 Track1 230.92 秒（命中 map cache）、Track2 144.34 秒（cache 停用）；不與未快取 CPU／舊 CUDA 總耗時直接計算同條件 GPU 加速倍率。Release、演算法、快取與 I/O 都可能影響耗時。
 
-結果放 `outputs/runs/<run>/track1`、`track2`，提交候選放 `outputs/submissions/<run>/`，避免覆寫。結果被 Git 忽略，需另外保存與交接；本目錄追蹤實驗說明與必要設定。
+每個新 run 保存問題／單因素改動、commit／未提交差異、來源 SHA256、參數、frame manifest、TXT／CSV、有限值／列數、退出碼、失敗／先驗回退、軌跡／殘差、分段與完整時間、實際 Kaggle 分數及 CSV SHA256。benchmark 可保存上述執行診斷；外部 Kaggle 分數需由使用者另記。收斂、fitness、GNSS 與地圖貼合都不能替代正式 ATE。
 
-未實跑不填估計分數，不把收斂／fitness 或 GNSS 當成正式 ATE。切換 MapAnything 時先核對 index、時間、尺度及座標；不要同時換全部參數後宣稱單一因素有效。
+原有下採樣／submap／基本 NDT 不算新增貢獻；新版感測器同步、heading 校正、robust 四自由度細修、CUDA 最近鄰、門檻與平滑的設計／限制見 [架構教學](../../midterm01_gpu/doc/ALGORITHM_WALKTHROUGH_20261017.md)。切換 MapAnything 前另核對時間、index、尺度與 frame，不重套外參。
 
-## 2026-10-17 首跑實測
-
-兩條 Track 均已完成既有前相機 NDT 單幀與前 50 幀。輸出列數及有限值通過，fallback 都是 0；單幀耗時為 97.6／14.9 秒，50 幀為 322.5／118.5 秒（Track1／Track2，含讀取地圖）。保持 ply_scale=3.0 與原始 NDT 預設，未更動演算法。Track1 有 0.796 m 相鄰步長、Track2 短序列 yaw 變化約 0.507 rad，精度與穩定性仍待查。完整參數、frame manifest、疊圖及限制見 [實測報告](../docs/UBUNTU_FIRST_RUN_20261017.md)，完整兩條 Track R0 與 Kaggle 評分尚未執行。
+所有資料／輸出遵守 `.gitignore`，Git 不備份最佳 CSV；正式報告與簡報見 [reports/README](../reports/README.md)。

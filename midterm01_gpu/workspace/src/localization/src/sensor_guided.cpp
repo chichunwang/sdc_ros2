@@ -17,9 +17,30 @@ struct Evaluation {
     int inliers = 0;
     Eigen::Matrix4d hessian = Eigen::Matrix4d::Zero();
     V4 gradient = V4::Zero();
+    int reliable_inliers = 0;
+    GeometryMetrics geometry;
 };
 double Wrap(double angle) { return std::atan2(std::sin(angle), std::cos(angle)); }
 }  // namespace
+
+const char* GuidedUpdateStatusName(GuidedUpdateStatus status) {
+    switch (status) {
+        case GuidedUpdateStatus::NotEvaluated: return "not_evaluated";
+        case GuidedUpdateStatus::Accepted: return "accepted";
+        case GuidedUpdateStatus::InsufficientInputPoints: return "insufficient_input_points";
+        case GuidedUpdateStatus::NoMapCandidates: return "no_map_candidates";
+        case GuidedUpdateStatus::NonfiniteObjective: return "nonfinite_objective";
+        case GuidedUpdateStatus::InsufficientMatches: return "insufficient_matches";
+        case GuidedUpdateStatus::InsufficientReliableGeometry: return "insufficient_reliable_geometry";
+        case GuidedUpdateStatus::InsufficientUniqueTargets: return "insufficient_unique_targets";
+        case GuidedUpdateStatus::ObjectiveIncreased: return "objective_increased";
+    }
+    return "unknown";
+}
+bool IsGeometrySupportFallback(GuidedUpdateStatus status) {
+    return status == GuidedUpdateStatus::InsufficientReliableGeometry ||
+           status == GuidedUpdateStatus::InsufficientUniqueTargets;
+}
 
 bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
                         const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& target,
@@ -27,15 +48,23 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
                         bool cuda_valid, const Eigen::Vector4d& previous_correction,
                         double smoothing_alpha, double max_xy, double max_yaw,
                         Eigen::Matrix4f& output, Eigen::Vector4d& correction,
-                        GuidedMetrics& metrics, bool use_cuda_nn) {
+                        GuidedMetrics& metrics, bool use_cuda_nn, const GeometryConfig& geometry_config) {
+    geometry_config.Validate();
+    metrics = GuidedMetrics{};
     const Eigen::Matrix4f saved_seed = cuda_seed;
     correction.setZero();
     output = prior;
-    if (source->size() < 10 || target->size() < 10) return false;
+    metrics.geometry.input_points = source->size();
+    if (source->size() < 10 || target->size() < 10) {
+        metrics.update_status = GuidedUpdateStatus::InsufficientInputPoints;
+        return false;
+    }
     pcl::KdTreeFLANN<pcl::PointXYZ> tree;
     if (!use_cuda_nn) tree.setInputCloud(target);
     const Eigen::Matrix3d rotation_prior = prior.block<3, 3>(0, 0).cast<double>();
     const Eigen::Vector3d translation_prior = prior.block<3, 1>(0, 3).cast<double>();
+    std::unique_ptr<SurfaceGeometryCache> geometry;
+    if (geometry_config.enabled()) geometry = std::make_unique<SurfaceGeometryCache>(target, geometry_config);
     std::unique_ptr<cuda_ndt_backend::NearestNeighbor> gpu_nn;
     std::vector<int> gpu_to_target;
     if (use_cuda_nn) {
@@ -67,8 +96,10 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
         if (local_target.empty()) {
             // No map point can enter the inlier region. This is an explicit
             // sensor-only result, not a failed CUDA call or CPU fallback.
-            metrics.prior_cost = metrics.final_cost = (0.5 * (2.0 - 0.25)) / (0.3 * 0.3);
+            metrics.prior_cost = metrics.final_cost = (0.5 * (2.0 - 0.25)) / (0.3 * 0.3) *
+                (geometry_config.directional() ? geometry_config.normal_gain : 1.0);
             metrics.prior_rmse = metrics.final_rmse = 2.0;
+            metrics.update_status = GuidedUpdateStatus::NoMapCandidates;
             return false;
         }
         gpu_nn = std::make_unique<cuda_ndt_backend::NearestNeighbor>(local_target, static_cast<int>(source->size()));
@@ -80,11 +111,16 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
     const auto valid = [&](const V4& x) {
         return x.allFinite() && x.head<2>().norm() <= max_xy && std::abs(x[2]) <= 1.5 && std::abs(x[3]) <= max_yaw;
     };
-    const auto evaluate = [&](const V4& x, bool derivatives) {
+    const auto evaluate = [&](const V4& x, bool derivatives, bool collect_geometry = false) {
         Evaluation e;
         e.cost = 0.5 * x.dot(precision.cwiseProduct(x));
         e.gradient = precision.cwiseProduct(x);
         e.hessian = precision.asDiagonal();
+        Eigen::Matrix3d normal_information = Eigen::Matrix3d::Zero();
+        Eigen::Vector3d low = Eigen::Vector3d::Constant(std::numeric_limits<double>::infinity());
+        Eigen::Vector3d high = -low;
+        std::vector<bool> seen(collect_geometry ? target->size() : 0, false);
+        double confidence_sum = 0.0, plane_squared_sum = 0.0;
         const Eigen::Matrix3d rotation = Eigen::AngleAxisd(x[3], Eigen::Vector3d::UnitZ()).toRotationMatrix() * rotation_prior;
         std::vector<int> indices(1);
         std::vector<float> distances(1);
@@ -121,17 +157,78 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
             // Constant outlier cost prevents reducing the objective just by losing matches.
             const double clipped = std::min(length, cutoff);
             const double loss = clipped <= huber ? 0.5 * clipped * clipped : huber * (clipped - 0.5 * huber);
-            e.cost += normalize * loss;
+            const SurfaceGeometry* surface = nullptr;
+            if (geometry && length <= cutoff && (geometry_config.directional() || collect_geometry))
+                surface = &geometry->At(indices[0]);
+            double metric_length = length;
+            if (geometry_config.directional()) {
+                const double unmatched_loss = huber * (cutoff - .5 * huber);
+                double directional_loss = unmatched_loss;
+                if (surface && surface->reliable) {
+                    metric_length = std::sqrt(std::max(0.0, residual.dot(surface->metric * residual)));
+                    const double projected_loss = metric_length <= huber ? .5 * metric_length * metric_length : huber * (metric_length - .5 * huber);
+                    // Unreliable/missing matches retain the same constant cost.
+                    // Moving to lower confidence cannot lower cost by itself.
+                    directional_loss -= surface->confidence * (unmatched_loss - projected_loss);
+                    ++e.reliable_inliers;
+                }
+                e.cost += normalize * geometry_config.normal_gain * directional_loss;
+            } else {
+                // This path preserves the previously scored objective exactly.
+                e.cost += normalize * loss;
+            }
             e.mse += clipped * clipped / static_cast<double>(source->size());
             if (length > cutoff) continue;
             ++e.inliers;
-            if (!derivatives) continue;
+            if (!derivatives && !collect_geometry) continue;
             Eigen::Matrix<double, 3, 4> jacobian = Eigen::Matrix<double, 3, 4>::Zero();
             jacobian.block<3, 3>(0, 0).setIdentity();
             jacobian.col(3) = Eigen::Vector3d(-rotated.y(), rotated.x(), 0.0);
-            const double weight = normalize * std::min(1.0, huber / std::max(length, 1e-12));
-            e.hessian.noalias() += weight * jacobian.transpose() * jacobian;
-            e.gradient.noalias() += weight * jacobian.transpose() * residual;
+            if (collect_geometry && surface && surface->reliable) {
+                ++e.geometry.reliable_points;
+                confidence_sum += surface->confidence;
+                const double plane_residual = surface->normal.dot(residual);
+                plane_squared_sum += plane_residual * plane_residual;
+                const Eigen::RowVector4d normal_jacobian = surface->normal.transpose() * jacobian;
+                const V4 state_scale(1.0, 1.0, 1.0, 3.0 * M_PI / 180.0);
+                const Eigen::RowVector4d scaled_jacobian = normal_jacobian * state_scale.asDiagonal();
+                const double w = normalize * surface->confidence * std::min(1.0, huber / std::max(std::abs(plane_residual), 1e-12));
+                // No prior, tangential floor or normal_gain is included in the
+                // diagnostic information; it must reveal planar degeneracy.
+                e.geometry.scaled_information.noalias() += w * scaled_jacobian.transpose() * scaled_jacobian;
+                normal_information.noalias() += surface->confidence * surface->normal * surface->normal.transpose();
+                if (!seen[indices[0]]) {
+                    seen[indices[0]] = true;
+                    ++e.geometry.unique_targets;
+                    const Eigen::Vector3d point = (*target)[indices[0]].getVector3fMap().cast<double>();
+                    low = low.cwiseMin(point);
+                    high = high.cwiseMax(point);
+                }
+            }
+            if (!derivatives) continue;
+            if (geometry_config.directional()) {
+                if (!surface || !surface->reliable) continue;
+                const double weight = normalize * geometry_config.normal_gain * surface->confidence *
+                    std::min(1.0, huber / std::max(metric_length, 1e-12));
+                e.hessian.noalias() += weight * jacobian.transpose() * surface->metric * jacobian;
+                e.gradient.noalias() += weight * jacobian.transpose() * surface->metric * residual;
+            } else {
+                const double weight = normalize * std::min(1.0, huber / std::max(length, 1e-12));
+                e.hessian.noalias() += weight * jacobian.transpose() * jacobian;
+                e.gradient.noalias() += weight * jacobian.transpose() * residual;
+            }
+        }
+        if (collect_geometry) {
+            e.geometry.input_points = source->size();
+            e.geometry.euclidean_inliers = e.inliers;
+            e.geometry.pca_queries = geometry->queries();
+            if (e.geometry.reliable_points > 0) {
+                e.geometry.mean_confidence = confidence_sum / e.geometry.reliable_points;
+                e.geometry.plane_rmse_m = std::sqrt(plane_squared_sum / e.geometry.reliable_points);
+                normal_information /= e.geometry.reliable_points;
+                e.geometry.support_span_m = high - low;
+            }
+            FinishGeometryMetrics(e.geometry, normal_information);
         }
         return e;
     };
@@ -154,6 +251,7 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
     for (int iteration = 0; iteration < 15; ++iteration) {
         const Evaluation current = evaluate(x, true);
         if (current.inliers < 10 || !std::isfinite(current.cost)) break;
+        if (geometry_config.directional() && current.reliable_inliers < 10) break;
         V4 step = -current.hessian.ldlt().solve(current.gradient);
         if (!step.allFinite()) break;
         const double scale = std::min({1.0, 0.25 / std::max(step.head<3>().norm(), 1e-12),
@@ -179,10 +277,26 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
         smoothed = x;
         final = evaluate(x, false);
     }
-    if (final.inliers < 10 || !std::isfinite(final.cost) || final.cost > baseline.cost + 1e-9) {
+    if (geometry_config.enabled()) {
+        final = evaluate(smoothed, false, true);
+        metrics.geometry = final.geometry;
+    }
+    metrics.candidate_inliers = final.inliers;
+    metrics.candidate_reliable_points = metrics.geometry.reliable_points;
+    metrics.candidate_unique_targets = metrics.geometry.unique_targets;
+    if (!std::isfinite(final.cost)) metrics.update_status = GuidedUpdateStatus::NonfiniteObjective;
+    else if (final.inliers < 10) metrics.update_status = GuidedUpdateStatus::InsufficientMatches;
+    else if (final.cost > baseline.cost + 1e-9) metrics.update_status = GuidedUpdateStatus::ObjectiveIncreased;
+    else if (geometry_config.directional() && metrics.geometry.reliable_points < 10)
+        metrics.update_status = GuidedUpdateStatus::InsufficientReliableGeometry;
+    else if (geometry_config.directional() && metrics.geometry.unique_targets < 6)
+        metrics.update_status = GuidedUpdateStatus::InsufficientUniqueTargets;
+    else metrics.update_status = GuidedUpdateStatus::Accepted;
+    if (metrics.update_status != GuidedUpdateStatus::Accepted) {
         metrics.final_cost = baseline.cost;
         metrics.final_rmse = metrics.prior_rmse;
         metrics.inliers = baseline.inliers;
+        if (geometry_config.enabled()) metrics.geometry = evaluate(V4::Zero(), false, true).geometry;
         return false;
     }
     correction = smoothed;
@@ -191,6 +305,7 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
     metrics.final_cost = final.cost;
     metrics.final_rmse = std::sqrt(final.mse);
     metrics.inliers = final.inliers;
+    metrics.geometry.directional_update_used = geometry_config.directional();
     return true;
 }
 }  // namespace localization

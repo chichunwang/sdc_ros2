@@ -1,115 +1,125 @@
-# Midterm01 GPU 開發環境
+# Midterm01 GPU 主工作區
 
-新增 GNSS／IMU 約束的定位 profile，處理舊 CUDA D2D 完整 Track1 漂移與姿態翻轉；使用時加 `--profile sensor_guided`，預設使用新 `cuda_robust_icp`（GPU 最近鄰搜尋＋CPU 受約束細修），詳見 [SENSOR_GUIDED_20261017.md](SENSOR_GUIDED_20261017.md)。舊指令預設仍為 `legacy`／`cuda_ndt`，用於重現先前結果。使用者於 2026-10-17 手動提交新版 Track1，截圖回報 **1.22369**，優於同圖 baseline **1.79075**；Track2 分數尚未回報。三階段架構與演算法教學見 [doc/ALGORITHM_WALKTHROUGH_20261017.md](doc/ALGORITHM_WALKTHROUGH_20261017.md)。
+2026-10-17 起，Midterm01 後續開發、建置與測試統一在 **`/home/ricky/sdc_ros2/midterm01_gpu`**。原 `midterm01/` 保留 CPU 參考程式、既有結果、官方文件與共用資料。
 
-此目錄是 `/home/ricky/sdc_ros2/midterm01_gpu` 的獨立 ROS 2 Humble／CUDA 12.8 開發環境，針對 RTX 5060 的 `sm_120` 編譯。原有 `midterm01` 容器與正在執行的 CPU 定位保留。
+使用者指定的首要目的是學習、自主推導與真實世界應用：先理解問題並選擇適合的算法，必要時才依物理／統計或標定依據調參。後續討論與實作遵循 [學習與算法改進原則](doc/DEVELOPMENT_PRINCIPLES.md)，以可解釋、可驗證及可泛化的方法為主。
 
-2026-10-17 後續檢查：主機 CDI 已啟用，新容器已通過 RTX 5060 的真實 CUDA kernel／4096 個結果核對，證據在 `outputs/runs/cuda_runtime_20261017_79psai_k/`。後續已整合 CUDA NDT，現在定位預設使用 `registration_backend=cuda_ndt`；實際定位測試與限制見 `CUDA_NDT_20261017.md`。
+目前最佳流程使用 **`--profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional` → `cuda_robust_icp`**：GNSS／IMU 時變 heading 先驗、GPU 最近鄰搜尋、CPU 方向性正則化四自由度細修。程式為重現舊結果，省略 profile 仍使用 `legacy`／`cuda_ndt`，省略 sensor-fusion 仍是 `fixed`，geometry 預設仍為 `off`；推薦命令必須明確帶三個選項。
 
-兩條 Track 前 50 幀的幾何貼合與軌跡穩定性比較見 [ACCURACY_COMPARISON_20261017.md](ACCURACY_COMPARISON_20261017.md)。目前 CUDA D2D 與原 PCL 演算法不同，實測有較大的 pose 跳動，尚不能視為等精度替代；保留原 PCL 演算法的 CUDA 移植尚未實作。
+| 項目 | 已有證據／範圍 |
+| --- | --- |
+| GPU 環境 | ROS 2 Humble、CUDA 12.8、RTX 5060 `sm_120`；CDI 與真實 CUDA kernel／4096 個結果核對已通過 |
+| 新版完整序列 | heading_rts＋directional Track1 3011、Track2 3299 筆，使用者手動完成，本機驗證通過 |
+| Track1 Kaggle | 最新使用者截圖 **1.15275**，前最佳 **1.16951**；同圖 baseline **1.79075**，當下第 3 名 |
+| Track2 Kaggle | 最新使用者截圖 **0.30576**，前最佳 **0.31967**；同圖 baseline **1.92587**，當下第 1 名 |
+| 舊 CPU Track1 | 完整 3011 筆已核對；先前空目錄是 root:root／700 權限造成，已修正可讀 |
 
-## 資料與隔離
+日常編輯、跑指定幀數、找結果與 chmod 請看 [GPU 操作手冊](doc/MANUAL_WORKFLOW.md)。可直接貼上的新版命令在 [run_sensor_guided.txt](doc/run_sensor_guided.txt)；[command_paste.txt](doc/command_paste.txt) 保留使用者手動記錄。後續完整測試及 Kaggle 提交由使用者手動執行並回報結果。
 
-| 主機來源 | 容器位置 | 用途／權限 |
+改進前的診斷見 [濾波分析](doc/FILTER_ANALYSIS_20261017.md)：既有流程已平滑 GNSS 與 map correction；獨立離線比較工具可另存局部多項式／RTS 後處理候選，這些後處理候選沒有 Kaggle 分數。下列已評分的 heading_rts 是感測器先驗融合改動。
+
+已實作 [感測器融合](doc/SENSOR_FUSION_20261017.md)：`heading_rts` 以有品質門檻的 GNSS course 校正 IMU 慢變 heading bias。使用者已完成兩條完整測試與 Kaggle 提交，分數相對截圖中的前最佳降低 **4.43%／43.00%**；變更、run、CSV SHA256 與成績證據見 [進步紀錄](doc/HEADING_RTS_RESULTS_20261017.md)。排名是截圖快照，不是即時查榜。`motion_rts` 額外估 GNSS 位置／速度，目前僅有短測，沒有其 Kaggle 成績。
+
+已實作並評分的 [幾何診斷與方向性配準](doc/GEOMETRY_DIRECTIONAL_20261017.md)：明確加 `--geometry-mode directional`，以局部表面 PCA 品質及法向／切向 metric 調整地圖殘差。使用者兩條完整測試／提交回報 **1.15275／0.30576**，比前最佳降低 **1.43%／4.35%**，見 [本輪成績、比較與最佳 CSV](doc/GEOMETRY_RESULTS_20261017.md)。完整手動命令見 [run_geometry_directional.txt](doc/run_geometry_directional.txt)。預設仍是 `off`；`diagnostic` 只加診斷，不沿用 directional 的分數。
+
+directional Track2 3299 幀中，有 252 幀拒絕地圖細修並輸出當幀先驗，完整輸出檢查仍通過。第 410 幀的舊 `scan update failed` 是幾何支持保護，詳見 [警告調查與診斷修正](doc/GEOMETRY_FALLBACK_20261017.md)。新程式會記錄候選拒絕原因，保留原配準目標與門檻；此診斷修改不獨立歸功於本輪分數進步。
+
+## 日常使用：Ubuntu 主機
+
+```bash
+cd /home/ricky/sdc_ros2/midterm01_gpu
+bash scripts/dev.sh up
+
+# 修改 C++／CUDA 後重編；只改 --frames 不需重編。
+bash scripts/dev.sh build-workspace --packages-select cuda_ndt_backend localization
+
+# 依序完成兩條前 50 幀測試。
+python3 scripts/benchmark.py --track 1 --frames 50 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
+python3 scripts/benchmark.py --track 2 --frames 50 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
+```
+
+以下完整測試由使用者依序手動執行：
+
+```bash
+python3 scripts/benchmark.py --track 1 --frames 3011 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
+python3 scripts/benchmark.py --track 2 --frames 3299 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
+```
+
+`--frames` 只接受正整數，預設 50；benchmark **不以 0 表示全部**。Track 與幀數只選依 timestamp 排序的前 N 幀，不需修改程式。每次產生唯一 run，終端印出主機 `Run:` 路徑；已有 localization 執行時拒絕啟動第二輪。本機已建置，不必每次重建 Docker；執行中不要重建 workspace 或更換容器設定。
+
+## 主機與容器路徑
+
+| 主機來源（相對本目錄） | 容器位置 | 用途／權限 |
 | --- | --- | --- |
-| `../midterm01/data` | `/root/data` | 共用現有資料，唯讀，不建立第二份 |
-| `./workspace` | `/root/midterm` | 本環境獨立程式、build、install、log，讀寫 |
-| `../midterm01/config` | `/root/config` | 共用 Track 檢查設定，唯讀 |
-| `./scripts` | `/root/scripts` | GPU 環境工具，唯讀 |
-| `./outputs` | `/root/outputs` | 本環境建置紀錄、測試與定位輸出，讀寫 |
+| `../midterm01/data` | `/root/data` | 唯一原始資料，唯讀 |
+| `./workspace` | `/root/midterm` | GPU 程式、build、install、log，讀寫 |
+| `../midterm01/config` | `/root/config` | Track 基本檢查設定，唯讀 |
+| `../midterm01/scripts/check_data.py` | `/root/reference/check_data.py` | 共用檢查工具，唯讀 |
+| `./scripts` | `/root/scripts` | GPU 工具，唯讀 |
+| `./outputs` | `/root/outputs` | GPU run、提交候選與圖，讀寫 |
 
-Compose project／service／預設容器均為 `sdc_midterm01_gpu`，映像為 `sdc_midterm01_gpu_ros2:cuda12.8`，`ROS_DOMAIN_ID=2`。原 CPU 環境使用 domain 1。啟停腳本只操作 GPU project。
+Compose **project** 為 `sdc_midterm01_gpu`、**service** 為 `midterm01_gpu`、**預設容器** 為 `sdc_midterm01_gpu`，映像 `sdc_midterm01_gpu_ros2:cuda12.8`，ROS domain 2；原 CPU domain 1。資料根目錄由 `.env` 的 `MIDTERM_GPU_DATA_DIR` 設定，預設 `../midterm01/data`。`create_host_path: false` 在來源不存在時直接報錯。
 
-`workspace/src/localization` 是建立此環境時從原環境複製的程式快照，後續獨立編輯；不會自動同步修改，也不共用原環境的 build 或 install。資料根目錄由 `.env` 的 `MIDTERM_GPU_DATA_DIR` 設定，預設 `../midterm01/data`。Docker 使用 `create_host_path: false`，來源不存在時直接報錯，不建立空資料夾。
+GPU workspace 是獨立程式快照，與 CPU 不自動同步，也不共用 build／install。主機 VS Code 開啟 `/home/ricky/sdc_ros2`，可同時檢視兩側原始碼與結果。
 
-## 建置
+**兩個容器的 `/root/outputs` 對應不同目錄**：GPU 是主機 `midterm01_gpu/outputs`，CPU 是 `midterm01/outputs`。你貼的 CPU run 在主機位置：
 
-以下在 Ubuntu 主機執行：
+```text
+/home/ricky/sdc_ros2/midterm01/outputs/runs/first_test_9vBOV7le/track1_n0_xLOSykY4
+```
+
+原始 `result.txt` 有 3011 行；目前該 run 沒有 CSV，需轉檔才會有。主機讀取權限修復與轉檔見 [操作手冊](doc/MANUAL_WORKFLOW.md#cpu-結果看不到與-chmod)，完成證據見 [CPU 紀錄](../midterm01/docs/CPU_TRACK1_COMPLETED_20261017.md)。
+
+## 輸出與檢查
+
+新版 run 名稱包含 `sensor_guided_cuda_robust_icp`。先查看 `validation.json` 的 `returncode=0`、`output_complete_and_finite=true`、空 `validation_errors` 與預期筆數，再看 `guidance.csv`／軌跡／Kaggle 分數。`result.txt` 是 12 數值矩陣；`diagnostic.csv` 是 `idx,x,y,yaw`，yaw 為弧度。完整 CSV 才能作提交候選；50 幀 CSV 僅供診斷。
+
+每輪另保存完整參數／命令、commit／未提交差異、來源與 binary SHA256、`frames.csv`、`sensor_prior.csv/json`、逐幀時間、GPU 取樣與 log。新版以獨立前處理讀取 bag；ROS `bag_path` 空字串不代表沒使用 GNSS／IMU。`guidance.csv` 記錄地圖修正與目標函數，拒絕更新時輸出當下感測器先驗；CUDA 執行錯誤直接失敗，不切換 CPU 後端。
+
+`pipeline_elapsed_seconds` = `sensor_preparation_seconds` + ROS `elapsed_seconds`；不含建置、版本保存及 map cache 雜湊核對。新版 `timings.csv.ndt_ms` 是沿用欄名，實際為 **CUDA 搜尋＋CPU 正則化細修**；`fitness_ms=0`。`cuda_converged_frames`／`cuda_seed_used_frames` 是舊 D2D 欄位，新版為 0 屬正常。不得把收斂、fitness、GNSS 或地圖殘差當真值精度。
+
+map 快取預設停用。需要時明確加 `--map-cache outputs/runs/<實驗目錄>/cache_track1_leaf1.pcd`，只能在 GPU outputs 下，且核對 Track、原 map SHA256、leaf sidecar。首次建立仍讀原 map；比較速度須使用相同快取策略。Track1 ASCII map 讀取成本大，命中快取的時間不能與未快取結果直接計算 GPU 加速倍率。
+
+## 環境建置與診斷
+
+本機既有環境已通過 GPU runtime，以下為重建／移機入口：
 
 ```bash
 cd /home/ricky/sdc_ros2/midterm01_gpu
 bash scripts/dev.sh init
 bash scripts/dev.sh config
 bash scripts/dev.sh build
-```
-
-Dockerfile 延伸已存在的 `sdc_midterm01_ros2:latest`，安裝 CUDA 12.8 的 nvcc、cudart 開發套件及 CCCL；不在主機安裝 CUDA 或替換 NVIDIA 驅動。建置時會編譯 `sm_120` CUDA 檢查程式。
-
-## 主機啟用 GPU：Docker 原生 CDI
-
-主機需有可用的 NVIDIA 驅動與支援[原生 CDI 的 Docker](https://docs.docker.com/reference/cli/docker/container/run/#cdi-devices)（28.3 以後預設啟用）。此機的 Docker 29.9.0 已回報 `/etc/cdi`、`/var/run/cdi` 搜尋路徑。
-
-若主機尚未安裝 NVIDIA Container Toolkit，需由使用者在主機輸入 sudo 密碼執行一次：
-
-```bash
-sudo bash scripts/setup_host_gpu.sh
-```
-
-此腳本依 [NVIDIA 官方安裝方式](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) 設定套件來源，安裝 `nvidia-container-toolkit-base`，並依 [CDI 官方說明](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/cdi-support.html) 產生 `/var/run/cdi/nvidia.yaml`。只使用原生 CDI，不修改 Docker daemon 設定、不重啟 Docker。Toolkit 的 CDI refresh 機制負責開機／驅動更新後重新產生規格；更換驅動或裝置後若出問題，重新執行生成與檢查。
-
-```bash
 bash scripts/dev.sh up
 bash scripts/dev.sh cuda-check
 bash scripts/dev.sh build-workspace
-run_dir="$(mktemp -d outputs/runs/check_XXXXXXXX)"
-bash scripts/dev.sh check-data --strict-count \
-  --output "/root/outputs/runs/$(basename "$run_dir")/data_check.json"
-bash scripts/dev.sh shell
 ```
 
-`cuda-check` 必須實際通過記憶體配置、CPU→GPU 傳輸、GPU kernel 執行、GPU→CPU 傳輸及 4096 個計算結果核對，才算 GPU runtime 通過；只看到 `nvcc --version` 或 `nvidia-smi` 不足以證明。
+Dockerfile 延伸已存在的 CPU 基底 `sdc_midterm01_ros2:latest`，安裝 CUDA 12.8 的 nvcc、cudart 開發套件與 CCCL，編譯 `sm_120` probe；不替換主機 NVIDIA 驅動。缺少 CPU 基底時依 [CPU README](../midterm01/README.md) 的基底建置方式處理。`BUILD_WORKERS` 預設 2，限制 colcon 與各 package 編譯工作數。
 
-尚未啟用主機 CDI 時，可以明確使用無 GPU 診斷模式完成映像／ROS 建置與唯讀資料檢查：
-
-```bash
-bash scripts/dev.sh --cpu up
-bash scripts/dev.sh build-workspace
-bash scripts/dev.sh check-data --strict-count
-```
-
-此模式的 `cuda-check` 預期失敗。主機 CDI 完成後，執行一般 `bash scripts/dev.sh up`，只會重建本 GPU project 的容器並加入 GPU，保留 workspace 與 outputs。
-
-## CUDA NDT 與前 50 幀試跑
-
-`cuda_ndt_backend` package 以固定 commit／SHA256 建置 [fast_gicp 的 CUDA NDT](https://github.com/koide3/fast_gicp)。預設 `cuda_ndt`、D2D、DIRECT7；Track1 測試中 P2D 出現較大的姿態跳動，最後選用 D2D，仍不保證等同或優於原 CPU 軌跡。初始化或 CUDA 執行錯誤會直接失敗，不會改成 CPU 後端。一般不收斂時仍沿用原本保留上一個 pose 的規則，並記錄失敗幀。
-
-在主機執行：
-
-```bash
-cd /home/ricky/sdc_ros2/midterm01_gpu
-bash scripts/dev.sh up
-bash scripts/dev.sh build-workspace
-python3 scripts/benchmark.py --track 1 --frames 50
-```
-
-幀數直接改指令中的 `--frames 50`，例如 `--frames 100` 就跑從起始開始、依 timestamp 排序的前 100 幀，不用改 C++ 或重新編譯。省略時預設 50；此腳本只接受正整數，不以 0 表示全部。完整預期筆數為 Track1 的 `--frames 3011`、Track2 的 `--frames 3299`，執行前須確認資料與短序列結果。已建置後，日常使用只需 `up` 與執行 benchmark；修改程式後才重新 `build-workspace`。可直接貼上的常用流程見 [doc/command_paste.txt](doc/command_paste.txt)。
-
-Track2 改成 `--track 2`。明確比較同一個 Release 程式內的 CPU PCL 後端：
-
-```bash
-python3 scripts/benchmark.py --track 1 --frames 50 --backend pcl_ndt
-```
-
-每次自動產生唯一的 `outputs/runs/trackN_<backend>_<mode>_<frames>f_*` 目錄，保存完整參數、命令、版本／來源 SHA256、frame 對應、原始矩陣、診斷 CSV、逐幀分段時間、GPU 使用取樣、程序退出碼與輸出有限值／筆數檢查。`--compare /path/to/result.txt` 可額外記錄軌跡差異；該差異不是 ground truth 誤差。腳本不開 RViz、不讀 bag、不使用 map 快取，預設總時間包含地圖讀取／下採樣，且拒絕在本容器已有 localization 時再啟動另一輪。
-
-重複比較不同設定時，可明確加 `--map-cache outputs/runs/<唯一實驗目錄>/cache_track1_leaf1.pcd`，將約 50 萬點的衍生下採樣地圖存於 outputs；原始 5953 萬點地圖與資料集仍只有 `midterm01/data` 一份。首次產生仍讀取原始 map；後續使用時先核對 Track、原始 map SHA256 與 leaf size 的 sidecar，拒絕不符的快取。SHA256 前置檢查不計入 ROS 程序時間；結果另記是否命中快取。比較完整耗時時兩邊必須使用相同快取策略，不能將命中快取的時間對比原始未快取結果。預設比較仍停用快取。
-
-`timings.csv` 的 `ndt_ms` 包含 input／submap 設定、傳輸、target tree／voxel 建立、配準及 CUDA 同步；`fitness_ms` 是另計的 CPU PCL fitness。`publish_ms` 包含顏色點雲濾波、發布與 pose 寫入。程式啟動時另印地圖初始化秒數。
-
-CUDA 大量點運算包括 voxel 統計、correspondence、cost、gradient 與 Hessian；CPU 仍處理 6×6 LM 解算、讀檔／濾波／裁切、fitness 與 ROS 發布。CUDA 使用 LM，`cuda_translation_epsilon=0.01`、`cuda_rotation_epsilon=0.002`；`ndt_step_size`／`ndt_transformation_epsilon` 只適用於 `pcl_ndt`。兩者最佳化與鄰域行為不同，不能保證同一軌跡，也不能把速度提升視為精度提升。
-
-CUDA target 先平移至 voxel resolution 整數倍的局部原點，避免數千公尺全域座標的 float voxel 共變異數消去誤差；初值平移到同一座標系，最終 pose 再加回原點，voxel 格線相位與 source→map 定義保留。這是數值座標平移，不是另外套外參或重套初始矩陣。無有效 Hessian 的結果會視為未收斂，避免零對應點被誤報成功。
-
-後續執行定位時保持 `p_map = T_map_source × (ply_scale × p_raw)` 定義與單次初值套用規則；沿用原資料的 frame／尺度待確認事項。輸出明確指定新的 `/root/outputs/runs/<唯一run>/`，不覆寫原 CPU 結果，不自動提交 Kaggle。
-
-`build-workspace` 預設最多兩個 colcon worker；原 CPU 工作仍在執行時可在 `.env` 將 `BUILD_WORKERS=1`。該參數控制 package 並行數；本環境另外限制各 package 的編譯工作數以控制負載。
-
-## 狀態與記錄
+若移機後尚未設定 NVIDIA CDI，在該主機執行一次 `sudo bash scripts/setup_host_gpu.sh`，再 `up`／`cuda-check`。依 [NVIDIA 安裝文件](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) 與 [CDI 文件](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/cdi-support.html)，腳本設定 Toolkit base 與 CDI，不重啟 Docker daemon。`bash scripts/dev.sh --cpu up` 僅供無 GPU 建置／診斷，不能執行新版 GPU 定位或宣稱 GPU 通過。`cuda-check` 須完成配置、傳輸、kernel 與結果核對，只有 nvidia-smi／nvcc 輸出不算。
 
 ```bash
 bash scripts/dev.sh doctor
 bash scripts/dev.sh status
+bash scripts/dev.sh shell
 bash scripts/dev.sh stop
 ```
 
-實際建置／驗證記錄放在 `outputs/runs/`，詳細首建狀態見 `SETUP_20261017.md`。輸出、`.env`、build、install、log 均由 Git 忽略。
+上述管理入口只操作 GPU project。共用資料基本檢查可用 `bash scripts/dev.sh check-data --strict-count`；要保存 JSON 時依操作手冊建立唯一 run。GUI 尚未現場驗證；GPU dev.sh 沒有 `--gui`，不要套 CPU 手冊的 GUI 指令。
+
+## 文件與歷史比較
+
+| 文件 | 用途 |
+| --- | --- |
+| [GPU 操作手冊](doc/MANUAL_WORKFLOW.md) | 編輯、建置、幀數、輸出、chmod、CPU 轉檔 |
+| [heading_rts 進步紀錄](doc/HEADING_RTS_RESULTS_20261017.md) | 本輪 1.16951／0.31967、改動、完整 run、SHA256 與截圖證據 |
+| [SENSOR_GUIDED_20261017.md](SENSOR_GUIDED_20261017.md) | 目前演算法、完整序列、本地限制與使用者回報成績 |
+| [架構教學](doc/ALGORITHM_WALKTHROUGH_20261017.md) | 模板 → CUDA D2D → 感測器約束 ICP 的演進 |
+| [SETUP_20261017.md](SETUP_20261017.md) | 首建與初始無 GPU 診斷的歷史紀錄 |
+| [CUDA_NDT_20261017.md](CUDA_NDT_20261017.md) | 舊 CUDA D2D 整合、Release、快取與速度比較 |
+| [ACCURACY_COMPARISON_20261017.md](ACCURACY_COMPARISON_20261017.md) | 舊 CPU／D2D 前 50 幀幾何診斷，不是新版精度 |
+| [官方要求](../midterm01/docs/README.md) | PDF、期限、格式、報告與簡報 |
+
+重現舊短序列時才明確使用 `--profile legacy`，例如 `--backend pcl_ndt` 或 `--backend cuda_ndt --cuda-mode D2D`。舊 D2D 完整序列已有漂移／姿態翻轉與 CUDA 記憶體錯誤紀錄，不能當作目前推薦候選；原 PCL 同公式的 CUDA 移植尚未實作。
+
+保持 `p_map = T_map_source × (ply_scale × p_raw)`、初始矩陣／外參只套一次。尺度、GNSS frame 與車體提交 frame 的完整契約仍待官方確認。所有大型資料、`.env`、build／install／log 與輸出依既有 Git 忽略規則保存；最佳 CSV／證據另備份。

@@ -1,17 +1,17 @@
 # 官方資源與查漏補缺
 
-更新：2026-10-16。**模板與 Ubuntu 資料已建立，先檢查既有內容，不重新下載整包。** 使用者確認資料位於 `~/sdc_ros2/midterm01/data`；實際資料樹與檢查方式見 [data/README](../data/README.md)，建置與首跑見 [專案 README](../README.md)。
+更新：2026-10-17。**模板與 Ubuntu 資料已建立並完成首輪檢查，確認缺檔才補下載。** 資料保留 `/home/ricky/sdc_ros2/midterm01/data`；後續建置／測試使用 [GPU 工作區](../../midterm01_gpu/README.md)，資料與檢查範圍見 [data/README](../data/README.md) 及 [首跑報告](UBUNTU_FIRST_RUN_20261017.md)。
 
 ## 已取得與待核對
 
 | 項目 | 目前狀態 |
 | --- | --- |
 | 官方題目 | 位於本目錄 [PDF](<SDC 2026 Midterm01 Competition -  Localization.pdf>)，不再使用 localreference 舊路徑 |
-| Localization package | 已在 `workspace/src/localization/`，含基礎 NDT 與 `processing_codes/txt_to_idx_x_y_yaw.py` |
-| Track1、Track2 | Ubuntu 截圖各有 map、init_guess、raw_ply、影像、bag 及 metadata；數量／內容待執行檢查 |
+| Localization package | 原 CPU 在 `workspace/src/localization/`；目前開發版在 `../../midterm01_gpu/workspace/src/`，含 localization 與 cuda_ndt_backend |
+| Track1、Track2 | 已直接核對 map、init_guess、raw_ply、影像、bag 及 metadata；前相機 3011／3299 幀，詳細範圍見首跑報告 |
 | MapAnything 點雲 | Ubuntu 有兩組 `kaggle_track0N/TrackN_Mapanything_ply/{ply,index.csv,report.json}` |
-| 校正資料 camera_info | 截圖未顯示，先搜尋現有資料與下載包，不直接判定缺少 |
-| 官方 sample submission | 截圖未顯示，先搜尋；不可用 MapAnything index.csv 替代 |
+| 校正資料 camera_info | 已找到 `TrackN/TrackN_images/camera_info/`，含三相機內參／相機間外參；不等於車體外參 |
+| 官方 sample submission | 首跑本地搜尋尚未找到；不可用 MapAnything index.csv 替代 |
 
 官方欄位順序為 `idx,x,y,yaw`，兩條資料列數為 3011／3299，均不含表頭；使用者提供的原文與 topics 見 [Kaggle 規格](KAGGLE_DATASET_SPEC.md)。完整 ID、座標與 yaw 單位仍需核對正式範例／公告。
 
@@ -32,23 +32,25 @@
 
 ## 使用既有資料
 
-Ubuntu 專案 `midterm01/.env` 可沿用：
+目前 GPU 專案 `midterm01_gpu/.env` 可沿用（相對 GPU 目錄）：
 
 ```dotenv
-MIDTERM_DATA_DIR=./data
+MIDTERM_GPU_DATA_DIR=../midterm01/data
 ```
+
+原 CPU `midterm01/.env` 的 `MIDTERM_DATA_DIR=./data` 保留，兩者是不同設定。
 
 若改用其他資料位置，填同時含 `Track1/` 與 `Track2/` 的真實 Ubuntu 根目錄。它會唯讀掛載到容器 `/root/data`。`config/tracks.json` 只影響資料檢查工具；執行定位另核對 `map_path`／`data_path`、`ply_path`、`init_guess_file`。保留 HW2 的資料與工作區。
 
 舊的 `UBUNTU_DATA_DOWNLOAD.md` 與 `scripts/download_kaggle.py` 已移除。歷史上 Kaggle CLI 2.2.4 的 ACCESS_TOKEN／單檔與清單成功，Track01 整包與網頁 ZIP 曾 404；這不再是當前「尚無資料」的證據，也不構成重設 token 或重下載的理由。若實際缺檔，依現在可用的 Kaggle 網頁／CLI 補取；不強制使用自訂腳本。
 
-## 接手檢查
+## 已核對與待補證據
 
-- [x] 模板與官方 PDF 在目前 Windows checkout 可直接讀取。
-- [x] 使用者確認 Ubuntu 的 Track1／Track2 與兩組 MapAnything 已建立。
-- [ ] Ubuntu `check_data.py --strict-count` 通過並保存 JSON。
-- [ ] 可解析 PLY 時間數量與唯一性、MapAnything index／report 完成核對。
-- [ ] 找到校正資料與兩條 official sample，確認完整 ID、座標與單位。
-- [ ] `.env`、實際容器掛載與程式輸入路徑一致。
+- [x] Ubuntu checkout 可讀取模板／官方 PDF，原始資料保持一份。
+- [x] 主機／容器 `check_data.py --strict-count` 通過並保存 JSON。
+- [x] 前相機／MapAnything PLY 時間數量、唯一性與 index 對應完成核對；限制見首跑報告。
+- [x] camera_info 已找到；相機間外參有檢查，不代表車體外參已確認。
+- [x] GPU／CPU 容器實際掛載分別核對，均唯讀共用同一資料根目錄。
+- [ ] 取得官方 sample／明確公告，確認完整 ID、車體 frame 與 yaw 單位。
 
-被 Git 忽略的大型資料不會同步到 Windows 或其他 checkout；新 PDF 與文件若尚未追蹤，也需明確納入程式／文件的交接。
+被 Git 忽略的大型資料、輸出與 `.env` 不會隨 Git 同步；程式／PDF／Markdown 依實際追蹤狀態交接。不要將既有 Windows 空資料夾或歷史整包 404 當成 Ubuntu 目前缺少資料。

@@ -1,5 +1,7 @@
 # Ubuntu 已建立的 Midterm01 資料
 
+目前唯一原始資料仍在本目錄；後續由 [GPU 工作區](../../midterm01_gpu/README.md) 唯讀共用，不建立 `midterm01_gpu/data`。GPU `.env` 使用 `MIDTERM_GPU_DATA_DIR=../midterm01/data`，CPU 舊 `.env` 的 `MIDTERM_DATA_DIR` 不會自動設定 GPU。GPU 的新報告／cache 寫 `midterm01_gpu/outputs`，CPU 舊結果保留 `midterm01/outputs`。
+
 2026-10-17 已直接檢查 Ubuntu 資料：兩條前相機及 MapAnything 各為 3011／3299 幀，無空 PLY、無重複或不可解析時間。MapAnything index 與前相機時間／編號逐列一致；`camera_info` 已找到，位置為 `TrackN/TrackN_images/camera_info/`。兩份 bag SQLite quick_check 通過；前相機每個 PLY timestamp 均存在於 bag 的前相機 **bag timestamp**，且有同名影像。完整檢查範圍、幾何抽樣與限制見 [實測報告](../docs/UBUNTU_FIRST_RUN_20261017.md)。未找到官方 submission sample。
 
 以下為歷史交接與檢查命令。
@@ -40,8 +42,9 @@ data/
 ```bash
 cd ~/sdc_ros2/midterm01
 realpath data
+check_run="$(mktemp -d ../midterm01_gpu/outputs/runs/data_check_host_XXXXXXXX)"
 python3 scripts/check_data.py --data-root "$(realpath data)" \
-  --strict-count --output outputs/runs/data_check_host.json
+  --strict-count --output "$check_run/data_check.json"
 ```
 
 預期 raw_ply 為 Track01 **3011**、Track02 **3299**。此工具只檢查 map／init_guess 存在且非空，以及第一層 PLY 數量與非空，不檢查 bag、metadata、點雲內容、時間或 MapAnything。
@@ -114,7 +117,7 @@ find data -maxdepth 5 -type f \( -iname '*submission*.csv' -o -iname '*sample*.c
 
 ## 容器路徑與切換點雲
 
-`.env` 沿用 `MIDTERM_DATA_DIR=./data` 時，整個目錄唯讀掛在 `/root/data`。前相機定位目前使用：
+GPU `.env` 沿用 `MIDTERM_GPU_DATA_DIR=../midterm01/data`（相對 GPU 目錄）時，本目錄唯讀掛在 GPU `/root/data`；CPU 的 `MIDTERM_DATA_DIR=./data` 則是 CPU 容器設定。前相機定位目前使用：
 
 | Track | map／init_guess 所在目錄 | 前相機 ply_path | 三相機候選 ply_path |
 | --- | --- | --- | --- |
@@ -123,4 +126,4 @@ find data -maxdepth 5 -type f \( -iname '*submission*.csv' -o -iname '*sample*.c
 
 三相機路徑是依掛載與截圖推得，尚未實跑。正式切換前先確認時間、尺度、座標與外參；不直接沿用目前 `ply_scale=3.0`。`config/tracks.json` 只用於基本檢查，不會自動選擇上述三相機目錄。
 
-原始資料與 bag 被 Git 忽略，僅保留本 README。輸出與 map cache 寫到 `outputs/`；不把資料掛載改成可寫來繞過程式問題。HW2 的 bag 是另一份作業資料，保留原位置。
+原始資料與 bag 被 Git 忽略，僅保留本 README。新輸出與 map cache 寫到 GPU `midterm01_gpu/outputs/`；不把資料掛載改成可寫來繞過程式問題。HW2 的 bag 是另一份作業資料，保留原位置。

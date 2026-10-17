@@ -1,45 +1,35 @@
-你可以在 **Ubuntu 主機的專案根目錄啟動 Codex CLI**，再讓它透過 Docker 執行 ROS 建置與測試。
+本專案的 Midterm01 已在 Ubuntu 完成首跑與 GPU 架構整合；2026-10-17 起後續開發統一使用 [GPU 工作區](../midterm01_gpu/README.md)，日常操作見 [GPU 手冊](../midterm01_gpu/doc/MANUAL_WORKFLOW.md)。CPU 程式／結果與共用資料保留，不再以 Windows 靜態交接或尚未下載資料為開工前提。
 
-1. **先同步剛才更新的文件。**
+在 Ubuntu 主機的專案根目錄啟動既有 CLI：
 
-   上一輪修改在 Windows，尚未提交 Git。請透過 Git 或直接複製，把 `AGENTS.md`、`midterm01/` 的更新文件與官方 PDF 同步到 Ubuntu；資料保留在 Ubuntu 原位。
+```bash
+cd /home/ricky/sdc_ros2
+codex
+```
 
-2. **在 Ubuntu 終端機啟動：**
+可貼上的本專案交接提示：
 
-   ```bash
-   cd ~/sdc_ros2
-   codex
-   ```
+```text
+請接手 Midterm01，使用繁體中文，先讀根目錄 AGENTS.md、
+midterm01_gpu/AGENTS.md、midterm01_gpu/README.md、
+midterm01_gpu/doc/MANUAL_WORKFLOW.md 與 SENSOR_GUIDED_20261017.md。
+正式要求與資料文件仍在 midterm01/docs/ 與 midterm01/data/README.md。
 
-   第一次啟動依畫面登入。Codex 會在啟動時載入專案的 `AGENTS.md`。[官方啟動說明](https://learn.chatgpt.com/docs/codex/cli)、[AGENTS.md 說明](https://learn.chatgpt.com/docs/agent-configuration/agents-md)。
+後續程式修改／Release 建置／測試統一使用 midterm01_gpu；
+主要方法必須明確選 --profile sensor_guided（cuda_robust_icp）。
+原 CPU 程式、既有結果與 midterm01/data 保留，資料唯讀共用。
 
-3. **進入 Codex 後，直接貼上這段交接提示：**
+本課以我的學習、自主思考及真實世界應用能力為首要目的。
+先解釋問題、算法原理與推導，讓我參與思考；非必要不靠特定 Track 調參刷分。
+必要調參需有物理／統計、標定或數值依據及驗證假說；遵循
+midterm01_gpu/doc/DEVELOPMENT_PRINCIPLES.md，依既有授權完成實作與驗證。
 
-   ```text
-   請接手這個 Midterm01 定位專案，使用繁體中文。
-
-   先遵守根目錄 AGENTS.md，閱讀：
-   - midterm01/README.md
-   - midterm01/docs/README.md
-   - midterm01/docs/KAGGLE_DATASET_SPEC.md
-   - midterm01/data/README.md
-   - midterm01/docs/ 裡的官方比賽 PDF
-
-   資料已建立在 ~/sdc_ros2/midterm01/data，
-   包含 Track1、Track2，以及兩組 MapAnything 點雲。
-
-   本次請依序完成：
-   1. 檢查 Git 狀態、既有環境與資料完整性，保存檢查報告。
-   2. 核對 PLY 時間、初始矩陣、尺度、座標與官方 frame 對應。
-   3. 建置 Midterm01 Docker 與 ROS package。
-   4. 處理阻礙首跑的依賴、唯讀地圖快取與 GUI 問題。
-   5. 使用現有前相機 NDT，先完成單幀，再完成 50 幀測試。
-   6. 保存命令、參數、輸出與耗時，更新文件中的實際進度。
-
-   保留既有修改、原始資料與舊結果。
-   Docker 管理在 Ubuntu 主機執行，ROS 與 colcon 在容器內執行。
-   請直接執行與驗證，遇到需要我提供資訊或操作的阻塞時再說明。
-   ```
+先檢查 Git、既有 GPU 狀態與必要證據，依本次指定問題進行修改與驗證；
+保存版本、參數、frame、輸出、耗時與失敗，不覆寫既有 run。
+後續完整 Track 測試由我手動執行並回報，未經新指示不要自行啟動完整序列。
+已評分版本、分數與 baseline 依 GPU README 及 doc 成績紀錄，不把局部診斷當作正式 ATE。
+Docker 指令在 Ubuntu 主機執行，ROS／colcon 在 GPU 容器執行。
+```
 
 使用過程中常用這幾個指令：
 

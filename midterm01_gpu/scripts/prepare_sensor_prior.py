@@ -24,7 +24,16 @@ def interpolate_positions(times, positions, queries, max_edge=0.3):
     return out
 
 
-def make_priors(gnss_ns, positions, imu_ns, quaternions, frame_ns):
+def make_priors(gnss_ns, positions, imu_ns, quaternions, frame_ns,
+                fusion='fixed', fusion_config=None, details=None):
+    if fusion not in ('fixed', 'heading_rts', 'motion_rts'):
+        raise ValueError('Unknown sensor fusion mode')
+    for name, stamps, minimum in [('frame', frame_ns, 1), ('GNSS', gnss_ns, 2), ('IMU', imu_ns, 2)]:
+        if (len(stamps) < minimum or any(not isinstance(s, (int, np.integer)) or s <= 0 for s in stamps)
+                or any(b <= a for a, b in zip(stamps, stamps[1:]))):
+            raise ValueError(f'{name} timestamps must be positive increasing integer nanoseconds')
+    if np.asarray(positions).shape != (len(gnss_ns), 3) or np.asarray(quaternions).shape != (len(imu_ns), 4):
+        raise ValueError('Sensor timestamp/value shape mismatch')
     # Integer subtraction precedes conversion to float to preserve nanosecond ordering.
     origin = int(frame_ns[0])
     gt = (np.asarray(gnss_ns, dtype=np.int64) - origin) / 1e9
@@ -69,7 +78,20 @@ def make_priors(gnss_ns, positions, imu_ns, quaternions, frame_ns):
             'gnss_max_gap_s': float(np.max(np.diff(gt))), 'imu_max_gap_s': float(np.max(np.diff(it))),
             'gnss_is_input_not_ground_truth': True,
             'frame_assumption': 'GNSS map coordinates and IMU forward/up axes compatible with supplied source pose; no extra body-camera extrinsic applied'}
-    return xyz, orientations.as_quat(), meta
+    quat = orientations.as_quat()
+    if fusion != 'fixed':
+        from sensor_fusion import FusionConfig, fuse_priors
+        xyz, quat, fusion_meta, diagnostic, blocks = fuse_priors(
+            gnss_ns, positions, imu_ns, quaternions, frame_ns, xyz, meta,
+            fusion, fusion_config or FusionConfig())
+        meta['sensor_fusion'] = fusion_meta
+        meta['heading_bias_deg_role'] = 'fixed reference only; actual per-frame correction is in sensor_prior.fusion.csv bias_deg'
+        if fusion == 'motion_rts':
+            meta['gnss_position_smoothing'] = 'raw GNSS constant-velocity Kalman + RTS'
+            meta['gnss_interpolation'] = 'prediction-only at frame timestamps, each raw GNSS updates once'
+        if details is not None:
+            details.update(diagnostic=diagnostic, blocks=blocks)
+    return xyz, quat, meta
 
 
 def load_bag(path):
@@ -107,16 +129,43 @@ def main():
     parser.add_argument('--bag', type=Path, required=True)
     parser.add_argument('--frames', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--fusion', choices=('fixed', 'heading_rts', 'motion_rts'), default='fixed')
+    parser.add_argument('--gnss-std', type=float, default=.3, help='fusion model GNSS std in m, not calibrated covariance')
+    parser.add_argument('--xy-accel-psd', type=float, default=4., help='motion_rts white acceleration PSD, m^2/s^3')
+    parser.add_argument('--bias-rw-deg', type=float, default=.12, help='heading bias random walk std, deg/sqrt(s)')
+    parser.add_argument('--course-window', type=float, default=2., help='nonoverlapping GNSS course window, s')
     args = parser.parse_args()
+    from sensor_fusion import FusionConfig
+    config = FusionConfig(gnss_std_m=args.gnss_std, xy_accel_psd=args.xy_accel_psd,
+                          bias_rw_deg_sqrt_s=args.bias_rw_deg, course_window_s=args.course_window)
+    try:
+        config.validate()
+    except ValueError as error:
+        parser.error(str(error))
     with args.frames.open() as stream:
-        frame_ns = [int(row['timestamp_ns']) for row in csv.DictReader(stream)]
+        frames = list(csv.DictReader(stream))
+    if [int(row['idx']) for row in frames] != list(range(len(frames))):
+        parser.error('Frame manifest idx must be contiguous from zero')
+    frame_ns = [int(row['timestamp_ns']) for row in frames]
     gnss, imu = load_bag(args.bag)
+    details = {}
     xyz, quat, meta = make_priors([r[0] for r in gnss], [r[1] for r in gnss],
-                                  [r[0] for r in imu], [r[1] for r in imu], frame_ns)
-    with args.output.open('w', newline='') as stream:
+                                  [r[0] for r in imu], [r[1] for r in imu], frame_ns,
+                                  args.fusion, config, details)
+    with args.output.open('x', newline='') as stream:
         writer = csv.writer(stream)
         writer.writerow(['timestamp_ns', 'x', 'y', 'z', 'qx', 'qy', 'qz', 'qw'])
         writer.writerows((ns, *p, *q) for ns, p, q in zip(frame_ns, xyz, quat))
+    if details:
+        with args.output.with_suffix('.fusion.csv').open('x', newline='') as stream:
+            writer = csv.writer(stream)
+            columns = list(details['diagnostic'])
+            writer.writerow(columns)
+            writer.writerows(zip(*(details['diagnostic'][name] for name in columns)))
+        with args.output.with_suffix('.heading_blocks.csv').open('x', newline='') as stream:
+            writer = csv.DictWriter(stream, fieldnames=list(details['blocks'][0]))
+            writer.writeheader()
+            writer.writerows(details['blocks'])
     meta.update({'bag': str(args.bag), 'frames_manifest': str(args.frames)})
     sensor_digest = hashlib.sha256()
     for series in (gnss, imu):

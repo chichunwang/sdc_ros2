@@ -128,6 +128,9 @@ bool LocalizationApp::LoadParameters() {
     node_->declare_parameter<double>("sensor_max_xy_correction", sensor_max_xy_correction_);
     node_->declare_parameter<double>("sensor_max_yaw_correction_deg", sensor_max_yaw_correction_deg_);
     node_->declare_parameter<double>("sensor_smoothing_alpha", sensor_smoothing_alpha_);
+    node_->declare_parameter<std::string>("geometry_mode", geometry_mode_);
+    node_->declare_parameter<double>("geometry_normal_gain", geometry_normal_gain_);
+    node_->declare_parameter<double>("geometry_tangent_weight", geometry_tangent_weight_);
 
 
     map_path_ = node_->get_parameter("map_path").as_string();
@@ -164,6 +167,16 @@ bool LocalizationApp::LoadParameters() {
     sensor_max_xy_correction_ = node_->get_parameter("sensor_max_xy_correction").as_double();
     sensor_max_yaw_correction_deg_ = node_->get_parameter("sensor_max_yaw_correction_deg").as_double();
     sensor_smoothing_alpha_ = node_->get_parameter("sensor_smoothing_alpha").as_double();
+    geometry_mode_ = node_->get_parameter("geometry_mode").as_string();
+    geometry_normal_gain_ = node_->get_parameter("geometry_normal_gain").as_double();
+    geometry_tangent_weight_ = node_->get_parameter("geometry_tangent_weight").as_double();
+    if ((geometry_mode_ != "off" && geometry_mode_ != "diagnostic" && geometry_mode_ != "directional") ||
+        (geometry_mode_ != "off" && (localization_profile_ != "sensor_guided" || registration_backend_ != "cuda_robust_icp")) ||
+        !std::isfinite(geometry_normal_gain_) || geometry_normal_gain_ <= 0 || geometry_normal_gain_ > 10 ||
+        !std::isfinite(geometry_tangent_weight_) || geometry_tangent_weight_ < 0 || geometry_tangent_weight_ > 1) {
+        RCLCPP_ERROR(node_->get_logger(), "Invalid geometry mode/weights; geometry requires sensor_guided/cuda_robust_icp.");
+        return false;
+    }
     if ((localization_profile_ != "legacy" && localization_profile_ != "sensor_guided") ||
         (localization_profile_ == "sensor_guided" && sensor_prior_file_.empty()) ||
         !std::isfinite(sensor_max_xy_correction_) || sensor_max_xy_correction_ <= 0 ||
@@ -632,16 +645,35 @@ bool LocalizationApp::RunLocalization() {
     if (guided ? !LoadSensorPriors() : !OpenDB3File()) return false;
     DB3Frame db3_frame;
     Eigen::Vector4d correction = Eigen::Vector4d::Zero();
+    GeometryConfig geometry_config;
+    geometry_config.mode = geometry_mode_ == "directional" ? GeometryMode::Directional :
+        (geometry_mode_ == "diagnostic" ? GeometryMode::Diagnostic : GeometryMode::Off);
+    geometry_config.normal_gain = geometry_normal_gain_;
+    geometry_config.tangent_weight = geometry_tangent_weight_;
+    std::ofstream geometry_csv;
+    if (geometry_config.enabled()) {
+        geometry_csv.open((boost::filesystem::path(save_path_) / "geometry.csv").string());
+        if (!geometry_csv) return false;
+        geometry_csv.precision(12);
+        WriteGeometryCsvHeader(geometry_csv);
+        std::ofstream config_stream((boost::filesystem::path(save_path_) / "geometry_config.json").string());
+        if (!config_stream) return false;
+        config_stream.precision(15);
+        WriteGeometryConfigJson(config_stream, geometry_config);
+        RCLCPP_INFO(node_->get_logger(), "Geometry %s: CPU map-neighborhood PCA; CUDA registration NN retained. Normal gain %.3f, tangent weight %.3f; data-only scaled information is not covariance.",
+                    geometry_mode_.c_str(), geometry_normal_gain_, geometry_tangent_weight_);
+    }
     std::ofstream guidance;
     if (guided) {
         guidance.open((boost::filesystem::path(save_path_) / "guidance.csv").string());
         if (!guidance) return false;
         guidance.precision(12);
-        guidance << "idx,timestamp_ns,prior_x,prior_y,prior_z,prior_yaw,dx,dy,dz,dyaw,cuda_converged,cuda_seed_used,map_accepted,inliers,iterations,prior_cost,final_cost,prior_clipped_rmse,final_clipped_rmse\n";
+        guidance << "idx,timestamp_ns,prior_x,prior_y,prior_z,prior_yaw,dx,dy,dz,dyaw,cuda_converged,cuda_seed_used,map_accepted,inliers,iterations,prior_cost,final_cost,prior_clipped_rmse,final_clipped_rmse,update_status,candidate_inliers,candidate_reliable_points,candidate_unique_targets\n";
     }
 
     std::size_t processed = 0;
     std::size_t failed = 0;
+    std::size_t geometry_fallbacks = 0;
     std::ofstream timings((boost::filesystem::path(save_path_) / "timings.csv").string());
     if (!timings) {
         RCLCPP_ERROR(node_->get_logger(), "Cannot open timings.csv.");
@@ -690,6 +722,7 @@ bool LocalizationApp::RunLocalization() {
         Eigen::Matrix4f candidate = pose;
         double score = std::numeric_limits<double>::infinity();
         bool converged = false;
+        GuidedMetrics metrics;
         try {
             if (registration_backend_ == "cuda_robust_icp") {
                 candidate = prior;
@@ -699,21 +732,26 @@ bool LocalizationApp::RunLocalization() {
             }
             if (guided) {
                 const bool cuda_converged = converged;
-                GuidedMetrics metrics;
                 const auto refine_start = Clock::now();
                 Eigen::Vector4d next_correction;
                 converged = RefineSensorGuided(input, submap, prior, candidate, cuda_converged,
                     correction, sensor_smoothing_alpha_, sensor_max_xy_correction_,
                     sensor_max_yaw_correction_deg_ * M_PI / 180.0, candidate, next_correction, metrics,
-                    registration_backend_ == "cuda_robust_icp");
+                    registration_backend_ == "cuda_robust_icp", geometry_config);
                 last_ndt_ms_ += ElapsedMs(refine_start);
                 correction = next_correction;
                 score = metrics.final_rmse * metrics.final_rmse;
                 guidance << processed << ',' << frame.timestamp_ns << ',' << prior(0, 3) << ',' << prior(1, 3) << ',' << prior(2, 3)
                     << ',' << std::atan2(prior(1, 0), prior(0, 0)) << ',' << correction[0] << ',' << correction[1] << ',' << correction[2] << ',' << correction[3]
                     << ',' << cuda_converged << ',' << metrics.used_cuda_seed << ',' << converged << ',' << metrics.inliers << ',' << metrics.iterations
-                    << ',' << metrics.prior_cost << ',' << metrics.final_cost << ',' << metrics.prior_rmse << ',' << metrics.final_rmse << '\n';
+                    << ',' << metrics.prior_cost << ',' << metrics.final_cost << ',' << metrics.prior_rmse << ',' << metrics.final_rmse
+                    << ',' << GuidedUpdateStatusName(metrics.update_status) << ',' << metrics.candidate_inliers
+                    << ',' << metrics.candidate_reliable_points << ',' << metrics.candidate_unique_targets << '\n';
                 guidance.flush();
+                if (geometry_config.enabled()) {
+                    WriteGeometryCsvRow(geometry_csv, processed, frame.timestamp_ns, converged, metrics.geometry);
+                    geometry_csv.flush();
+                }
                 // A rejected scan update uses this frame's sensor prior, never a
                 // stationary previous pose which would accumulate motion error.
                 pose = candidate;
@@ -726,8 +764,16 @@ bool LocalizationApp::RunLocalization() {
             pose = candidate;
         } else {
             ++failed;
-            RCLCPP_WARN(node_->get_logger(), "%s scan update failed at frame %zu; using %s.", registration_backend_.c_str(), processed,
-                        guided ? "current sensor prior" : "previous pose");
+            if (guided && IsGeometrySupportFallback(metrics.update_status)) {
+                ++geometry_fallbacks;
+                RCLCPP_INFO(node_->get_logger(), "Map update skipped at frame %zu: %s (candidate reliable_points=%d/10, unique_targets=%d/6); using current sensor prior.",
+                            processed, GuidedUpdateStatusName(metrics.update_status), metrics.candidate_reliable_points, metrics.candidate_unique_targets);
+            } else if (guided) {
+                RCLCPP_WARN(node_->get_logger(), "Map update rejected at frame %zu: %s (candidate inliers=%d); using current sensor prior.",
+                            processed, GuidedUpdateStatusName(metrics.update_status), metrics.candidate_inliers);
+            } else {
+                RCLCPP_WARN(node_->get_logger(), "%s scan update failed at frame %zu; using previous pose.", registration_backend_.c_str(), processed);
+            }
         }
         // ======================================================
         
@@ -749,10 +795,15 @@ bool LocalizationApp::RunLocalization() {
         rclcpp::spin_some(node_);
         if (processed == 1 || processed % 25 == 0) {
             RCLCPP_INFO(node_->get_logger(), "Frame %zu/%zu: %s=%s, score=%.4f, pose=(%.3f, %.3f, %.3f), NDT=%.2f ms, fitness=%.2f ms, frame=%.2f ms",
-                        processed, ply_frames_.size(), registration_backend_.c_str(), converged ? "converged" : "failed", score, pose(0, 3), pose(1, 3), pose(2, 3), last_ndt_ms_, last_fitness_ms_, total_ms);
+                        processed, ply_frames_.size(), registration_backend_.c_str(), converged ? "converged" : (guided ? "sensor_prior" : "failed"), score, pose(0, 3), pose(1, 3), pose(2, 3), last_ndt_ms_, last_fitness_ms_, total_ms);
         }
     }
-    RCLCPP_INFO(node_->get_logger(), "Finished: %zu poses, %zu failed alignments.", processed, failed);
+    if (guided) {
+        RCLCPP_INFO(node_->get_logger(), "Finished: %zu poses, %zu accepted map updates, %zu sensor-prior fallbacks (%zu geometry support, %zu other map rejections).",
+                    processed, processed - failed, failed, geometry_fallbacks, failed - geometry_fallbacks);
+    } else {
+        RCLCPP_INFO(node_->get_logger(), "Finished: %zu poses, %zu failed alignments.", processed, failed);
+    }
     RCLCPP_INFO(node_->get_logger(), "Timing sums: NDT %.3f s, fitness %.3f s, frames %.3f s; startup map excluded.", ndt_sum_ms / 1000.0, fitness_sum_ms / 1000.0, frames_sum_ms / 1000.0);
     return processed > 0;
 }

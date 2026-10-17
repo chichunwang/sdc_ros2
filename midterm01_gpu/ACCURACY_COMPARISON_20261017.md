@@ -1,5 +1,7 @@
 # CPU／CUDA 前 50 幀比較（2026-10-17）
 
+> 歷史比較：以下僅評估原 CPU PCL NDT 與舊 CUDA D2D 的前 50 幀，不含目前 `sensor_guided`／`cuda_robust_icp`。新版完整序列與使用者回報的 Track1 成績見 [SENSOR_GUIDED_20261017.md](SENSOR_GUIDED_20261017.md)。下文未取得分數的範圍是這組短序列比較。
+
 目前 CUDA D2D 不能視為原 CPU PCL NDT 的等精度替代。兩條 Track 的 CUDA 軌跡都有較大的相鄰 pose 跳動；Track1 的點到地圖殘差略低，Track2 則較高。沒有已確認的 pose 真值或 Kaggle 分數，因此以下是幾何貼合與穩定性診斷，不是正式 ATE，也不能據此保證 CPU 的絕對定位精度。
 
 ## 實測結果

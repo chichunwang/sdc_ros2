@@ -1,5 +1,9 @@
 # 從老師模板到 GPU 感測器約束定位
 
+最新延伸為 `heading_rts` 時變 heading 校正：使用者完整測試並截圖回報 Track1 **1.16951**、Track2 **0.31967**。本輪新增／沿用功能、SHA256 與排名快照見 [進步紀錄](HEADING_RTS_RESULTS_20261017.md)；本文其餘原始演進與早期分數保留作歷史對照。
+
+日常開發／測試統一使用 `midterm01_gpu`；可執行流程與主機／容器路徑見 [GPU 操作手冊](MANUAL_WORKFLOW.md)。本文原模板／首次 CUDA 整合段落是演進紀錄，現在主流程明確加 `--profile sensor_guided`。
+
 本文件對照本專案取得的模板、第一次 CUDA NDT 整合、以及目前 `sensor_guided` 版本。程式以實際 checkout 為準：官方 PDF 將定位區塊標示 TODO，但我們取得的模板已經含基礎 PCL NDT，並非只有空架構。老師 leaderboard baseline 的設定沒有提供，不能把本地模板結果直接等同助教 baseline。
 
 2026-10-17 使用者提供的 Track1 Kaggle 截圖：舊 CUDA D2D **573.36983**，新版 **1.22369**，同圖 baseline **1.79075**。這是越低越好的誤差指標；新版較 baseline 低約 **31.67%**。成績來源是使用者手動提交及截圖，對應 `result_1.csv` SHA256 為 `6684960053a0ff393b83011891dd26095401aa822876ab0e6281990bf2c6015a`。Track2 尚無回報分數。
