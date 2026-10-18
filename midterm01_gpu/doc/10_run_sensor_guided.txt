@@ -1,5 +1,5 @@
 # Midterm01 GPU fixed 融合主流程；完整測試由使用者手動執行。
-# 新 heading_rts／motion_rts 融合候選命令見 doc/run_sensor_fusion.txt。
+# 新 heading_rts／motion_rts 融合候選命令見 doc/13_run_sensor_fusion.txt。
 # 在 Ubuntu 主機執行；每條定位命令完成後再執行下一條。
 cd /home/ricky/sdc_ros2/midterm01_gpu
 bash scripts/dev.sh up
@@ -20,5 +20,5 @@ python3 scripts/benchmark.py --track 2 --frames 3299 --profile sensor_guided
 # 完整時間看 pipeline_elapsed_seconds（含感測器前處理及 ROS 執行）。
 # map 快取的雜湊核對、版本紀錄與建置不在此計時內。
 # 舊版歷史文字回報 Track1 1.22369、Track2 0.56063；Track2 舊 CSV 尚未核對。
-# 新 heading_rts 已回報 1.16951／0.31967，命令與紀錄見 doc/run_sensor_fusion.txt。
+# 新 heading_rts 已回報 1.16951／0.31967，命令與紀錄見 doc/13_run_sensor_fusion.txt。
 # 後續完整測試與提交由使用者手動執行，再回報結果。

@@ -1,4 +1,4 @@
-本專案的 Midterm01 已在 Ubuntu 完成首跑與 GPU 架構整合；2026-10-17 起後續開發統一使用 [GPU 工作區](../midterm01_gpu/README.md)，日常操作見 [GPU 手冊](../midterm01_gpu/doc/MANUAL_WORKFLOW.md)。CPU 程式／結果與共用資料保留，不再以 Windows 靜態交接或尚未下載資料為開工前提。
+本專案的 Midterm01 已在 Ubuntu 完成首跑與 GPU 架構整合；2026-10-17 起後續開發統一使用 [GPU 工作區](../midterm01_gpu/doc/27_PROJECT_OVERVIEW.md)，日常操作見 [GPU 手冊](../midterm01_gpu/doc/08_MANUAL_WORKFLOW.md)。CPU 程式／結果與共用資料保留，不再以 Windows 靜態交接或尚未下載資料為開工前提。
 
 在 Ubuntu 主機的專案根目錄啟動既有 CLI：
 
@@ -11,8 +11,10 @@ codex
 
 ```text
 請接手 Midterm01，使用繁體中文，先讀根目錄 AGENTS.md、
-midterm01_gpu/AGENTS.md、midterm01_gpu/README.md、
-midterm01_gpu/doc/MANUAL_WORKFLOW.md 與 SENSOR_GUIDED_20261017.md。
+midterm01_gpu/AGENTS.md、midterm01_gpu/doc/27_PROJECT_OVERVIEW.md、
+midterm01_gpu/doc/01_PROGRAM_FLOW.md、midterm01_gpu/doc/08_MANUAL_WORKFLOW.md
+與 midterm01_gpu/doc/06_SENSOR_GUIDED_20261017.md；文件索引在
+midterm01_gpu/doc/28_DOCUMENTATION_INDEX.md。
 正式要求與資料文件仍在 midterm01/docs/ 與 midterm01/data/README.md。
 
 後續程式修改／Release 建置／測試統一使用 midterm01_gpu；
@@ -22,7 +24,7 @@ midterm01_gpu/doc/MANUAL_WORKFLOW.md 與 SENSOR_GUIDED_20261017.md。
 本課以我的學習、自主思考及真實世界應用能力為首要目的。
 先解釋問題、算法原理與推導，讓我參與思考；非必要不靠特定 Track 調參刷分。
 必要調參需有物理／統計、標定或數值依據及驗證假說；遵循
-midterm01_gpu/doc/DEVELOPMENT_PRINCIPLES.md，依既有授權完成實作與驗證。
+midterm01_gpu/doc/19_DEVELOPMENT_PRINCIPLES.md，依既有授權完成實作與驗證。
 
 先檢查 Git、既有 GPU 狀態與必要證據，依本次指定問題進行修改與驗證；
 保存版本、參數、frame、輸出、耗時與失敗，不覆寫既有 run。

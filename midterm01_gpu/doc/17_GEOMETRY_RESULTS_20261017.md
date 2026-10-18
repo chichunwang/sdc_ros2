@@ -1,6 +1,10 @@
-# 方向性配準完整測試與 Kaggle 成績
+# 17｜方向性配準完整測試與 Kaggle 成績
 
 紀錄日期：**2026-10-17（Asia/Taipei）**。使用者手動完成兩條 Track 並提交 Kaggle，於本輪回報分數及兩張排行榜截圖。本次僅讀取既有輸出、保存最佳 CSV 與更新文件，沒有重跑定位或代為提交。
+
+2026-10-18 追加：使用者確認為 Team 3，新截圖排名已變為 Track1 第 4／Track2 第 2 名，最佳分數仍為 1.15275／0.30576。新快照與改進方向見 [目前算法與精度分析](20_CURRENT_ALGORITHM_AND_ACCURACY_20261018.md)；下表第 3／第 1 名保留為 2026-10-17 的歷史證據。
+
+同日後續已依使用者要求完成 [三相機尺度／同步與短段對照](22_THREE_CAMERA_IMPLEMENTATION_20261018.md)：共享尺度候選 0.87124954、釐清混合 bag／header 時間，12 組短段均完整，但尚無精度改善或新 Kaggle 分數。本文最佳 CSV、分數與原始 provenance 不變，不將它們歸到三相機候選。
 
 ## 成績
 
@@ -32,9 +36,9 @@ Score = sqrt(mean(||Δp||²)) + 0.2 × sqrt(mean(||Δθ||²))
 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
 ```
 
-保留 GNSS／IMU heading_rts、CUDA 最近鄰及 CPU 正則化四自由度求解。相對前最佳，新增局部地圖 PCA 的表面品質、法向／切向 anisotropic residual，以及至少 10 個可靠 source 對應／6 個不同 target 的接受保護。normal gain=2、tangent weight=0.05；尺度、先驗權重、correction smoothing 與上限沿用原設定。完整設計見 [方向性配準](GEOMETRY_DIRECTIONAL_20261017.md)。
+保留 GNSS／IMU heading_rts、CUDA 最近鄰及 CPU 正則化四自由度求解。相對前最佳，新增局部地圖 PCA 的表面品質、法向／切向 anisotropic residual，以及至少 10 個可靠 source 對應／6 個不同 target 的接受保護。normal gain=2、tangent weight=0.05；尺度、先驗權重、correction smoothing 與上限沿用原設定。完整設計見 [方向性配準](15_GEOMETRY_DIRECTIONAL_20261017.md)。
 
-這兩個完整 run 使用的 localization binary SHA256 均為 `390a7250a1a181b9050b774fcf3baff932325f487e68e890450cdb03c8835e4c`。兩者都在 [警告診斷修正](GEOMETRY_FALLBACK_20261017.md) **之前**產生；之後新增拒絕原因與候選支持數，不是這輪分數進步的來源。診斷修正曾以相同先驗重播前 450 幀，定位及幾何輸出逐 byte 相同，沒有把短測誤列為新的完整已評分 run。
+這兩個完整 run 使用的 localization binary SHA256 均為 `390a7250a1a181b9050b774fcf3baff932325f487e68e890450cdb03c8835e4c`。兩者都在 [警告診斷修正](18_GEOMETRY_FALLBACK_20261017.md) **之前**產生；之後新增拒絕原因與候選支持數，不是這輪分數進步的來源。診斷修正曾以相同先驗重播前 450 幀，定位及幾何輸出逐 byte 相同，沒有把短測誤列為新的完整已評分 run。
 
 ## 完整輸出核對
 
@@ -66,7 +70,7 @@ Score = sqrt(mean(||Δp||²)) + 0.2 × sqrt(mean(||Δθ||²))
 
 **推論**：這輪主要效果之一可能是減少弱方向的地圖拉動，因而取得較保守的 XY／yaw 修正；不能由總分斷言剩餘誤差都來自 GNSS、yaw 或單一因素，也不能把所有降低量單獨歸功於某個門檻。較少修正與較多回退本身都不是精度改善保證。
 
-使用者後續指定 [學習與算法改進原則](DEVELOPMENT_PRINCIPLES.md)：下一步先從時間／座標契約、幾何弱方向及觀測模型提出可解釋的算法假說，與使用者討論推導，再設計對應實驗。XY／yaw 消融可用來理解各模組的影響，並非立即啟動依排行榜反覆調權重的計畫；單一總分仍不能還原絕對平移／旋轉 RMSE。GNSS frame_id／完整外參仍有未確認事項，不在缺少依據時直接套固定 lever arm 或擬合一個看似改善的偏移。現有總分不足以選定位置濾波、heading 模型或更大的 map 權重；本輪沒有自動加入新算法或啟動完整實驗。
+使用者後續指定 [學習與算法改進原則](19_DEVELOPMENT_PRINCIPLES.md)：下一步先從時間／座標契約、幾何弱方向及觀測模型提出可解釋的算法假說，與使用者討論推導，再設計對應實驗。XY／yaw 消融可用來理解各模組的影響，並非立即啟動依排行榜反覆調權重的計畫；單一總分仍不能還原絕對平移／旋轉 RMSE。GNSS frame_id／完整外參仍有未確認事項，不在缺少依據時直接套固定 lever arm 或擬合一個看似改善的偏移。現有總分不足以選定位置濾波、heading 模型或更大的 map 權重；本輪沒有自動加入新算法或啟動完整實驗。
 
 ## run、最佳 CSV 與保存方式
 
@@ -89,4 +93,9 @@ Score = sqrt(mean(||Δp||²)) + 0.2 × sqrt(mean(||Δθ||²))
 
 兩份是原 CSV 的 byte 相同副本；各 Track evidence 另保存原參數、validation、frame／prior／geometry、來源快照及 binary hash。原 heading_rts 最佳、原完整 run 與其 validation 都保持不變。新目錄指標為 `outputs/latest_geometry_submission.txt`。outputs 被 Git 忽略，跨環境須另備份 CSV 與證據。
 
-日常推薦明確加三個選項；程式預設仍為 legacy／fixed／geometry off，沒有修改預設。手動完整命令見 [run_geometry_directional.txt](run_geometry_directional.txt)，較舊 heading_rts 已評分流程仍可依原文件重現。
+日常推薦明確加三個選項；程式預設仍為 legacy／fixed／geometry off，沒有修改預設。手動完整命令見 [16_run_geometry_directional.txt](16_run_geometry_directional.txt)，較舊 heading_rts 已評分流程仍可依原文件重現。
+
+
+## 2026-10-18 原始三相機實驗
+
+新增 [校正三相機與公平對照](23_CALIBRATED_RIG_RESULTS_20261018.md)：使用 raw JPG、固定內外參／高度、逐相機時間補償、稀疏 stereo 尺度錨點及側面幾何取樣。既有 C++ directional 目標不變，沒有新完整 Track 或 Kaggle 分數；本文件的最佳分數與原 CSV 不因此更換。

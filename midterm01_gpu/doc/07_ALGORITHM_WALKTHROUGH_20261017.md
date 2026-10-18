@@ -1,12 +1,14 @@
-# 從老師模板到 GPU 感測器約束定位
+# 07｜從老師模板到 GPU 感測器約束定位
 
-最新延伸為 `heading_rts` 時變 heading 校正：使用者完整測試並截圖回報 Track1 **1.16951**、Track2 **0.31967**。本輪新增／沿用功能、SHA256 與排名快照見 [進步紀錄](HEADING_RTS_RESULTS_20261017.md)；本文其餘原始演進與早期分數保留作歷史對照。
+2026-10-18 核對：最新已評分流程為 **heading_rts＋directional**，Track1 **1.15275**、Track2 **0.30576**；使用者 Team 3 新截圖排名為第 4／第 2 名。現行資料流、限制與改善假說見 [目前算法與精度方向](20_CURRENT_ALGORITHM_AND_ACCURACY_20261018.md)，完整 run 與 SHA256 見 [directional 成績](17_GEOMETRY_RESULTS_20261017.md)。前一輪 heading_rts＋geometry off 的 1.16951／0.31967 見 [歷史進步紀錄](14_HEADING_RTS_RESULTS_20261017.md)。
 
-日常開發／測試統一使用 `midterm01_gpu`；可執行流程與主機／容器路徑見 [GPU 操作手冊](MANUAL_WORKFLOW.md)。本文原模板／首次 CUDA 整合段落是演進紀錄，現在主流程明確加 `--profile sensor_guided`。
+本文以下用初版 fixed＋geometry off 說明演進；其中固定 heading bias 與等向點到點公式不代表現行 directional 的完整目標。現行 heading 使用有品質門檻的 Kalman＋RTS，地圖殘差使用局部表面 PCA 的法向／切向 metric，仍維持感測器先驗、四自由度與 CUDA 搜尋／CPU 求解分工，詳見 [感測器融合](12_SENSOR_FUSION_20261017.md) 及 [方向性配準](15_GEOMETRY_DIRECTIONAL_20261017.md)。
+
+日常開發／測試統一使用 `midterm01_gpu`；可執行流程與主機／容器路徑見 [GPU 操作手冊](08_MANUAL_WORKFLOW.md)。本文原模板／首次 CUDA 整合段落是演進紀錄，現在主流程明確加 `--profile sensor_guided`。
 
 本文件對照本專案取得的模板、第一次 CUDA NDT 整合、以及目前 `sensor_guided` 版本。程式以實際 checkout 為準：官方 PDF 將定位區塊標示 TODO，但我們取得的模板已經含基礎 PCL NDT，並非只有空架構。老師 leaderboard baseline 的設定沒有提供，不能把本地模板結果直接等同助教 baseline。
 
-2026-10-17 使用者提供的 Track1 Kaggle 截圖：舊 CUDA D2D **573.36983**，新版 **1.22369**，同圖 baseline **1.79075**。這是越低越好的誤差指標；新版較 baseline 低約 **31.67%**。成績來源是使用者手動提交及截圖，對應 `result_1.csv` SHA256 為 `6684960053a0ff393b83011891dd26095401aa822876ab0e6281990bf2c6015a`。Track2 尚無回報分數。
+2026-10-17 最初的 Track1 Kaggle 截圖：舊 CUDA D2D **573.36983**，初版 sensor_guided **1.22369**，同圖 baseline **1.79075**。這是越低越好的誤差指標；初版較 baseline 低約 **31.67%**。成績來源是使用者手動提交及截圖，對應 `result_1.csv` SHA256 為 `6684960053a0ff393b83011891dd26095401aa822876ab0e6281990bf2c6015a`。該次最初紀錄當時尚無 Track2 分數，後續兩條的更新見上方。
 
 ## 1. 老師給的架構：資料流、配準與輸出
 
@@ -215,4 +217,4 @@ GPU 搜尋與 CPU 完整搜尋 2190 個 query 逐筆相同。兩條真實 50 幀
 
 上表 `../` 程式路徑相對本文件所在 `doc/`；原模板的 `../../midterm01/` 也從本文件目錄解析。
 
-對應來源、參數、候選 SHA256 與詳細驗證見 [SENSOR_GUIDED_20261017.md](../SENSOR_GUIDED_20261017.md)。目前以 `--profile sensor_guided` 選用新版；後續完整測試與 Kaggle 提交依使用者要求由使用者手動執行，回報結果後再調整。
+對應來源、參數、候選 SHA256 與詳細驗證見 [06_SENSOR_GUIDED_20261017.md](06_SENSOR_GUIDED_20261017.md)。目前以 `--profile sensor_guided` 選用新版；後續完整測試與 Kaggle 提交依使用者要求由使用者手動執行，回報結果後再調整。

@@ -1,6 +1,6 @@
 # CPU Track1 完整結果與讀取權限（2026-10-17）
 
-本次讀取既有 CPU 結果並修復單一 run 的讀取權限，沒有重跑定位、修改資料、停止容器或改動 TXT 內容。後續開發／測試改用 [GPU 主工作區](../../midterm01_gpu/README.md)。
+本次讀取既有 CPU 結果並修復單一 run 的讀取權限，沒有重跑定位、修改資料、停止容器或改動 TXT 內容。後續開發／測試改用 [GPU 主工作區](../../midterm01_gpu/doc/27_PROJECT_OVERVIEW.md)。
 
 ## 既有結果核對
 
@@ -37,6 +37,6 @@ docker exec --user root sdc_midterm01 chmod -R a+rX \
   /root/outputs/runs/first_test_9vBOV7le/track1_n0_xLOSykY4
 ```
 
-修復後子目錄 root:root／755、TXT 等檔案仍為 644。主機帳號 ricky 已可 `ls`、讀取並核對 3011 行；沒有加寫入權限、改擁有者或開放主機 `/root`。詳細用法與 CPU TXT 另存 CSV 見 [GPU 操作手冊](../../midterm01_gpu/doc/MANUAL_WORKFLOW.md#cpu-結果看不到與-chmod)。
+修復後子目錄 root:root／755、TXT 等檔案仍為 644。主機帳號 ricky 已可 `ls`、讀取並核對 3011 行；沒有加寫入權限、改擁有者或開放主機 `/root`。詳細用法與 CPU TXT 另存 CSV 見 [GPU 操作手冊](../../midterm01_gpu/doc/08_MANUAL_WORKFLOW.md#cpu-結果看不到與-chmod)。
 
 本次檢查證據保存在 `midterm01_gpu/outputs/runs/docs_gpu_handoff_20261017_hj0e8kf9/`：`inspection_before.json`、`permission_after.json`、版本狀態與文件驗證。這些輸出遵守 Git 忽略規則，不會隨 Git 同步。

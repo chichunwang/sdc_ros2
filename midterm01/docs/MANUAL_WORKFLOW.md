@@ -1,6 +1,6 @@
 # Midterm01 CPU 手動操作手冊（歷史重現）
 
-2026-10-17 後續更新：使用者指定 Midterm01 統一使用 [GPU 工作區](../../midterm01_gpu/README.md)。日常編輯／建置／新版完整 Track／結果讀取／chmod 請依 [GPU 操作手冊](../../midterm01_gpu/doc/MANUAL_WORKFLOW.md)。本文以下命令只供原 CPU 環境重現，不套到 GPU；GPU dev.sh 沒有 `--gui`，benchmark 的 `--frames` 也不接受 0。CPU Track1 既有完整結果已核對，見 [完成紀錄](CPU_TRACK1_COMPLETED_20261017.md)。
+2026-10-17 後續更新：使用者指定 Midterm01 統一使用 [GPU 工作區](../../midterm01_gpu/doc/27_PROJECT_OVERVIEW.md)。日常編輯／建置／新版完整 Track／結果讀取／chmod 請依 [GPU 操作手冊](../../midterm01_gpu/doc/08_MANUAL_WORKFLOW.md)。本文以下命令只供原 CPU 環境重現，不套到 GPU；GPU dev.sh 沒有 `--gui`，benchmark 的 `--frames` 也不接受 0。CPU Track1 既有完整結果已核對，見 [完成紀錄](CPU_TRACK1_COMPLETED_20261017.md)。
 
 2026-10-17，依目前 checkout 的程式與 launch 介面整理。Docker／colcon 與無 GUI 首跑已驗證；本手冊的桌面 RViz 操作尚未現場驗證。原始資料保持唯讀，每次測試使用新的輸出目錄。
 

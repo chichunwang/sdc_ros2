@@ -1,6 +1,6 @@
-# CPU／CUDA 前 50 幀比較（2026-10-17）
+# 05｜CPU／CUDA 前 50 幀比較（2026-10-17）
 
-> 歷史比較：以下僅評估原 CPU PCL NDT 與舊 CUDA D2D 的前 50 幀，不含目前 `sensor_guided`／`cuda_robust_icp`。新版完整序列與使用者回報的 Track1 成績見 [SENSOR_GUIDED_20261017.md](SENSOR_GUIDED_20261017.md)。下文未取得分數的範圍是這組短序列比較。
+> 歷史比較：以下僅評估原 CPU PCL NDT 與舊 CUDA D2D 的前 50 幀，不含目前 `sensor_guided`／`cuda_robust_icp`。新版完整序列與使用者回報的 Track1 成績見 [06_SENSOR_GUIDED_20261017.md](06_SENSOR_GUIDED_20261017.md)。下文未取得分數的範圍是這組短序列比較。
 
 目前 CUDA D2D 不能視為原 CPU PCL NDT 的等精度替代。兩條 Track 的 CUDA 軌跡都有較大的相鄰 pose 跳動；Track1 的點到地圖殘差略低，Track2 則較高。沒有已確認的 pose 真值或 Kaggle 分數，因此以下是幾何貼合與穩定性診斷，不是正式 ATE，也不能據此保證 CPU 的絕對定位精度。
 
@@ -19,11 +19,11 @@ CPU／CUDA 同幀 pose 的平移差異 RMS 分別為 Track1 4.803 m、Track2 7.8
 
 完整結果與圖表：
 
-- [詳細報告](outputs/runs/accuracy_20261017_ft9bpo98/REPORT.md)
-- [軌跡與相鄰 pose 跳動](outputs/runs/accuracy_20261017_ft9bpo98/trajectory_comparison.png)
-- [共同地圖殘差](outputs/runs/accuracy_20261017_ft9bpo98/map_residual_comparison.png)
-- [點雲 XY 疊圖](outputs/runs/accuracy_20261017_ft9bpo98/pointcloud_overlay.png)
-- [來源與參數](outputs/runs/accuracy_20261017_ft9bpo98/config.json)、[數值結果](outputs/runs/accuracy_20261017_ft9bpo98/summary.json)、[驗證紀錄](outputs/runs/accuracy_20261017_ft9bpo98/validation.json)
+- [詳細報告](../outputs/runs/accuracy_20261017_ft9bpo98/REPORT.md)
+- [軌跡與相鄰 pose 跳動](../outputs/runs/accuracy_20261017_ft9bpo98/trajectory_comparison.png)
+- [共同地圖殘差](../outputs/runs/accuracy_20261017_ft9bpo98/map_residual_comparison.png)
+- [點雲 XY 疊圖](../outputs/runs/accuracy_20261017_ft9bpo98/pointcloud_overlay.png)
+- [來源與參數](../outputs/runs/accuracy_20261017_ft9bpo98/config.json)、[數值結果](../outputs/runs/accuracy_20261017_ft9bpo98/summary.json)、[驗證紀錄](../outputs/runs/accuracy_20261017_ft9bpo98/validation.json)
 
 這些輸出遵守原有 Git 忽略規則，只保存在本機；重現工具為 `scripts/accuracy/alignment_evaluator.cpp`、`scripts/accuracy/CMakeLists.txt` 與 `scripts/accuracy/analyze.py`。各 Track 的 `command.json` 保存實際評估命令，`config.json` 保存所選完成 run 的來源與參數；分析使用凍結副本，沒有改動定位程式或重跑原 CPU 任務。
 
@@ -42,4 +42,4 @@ CPU／CUDA 同幀 pose 的平移差異 RMS 分別為 Track1 4.803 m、Track2 7.8
 
 原 PCL 實作可核對其 [computeTransformation／computeDerivatives 原始碼](https://github.com/PointCloudLibrary/pcl/blob/pcl-1.12.1/registration/include/pcl/registration/impl/ndt.hpp)。這需要新增 CUDA kernel、資料配置與傳輸及鄰域查詢，無法單靠執行參數切換。移植時應先在同一固定 pose 比對 score／梯度／Hessian，再比較逐步最佳化及兩條 Track 的相同 50 幀；平行加總順序可能造成浮點差異，驗證應使用明確容差，不能預先承諾逐 bit 相同。
 
-此同演算法 CUDA 後端尚未實作。它也不會直接消除目前 Track1 原始 ASCII 地圖讀取／下採樣約 77 秒的耗時；該部分與 NDT 配準計算需分別評估。速度實測與快取限制見 [CUDA_NDT_20261017.md](CUDA_NDT_20261017.md)。
+此同演算法 CUDA 後端尚未實作。它也不會直接消除目前 Track1 原始 ASCII 地圖讀取／下採樣約 77 秒的耗時；該部分與 NDT 配準計算需分別評估。速度實測與快取限制見 [03_CUDA_NDT_20261017.md](03_CUDA_NDT_20261017.md)。

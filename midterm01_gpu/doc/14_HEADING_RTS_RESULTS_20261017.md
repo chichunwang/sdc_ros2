@@ -1,6 +1,6 @@
-# heading_rts 完整測試與 Kaggle 進步紀錄
+# 14｜heading_rts 完整測試與 Kaggle 進步紀錄
 
-本文保留 heading_rts＋geometry off 的歷史成果。後續 directional 已刷新為 **1.15275／0.30576**，見 [最新幾何成績紀錄](GEOMETRY_RESULTS_20261017.md)；兩代 CSV 均獨立保存。
+本文保留 heading_rts＋geometry off 的歷史成果。後續 directional 已刷新為 **1.15275／0.30576**，見 [最新幾何成績紀錄](17_GEOMETRY_RESULTS_20261017.md)；兩代 CSV 均獨立保存。
 
 紀錄日期：**2026-10-17（Asia/Taipei）**。使用者手動執行完整 Track、提交 Kaggle，並在本輪提供兩張排行榜截圖。Codex 讀取既有輸出核對與保存證據，沒有重新啟動定位或操作提交。
 
@@ -105,4 +105,4 @@ python3 scripts/benchmark.py --track 2 --frames 3299 --profile sensor_guided --s
 
 程式省略 profile 仍是 `legacy/cuda_ndt`；指定 sensor_guided 但省略 sensor-fusion 仍是 `fixed`。本輪推薦使用已取得分數的 **heading_rts 明確選項**，沒有把推薦誤寫成程式預設已更換。`motion_rts` 目前僅有短測，不沿用本次成績。
 
-方法細節與品質限制見 [融合設計](SENSOR_FUSION_20261017.md)，演進前的濾波分析見 [濾波診斷](FILTER_ANALYSIS_20261017.md)。
+方法細節與品質限制見 [融合設計](12_SENSOR_FUSION_20261017.md)，演進前的濾波分析見 [濾波診斷](11_FILTER_ANALYSIS_20261017.md)。

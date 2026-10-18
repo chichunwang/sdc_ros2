@@ -18,5 +18,5 @@ python3 scripts/benchmark.py --track 2 --frames 3299 --profile sensor_guided --s
 # 另一次消融才將 heading_rts 改成 motion_rts，加入 GNSS 位置／速度 RTS。
 # 要回舊版固定 heading bias，改成 --sensor-fusion fixed。
 # 使用者已手動完成 heading_rts 全序列並截圖回報 Track1 1.16951、Track2 0.31967。
-# 完整改動、run 與 SHA256 見 doc/HEADING_RTS_RESULTS_20261017.md。
+# 完整改動、run 與 SHA256 見 doc/14_HEADING_RTS_RESULTS_20261017.md。
 # motion_rts 目前只有短測，不能沿用 heading_rts 成績。

@@ -1,6 +1,6 @@
-# Track2 第 410 幀警告調查與診斷修正
+# 18｜Track2 第 410 幀警告調查與診斷修正
 
-後續使用者提交原 directional 完整結果，回報 Track1 **1.15275**／Track2 **0.30576**，見 [成績紀錄](GEOMETRY_RESULTS_20261017.md)。以下保留當時警告調查與診斷修正的證據；不把新分數歸功於後續 log 修改。
+後續使用者提交原 directional 完整結果，回報 Track1 **1.15275**／Track2 **0.30576**，見 [成績紀錄](17_GEOMETRY_RESULTS_20261017.md)。以下保留當時警告調查與診斷修正的證據；不把新分數歸功於後續 log 修改。
 
 日期：2026-10-17。使用者回報 directional 版本約 500 幀附近出現警告，後提供確切訊息：
 
@@ -76,4 +76,4 @@ Map update skipped at frame 410: insufficient_unique_targets (candidate reliable
 
 此為數值回歸與診斷驗證，沒有宣稱重播後精度提升。450 幀重播不是完整提交檔。原完整 3299 筆 `diagnostic.csv` 仍是該候選可供使用者提交的檔案，不需只因原 WARN 或本次診斷修正就重新跑完整序列。
 
-證據保存在 [本次修正目錄](../outputs/runs/geometry_fallback_fix_gxsz1a7r/)，包含修改前快照、建置／測試 log、可重現的 `replay_prefix.py`、[450 幀重播驗證](../outputs/runs/geometry_fallback_fix_gxsz1a7r/replay_track2_450/validation.json)、來源／binary SHA256 及原最佳／完整 run 的保護雜湊。主機 Python 沒有 numpy 的首次測試 log 另留存；完整 Python 測試使用具備專案依賴的 GPU 容器執行。outputs 被 Git 忽略，需另行備份。
+證據保存在 [本次修正目錄](../outputs/runs/geometry_fallback_fix_gxsz1a7r)，包含修改前快照、建置／測試 log、可重現的 `replay_prefix.py`、[450 幀重播驗證](../outputs/runs/geometry_fallback_fix_gxsz1a7r/replay_track2_450/validation.json)、來源／binary SHA256 及原最佳／完整 run 的保護雜湊。主機 Python 沒有 numpy 的首次測試 log 另留存；完整 Python 測試使用具備專案依賴的 GPU 容器執行。outputs 被 Git 忽略，需另行備份。

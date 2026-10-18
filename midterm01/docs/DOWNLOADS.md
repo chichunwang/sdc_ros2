@@ -1,6 +1,6 @@
 # 官方資源與查漏補缺
 
-更新：2026-10-17。**模板與 Ubuntu 資料已建立並完成首輪檢查，確認缺檔才補下載。** 資料保留 `/home/ricky/sdc_ros2/midterm01/data`；後續建置／測試使用 [GPU 工作區](../../midterm01_gpu/README.md)，資料與檢查範圍見 [data/README](../data/README.md) 及 [首跑報告](UBUNTU_FIRST_RUN_20261017.md)。
+更新：2026-10-17。**模板與 Ubuntu 資料已建立並完成首輪檢查，確認缺檔才補下載。** 資料保留 `/home/ricky/sdc_ros2/midterm01/data`；後續建置／測試使用 [GPU 工作區](../../midterm01_gpu/doc/27_PROJECT_OVERVIEW.md)，資料與檢查範圍見 [data/README](../data/README.md) 及 [首跑報告](UBUNTU_FIRST_RUN_20261017.md)。
 
 ## 已取得與待核對
 

@@ -1,8 +1,8 @@
-# 幾何可信度診斷與方向性配準權重
+# 15｜幾何可信度診斷與方向性配準權重
 
-更新：2026-10-17。此版本已完成 GPU workspace Release 建置與數值測試；使用者後續完成兩條完整 Track／Kaggle 提交，回報 **Track1 1.15275、Track2 0.30576**，見 [完整成績與 CSV](GEOMETRY_RESULTS_20261017.md)。Track2 有 252 幀退回當幀先驗，仍有完整有限輸出；第 410 幀警告及後續診斷修正見 [調查紀錄](GEOMETRY_FALLBACK_20261017.md)。後續完整測試與提交仍由使用者手動執行。
+更新：2026-10-17。此版本已完成 GPU workspace Release 建置與數值測試；使用者後續完成兩條完整 Track／Kaggle 提交，回報 **Track1 1.15275、Track2 0.30576**，見 [完整成績與 CSV](17_GEOMETRY_RESULTS_20261017.md)。Track2 有 252 幀退回當幀先驗，仍有完整有限輸出；第 410 幀警告及後續診斷修正見 [調查紀錄](18_GEOMETRY_FALLBACK_20261017.md)。後續完整測試與提交仍由使用者手動執行。
 
-前一版已評分對照為 `heading_rts + geometry off`：Track1 1.16951、Track2 0.31967，見 [歷史成績與 CSV](HEADING_RTS_RESULTS_20261017.md)。本次沿用 heading_rts，明確選 `--geometry-mode directional`，總分再降低 1.43%／4.35%；這不是 diagnostic 模式或 motion_rts 的分數。
+前一版已評分對照為 `heading_rts + geometry off`：Track1 1.16951、Track2 0.31967，見 [歷史成績與 CSV](14_HEADING_RTS_RESULTS_20261017.md)。本次沿用 heading_rts，明確選 `--geometry-mode directional`，總分再降低 1.43%／4.35%；這不是 diagnostic 模式或 motion_rts 的分數。
 
 ## 三種模式
 
@@ -108,7 +108,7 @@ effective rank 採門檻 `max(1e-4, 0.05 × 最大特徵值)`。它受狀態尺�
 
 這些短測顯示模式可運作與診斷能揭露弱方向，**不證明新候選分數更好**。directional 在前 50 幀的 XY 修正 RMS 比原版更小（Track1 約 0.00564 m、Track2 約 0.00050 m），反映切向拉力被壓低；修正較小本身也不是精度改善。後段、轉彎與整條 Track 的取捨需依使用者完整測試及 Kaggle 分數。
 
-證據位於 [本次開發驗證目錄](../outputs/runs/geometry_dev_07284ae0/)、[四輪短測摘要](../outputs/runs/geometry_dev_07284ae0/smoke_summary.json)。各 run 的 params、frame、source／binary SHA256、來源快照、geometry CSV、耗時與 validation 均保留，原最佳 CSV 不變。outputs 被 Git 忽略，交接需另備份證據。
+證據位於 [本次開發驗證目錄](../outputs/runs/geometry_dev_07284ae0)、[四輪短測摘要](../outputs/runs/geometry_dev_07284ae0/smoke_summary.json)。各 run 的 params、frame、source／binary SHA256、來源快照、geometry CSV、耗時與 validation 均保留，原最佳 CSV 不變。outputs 被 Git 忽略，交接需另備份證據。
 
 ## 完整測試與上傳：由使用者執行
 
@@ -125,7 +125,7 @@ python3 scripts/benchmark.py --track 2 --frames 3299 --profile sensor_guided --s
 
 可上傳候選仍是每個 run 的 **`diagnostic.csv`**（`idx,x,y,yaw`，yaw 弧度），兩條分別應有 3011／3299 筆。`geometry.csv` 只供診斷，不是提交檔。保留目前最佳答案與這次 run，依實際分數決定接受哪個版本。
 
-可貼上的流程見 [run_geometry_directional.txt](run_geometry_directional.txt)。改為 `--geometry-mode diagnostic` 可保存幾何但保持原權重；改為 `--geometry-mode off` 可回到已評分權重。獨立比較時，heading_rts、尺度、voxel、cache 策略與其他權重保持一致。
+可貼上的流程見 [16_run_geometry_directional.txt](16_run_geometry_directional.txt)。改為 `--geometry-mode diagnostic` 可保存幾何但保持原權重；改為 `--geometry-mode off` 可回到已評分權重。獨立比較時，heading_rts、尺度、voxel、cache 策略與其他權重保持一致。
 
 ## 方法與程式參考
 

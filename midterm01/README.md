@@ -1,8 +1,8 @@
 # Midterm01：CPU 參考版與共用資料
 
-2026-10-17 起，使用者指定 **Midterm01 後續開發、建置與測試統一使用 [midterm01_gpu](../midterm01_gpu/README.md)**。本目錄保留原 CPU NDT 程式、既有輸出、唯一原始資料、官方題目與交付說明；GPU 以唯讀掛載共用 data／config。
+2026-10-17 起，使用者指定 **Midterm01 後續開發、建置與測試統一使用 [midterm01_gpu](../midterm01_gpu/doc/27_PROJECT_OVERVIEW.md)**。本目錄保留原 CPU NDT 程式、既有輸出、唯一原始資料、官方題目與交付說明；GPU 以唯讀掛載共用 data／config。
 
-日常操作請看 [GPU 操作手冊](../midterm01_gpu/doc/MANUAL_WORKFLOW.md)，新版命令必須帶 `--profile sensor_guided`。原 [CPU 手冊](docs/MANUAL_WORKFLOW.md) 供歷史重現，不是目前主要入口。
+日常操作請看 [GPU 操作手冊](../midterm01_gpu/doc/08_MANUAL_WORKFLOW.md)，新版命令必須帶 `--profile sensor_guided`。原 [CPU 手冊](docs/MANUAL_WORKFLOW.md) 供歷史重現，不是目前主要入口。
 
 ## CPU 已完成的結果
 
@@ -18,9 +18,9 @@
 /home/ricky/sdc_ros2/midterm01/outputs/runs/first_test_9vBOV7le/track1_n0_xLOSykY4
 ```
 
-該資料夾原為 root:root／700，主機 ricky 無法列出內容；已修正為 755，TXT 內容 SHA256 保持一致。`result.txt`、`run.log`、`command.sh`、`exit_code.txt` 已存在，這個完整 run 尚未產生 CSV。chmod 與另存 CSV 方法見 [GPU 手冊](../midterm01_gpu/doc/MANUAL_WORKFLOW.md#cpu-結果看不到與-chmod)。
+該資料夾原為 root:root／700，主機 ricky 無法列出內容；已修正為 755，TXT 內容 SHA256 保持一致。`result.txt`、`run.log`、`command.sh`、`exit_code.txt` 已存在，這個完整 run 尚未產生 CSV。chmod 與另存 CSV 方法見 [GPU 手冊](../midterm01_gpu/doc/08_MANUAL_WORKFLOW.md#cpu-結果看不到與-chmod)。
 
-GPU 新版兩條完整序列已完成本機驗證，使用者曾回報 Track1 Kaggle 1.22369／baseline 1.79075；Track2 尚無回報。這不是 CPU 版本的分數，詳見 [新版實測](../midterm01_gpu/SENSOR_GUIDED_20261017.md)。
+GPU 新版兩條完整序列已完成本機驗證，使用者曾回報 Track1 Kaggle 1.22369／baseline 1.79075；Track2 尚無回報。這不是 CPU 版本的分數，詳見 [新版實測](../midterm01_gpu/doc/06_SENSOR_GUIDED_20261017.md)。
 
 ## 保留目錄與掛載
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""在獨立容器量測固定 Track 前 N 幀，保存參數、逐幀時間與輸出檢查。"""
+"""在 GPU 容器量測 Track 的連續影格（預設前 N 幀），保存來源、時間與輸出檢查。"""
 
 import argparse
 import csv
@@ -13,6 +13,10 @@ import shlex
 import subprocess
 import time
 from zoneinfo import ZoneInfo
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from three_camera_source import load_index, load_reconstruction, reuse_priors, sha256
 
 if __package__:
     from .geometry_report import summarize_guided_updates, validate_geometry
@@ -43,6 +47,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--track", type=int, choices=(1, 2), default=1)
     parser.add_argument("--frames", type=int, default=50)
+    parser.add_argument("--start-frame", type=int, default=0, help="Original 0-based frame index; short-window diagnosis, not a complete submission")
+    parser.add_argument("--cloud-source", choices=("front", "mapanything", "reconstruction"), default="front")
+    parser.add_argument("--ply-scale", type=float, help="front default=3; experimental sources require explicit scale")
+    parser.add_argument("--source-report", type=Path, help="Required experimental source report with matching Track/frame/hash contract")
+    parser.add_argument("--prior-run", type=Path, help="Reuse exact sensor priors from an existing same-Track/fusion GPU run")
     parser.add_argument("--backend", choices=("cuda_ndt", "pcl_ndt", "cuda_robust_icp"), help="default legacy=cuda_ndt; sensor_guided=cuda_robust_icp")
     parser.add_argument("--cuda-mode", choices=("P2D", "D2D"), default="D2D")
     parser.add_argument("--profile", choices=("legacy", "sensor_guided"), default="legacy", help="legacy: previous-pose NDT; sensor_guided: GNSS/IMU plus bounded robust map refinement")
@@ -62,6 +71,24 @@ def main():
     args = parser.parse_args()
     if args.backend is None:
         args.backend = "cuda_robust_icp" if args.profile == "sensor_guided" else "cuda_ndt"
+    if args.start_frame < 0:
+        parser.error("--start-frame must be nonnegative")
+    if args.ply_scale is None:
+        if args.cloud_source != "front":
+            parser.error("Experimental clouds require explicit --ply-scale; do not inherit front-camera scale 3")
+        args.ply_scale = 3.0
+    if not math.isfinite(args.ply_scale) or args.ply_scale <= 0:
+        parser.error("--ply-scale must be finite and positive")
+    if args.cloud_source != "front" and (args.profile != "sensor_guided" or args.backend != "cuda_robust_icp" or not args.source_report):
+        parser.error("Experimental clouds require sensor_guided/cuda_robust_icp and --source-report")
+    if args.cloud_source == "reconstruction" and args.ply_scale != 1.:
+        parser.error("Calibrated reconstruction uses metric export; --ply-scale must be 1")
+    if args.prior_run and args.profile != "sensor_guided":
+        parser.error("--prior-run requires sensor_guided")
+    if args.start_frame and args.profile != "sensor_guided":
+        parser.error("--start-frame requires sensor_guided; legacy first pose cannot initialize an arbitrary window")
+    if args.source_report and args.cloud_source == "front":
+        parser.error("--source-report requires an experimental cloud source")
     if args.backend == "cuda_robust_icp" and args.profile != "sensor_guided":
         parser.error("--backend cuda_robust_icp requires --profile sensor_guided")
     if args.sensor_fusion != "fixed" and args.profile != "sensor_guided":
@@ -119,26 +146,72 @@ def main():
         if path.is_file() and path.suffix.lower() == ".ply" and match and int(match[1]) > 0:
             files.append((int(match[1]), path.name))
     files.sort()
-    if len(files) < args.frames:
-        parser.error(f"Only {len(files)} timestamped PLY files available")
+    source_relative = Path(f"Track{args.track}/raw_ply")
+    source_host = data_root / source_relative
+    source_container = "/root/data/" + source_relative.as_posix()
+    source_metadata = {"cloud_source": args.cloud_source, "ply_scale": args.ply_scale,
+                       "reference_time": "front_camera_bag_timestamp", "per_camera_deskew_applied": False}
+    if args.cloud_source == "mapanything":
+        source_root, index, contract = load_index(data_root, args.track, [s for s, _ in files])
+        source_report = json.loads(args.source_report.read_text())
+        if source_report.get("track") != args.track or source_report.get("source_contract") != contract:
+            parser.error("Source calibration report Track/index/frame identity mismatch")
+        source_relative = source_root.relative_to(data_root)
+        files = [(int(row["f_ts"]), row["ply"]) for row in index]
+        source_metadata.update(contract, calibration_report=str(args.source_report.resolve()),
+                               calibration_report_sha256=sha256(args.source_report),
+                               scale_status=source_report.get("scale_status"),
+                               experimental=True, merged_deskew_unavailable=True)
+        source_host = source_root
+        source_container = "/root/data/" + source_relative.as_posix()
+    if args.cloud_source == "reconstruction":
+        try:
+            source_host, files, report = load_reconstruction(args.source_report, root / 'outputs', args.track,
+                                                            [s for s, _ in files], args.start_frame, args.frames)
+        except (ValueError, OSError, KeyError) as error:
+            parser.error(str(error))
+        source_container = '/root/outputs/' + source_host.relative_to((root / 'outputs').resolve()).as_posix()
+        source_metadata.update(variant=report['variant'], per_camera_deskew_applied=report['per_camera_motion_compensation'],
+                               calibration_report=str(args.source_report.resolve()), calibration_report_sha256=sha256(args.source_report),
+                               source_contract=report, experimental=True)
+    else:
+        if len(files) < args.start_frame + args.frames:
+            parser.error(f"Only {len(files)} timestamped PLY files available")
+        files = files[args.start_frame:args.start_frame + args.frames]
 
     profile_prefix = "sensor_guided_" if args.profile == "sensor_guided" else ""
     if args.sensor_fusion != "fixed":
         profile_prefix += args.sensor_fusion + "_"
     if args.geometry_mode != "off":
         profile_prefix += "geometry_" + args.geometry_mode + "_"
+    if args.cloud_source != "front" or args.start_frame or args.ply_scale != 3.0:
+        profile_prefix += f"{args.cloud_source}_s{args.ply_scale:g}_from{args.start_frame}_"
     run = create_run_directory(root / "outputs/runs", f"track{args.track}_{profile_prefix}{args.backend}_{args.cuda_mode.lower()}")
     print(f"Run: {run}", flush=True)
     container_run = "/root/outputs/runs/" + run.name
+    source_metadata["selected_frames"] = [
+        {"original_idx": args.start_frame + i, "timestamp_ns": stamp, "filename": name,
+         "sha256": sha256(source_host / name)} for i, (stamp, name) in enumerate(files)]
+    write_json(run / "source_input.json", source_metadata)
+    if args.source_report:
+        (run / "source_calibration.json").write_bytes(args.source_report.read_bytes())
+    # Symlinks resolve inside the GPU container; original data remains read-only.
+    ply_path = source_container
+    if args.start_frame or args.cloud_source != "front":
+        staged = run / "source_ply"
+        staged.mkdir()
+        for _, name in files:
+            (staged / Path(name).name).symlink_to(source_container + '/' + name)
+        ply_path = container_run + "/source_ply"
     params = {
         "map_path": f"/root/data/Track{args.track}", "map_file": "map.pcd",
-        "ply_path": f"/root/data/Track{args.track}/raw_ply",
+        "ply_path": ply_path,
         "init_guess_file": f"/root/data/Track{args.track}/init_guess.txt",
         "save_path": container_run, "save_file": "result.txt", "map_cache_file": cache_file, "bag_path": "",
         "map_voxel_leaf_size": 1.0, "input_voxel_leaf_size": 0.3, "min_input_points": 10,
         "submap_half_size": 100.0, "submap_half_height": 30.0,
         "ndt_resolution": args.resolution, "ndt_step_size": 0.8, "ndt_transformation_epsilon": 0.05,
-        "ndt_max_iterations": 30, "ply_scale": 3.0,
+        "ndt_max_iterations": 30, "ply_scale": args.ply_scale,
         "publish_global_map": False, "max_frames": args.frames, "keep_alive": False,
         "registration_backend": args.backend, "cuda_ndt_mode": args.cuda_mode,
         "cuda_translation_epsilon": 0.01, "cuda_rotation_epsilon": 0.002,
@@ -153,9 +226,9 @@ def main():
     with (run / "frames.csv").open("w", newline="") as stream:
         writer = csv.writer(stream)
         writer.writerow(["idx", "timestamp_ns", "filename"])
-        writer.writerows((i, stamp, name) for i, (stamp, name) in enumerate(files[:args.frames]))
+        writer.writerows((i, stamp, Path(name).name) for i, (stamp, name) in enumerate(files))
     sensor_preparation_seconds = 0.0
-    pipeline_sources = (Path(__file__), root / "scripts/prepare_sensor_prior.py", root / "scripts/sensor_fusion.py", Path(__file__).with_name("geometry_report.py"))
+    pipeline_sources = (Path(__file__), root / "scripts/prepare_sensor_prior.py", root / "scripts/sensor_fusion.py", Path(__file__).with_name("geometry_report.py"), root / "scripts/three_camera_source.py")
     write_json(run / "pipeline_source_sha256.json", {
         str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in pipeline_sources
     })
@@ -170,7 +243,16 @@ def main():
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(path.read_bytes())
     write_json(run / "sensor_preparation_params.json", fusion_settings)
-    if args.profile == "sensor_guided":
+    if args.prior_run:
+        prep_start = time.perf_counter()
+        write_json(run / "sensor_preparation_params.json", {
+            "fusion": args.sensor_fusion, "mode": "exact_prior_reuse",
+            "source_run": str(args.prior_run.resolve()), "fusion_cli_parameters_applied": False,
+            "actual_configuration": "sensor_prior.json; copied from source run",
+        })
+        reuse_priors(args.prior_run, run, [s for s, _ in files], args.track, args.sensor_fusion)
+        sensor_preparation_seconds = time.perf_counter() - prep_start
+    if args.profile == "sensor_guided" and not args.prior_run:
         prep_start = time.perf_counter()
         prep = ["docker", "exec", container, "bash", "-c",
                 "source /opt/ros/humble/setup.bash && exec python3 /root/scripts/prepare_sensor_prior.py "
@@ -260,6 +342,9 @@ def main():
         "profile": args.profile, "sensor_preparation_seconds": sensor_preparation_seconds,
         "sensor_fusion": args.sensor_fusion,
         "geometry_mode": args.geometry_mode,
+        "cloud_source": args.cloud_source, "ply_scale": args.ply_scale, "start_frame": args.start_frame,
+        "source_input": "source_input.json", "experimental_source": args.cloud_source != "front",
+        "submission_frame_set_complete": args.start_frame == 0 and args.frames == (3011 if args.track == 1 else 3299),
         "pipeline_elapsed_seconds": elapsed + sensor_preparation_seconds,
         "frames": len(poses), "expected_frames": args.frames, "elapsed_seconds": elapsed,
         "time_scope": "Docker exec + ROS startup + map initialization + all frames; no build. See map_cache_file for explicit cache use.",

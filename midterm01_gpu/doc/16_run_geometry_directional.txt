@@ -10,7 +10,7 @@ python3 scripts/benchmark.py --track 2 --frames 3299 --profile sensor_guided --s
 # 先看 validation.json：returncode=0、output_complete_and_finite=true、validation_errors=[]。
 # Track1 3011／Track2 3299 筆；候選為各自 run/diagnostic.csv。
 # geometry.csv／geometry_config.json 是幾何診斷，不是上傳檔。
-# 使用者已完整測試／提交：Track1 1.15275、Track2 0.30576；詳見 doc/GEOMETRY_RESULTS_20261017.md。
+# 使用者已完整測試／提交：Track1 1.15275、Track2 0.30576；詳見 doc/17_GEOMETRY_RESULTS_20261017.md。
 # 新最佳 CSV 另存 outputs/latest_geometry_submission.txt 指向的目錄，舊 1.16951／0.31967 仍保留。
 
 # 要只看診斷、保留原配準權重：--geometry-mode diagnostic

@@ -1,6 +1,8 @@
-# GNSS／IMU 融合改進與手動完整測試
+# 12｜GNSS／IMU 融合改進與手動完整測試
 
-更新：2026-10-17。新增的是**定位前的感測器先驗融合**，後面仍接既有 CUDA 最近鄰＋CPU robust 四自由度配準。使用者已手動完成 `heading_rts` 兩條完整 Track 並提供 Kaggle 截圖：**Track1 1.16951、Track2 0.31967**，截圖當下分別第 3／第 1 名。完整改動、來源 SHA256 與進步幅度見 [本輪成績紀錄](HEADING_RTS_RESULTS_20261017.md)。`motion_rts` 仍只有短測，沒有其 Kaggle 成績。
+2026-10-18 現況補充：本文件記錄 heading_rts＋geometry off 的融合階段。最新已評分主流程在其後加入 directional，分數 **1.15275／0.30576**，使用者 Team 3 新截圖排名第 4／第 2 名；見 [現行整合算法與改進方向](20_CURRENT_ALGORITHM_AND_ACCURACY_20261018.md)。以下保留融合階段原始分數、測試與命令，不將後續 directional 成績歸到 motion_rts。
+
+更新：2026-10-17。新增的是**定位前的感測器先驗融合**，後面仍接既有 CUDA 最近鄰＋CPU robust 四自由度配準。使用者已手動完成 `heading_rts` 兩條完整 Track 並提供 Kaggle 截圖：**Track1 1.16951、Track2 0.31967**，截圖當下分別第 3／第 1 名。完整改動、來源 SHA256 與進步幅度見 [本輪成績紀錄](14_HEADING_RTS_RESULTS_20261017.md)。`motion_rts` 仍只有短測，沒有其 Kaggle 成績。
 
 ## 評估與選擇
 
@@ -73,7 +75,7 @@ RTS 是 Rauch–Tung–Striebel 離線後向平滑：Kalman forward pass 先累�
 
 數值測試共 11 項（含既有 prior 與濾波工具測試）通過。新增測試涵蓋：已知慢變 bias＋方向離群值、bias 範圍與變化率限制、低速／轉彎／反向拒絕、yaw 跨 ±180°、roll/pitch/Z 保留、奈秒時間、短／長查詢的 heading 一致性、已知等速運動無整段位置滯後、GNSS spike 降權，以及插入 frame timestamp 不增加 GNSS 量測次數。兩條 Track 各前 50 個 prior 的 fixed 模式與修改前程式逐值完全相同。
 
-開發階段的真實資料短測如下；當時 Codex 只執行這些 50 幀測試。使用者之後手動完成的 3011／3299 幀結果另見 [完整成績紀錄](HEADING_RTS_RESULTS_20261017.md)：
+開發階段的真實資料短測如下；當時 Codex 只執行這些 50 幀測試。使用者之後手動完成的 3011／3299 幀結果另見 [完整成績紀錄](14_HEADING_RTS_RESULTS_20261017.md)：
 
 | Track／模式 | 幀數 | 退出碼／驗證錯誤 | 接受 map 更新 | 感測器前處理＋ROS（s） | map cache |
 | --- | ---: | --- | ---: | ---: | --- |
@@ -83,9 +85,9 @@ RTS 是 Rauch–Tung–Striebel 離線後向平滑：Kalman forward pass 先累�
 
 兩條完整 bag 的 heading 區塊分別接受 47／48 個；這是離線感測器讀取，不代表處理了整條影像序列。另在全路線分散的 13 個 timestamp 作**感測器先驗診斷**，Track2 bias 約由 +3.644° 變到 −0.098°；沒有進行該 13 幀影像配準或全序列定位，也不能把這當誤差改善。
 
-證據：[本次驗證目錄](../outputs/runs/sensor_fusion_dev_4g2k458n/)、[短測 JSON](../outputs/runs/sensor_fusion_dev_4g2k458n/smoke_summary.json)、[輸入診斷圖](../outputs/runs/sensor_fusion_dev_4g2k458n/heading_bias_samples.png)。各短測原始 run 路徑、參數、frame、來源快照、時間與完整 validation 由 JSON 連到原 run。Track1／Track2 快取條件不同，不作速度倍率比較；合成測試也不是競賽精度測試。
+證據：[本次驗證目錄](../outputs/runs/sensor_fusion_dev_4g2k458n)、[短測 JSON](../outputs/runs/sensor_fusion_dev_4g2k458n/smoke_summary.json)、[輸入診斷圖](../outputs/runs/sensor_fusion_dev_4g2k458n/heading_bias_samples.png)。各短測原始 run 路徑、參數、frame、來源快照、時間與完整 validation 由 JSON 連到原 run。Track1／Track2 快取條件不同，不作速度倍率比較；合成測試也不是競賽精度測試。
 
-改進前的文字回報為 Track1 1.22369、Track2 0.56063；新截圖的 Track2 前最佳顯示 0.56083，差異與來源均保留在 [成績紀錄](HEADING_RTS_RESULTS_20261017.md)。本輪新最佳為 **1.16951／0.31967**，已另存新的 CSV／provenance，沒有覆寫舊結果。
+改進前的文字回報為 Track1 1.22369、Track2 0.56063；新截圖的 Track2 前最佳顯示 0.56083，差異與來源均保留在 [成績紀錄](14_HEADING_RTS_RESULTS_20261017.md)。本輪新最佳為 **1.16951／0.31967**，已另存新的 CSV／provenance，沒有覆寫舊結果。
 
 ## 完整測試：由使用者在 Ubuntu 主機手動執行
 
@@ -105,7 +107,7 @@ python3 scripts/benchmark.py --track 2 --frames 3299 --profile sensor_guided --s
 
 欲獨立比較 GNSS 位置模型，再手動以相同命令改成 `--sensor-fusion motion_rts`；回舊版則用 `--sensor-fusion fixed`。不要在同一輪同時改其他配準權重；以實際完整結果、Kaggle 分數與對應 CSV SHA256 決定是否接受新版本。
 
-可直接貼上的命令另見 [run_sensor_fusion.txt](run_sensor_fusion.txt)。若要重做短測，幀數改 50；若只做數值契約測試：
+可直接貼上的命令另見 [13_run_sensor_fusion.txt](13_run_sensor_fusion.txt)。若要重做短測，幀數改 50；若只做數值契約測試：
 
 ```bash
 docker exec sdc_midterm01_gpu python3 -m unittest discover -s /root/scripts/tests -v
@@ -117,4 +119,9 @@ docker exec sdc_midterm01_gpu python3 -m unittest discover -s /root/scripts/test
 
 - [GTSAM 官方 Factor Graph 教學](https://gtsam.org/tutorials/intro.html)：不同感測器及相鄰狀態關係可表為因子，共同最佳化；本次沒有安裝或整合 GTSAM。
 - [SciPy SLERP 文件](https://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.transform.Slerp.html)：以 quaternion 做旋轉內插；內插本身不等於量測濾波。
-- [前一輪濾波診斷](FILTER_ANALYSIS_20261017.md)：直接濾最終位置造成滯後、慢變 heading 差值及實驗依據。
+- [前一輪濾波診斷](11_FILTER_ANALYSIS_20261017.md)：直接濾最終位置造成滯後、慢變 heading 差值及實驗依據。
+
+
+## 2026-10-18 三相機的先驗重用
+
+[原始三相機校正流程](23_CALIBRATED_RIG_RESULTS_20261018.md) 直接重用原完整 heading_rts 的 sensor prior，以相機各自的 header 時間插值 XYZ／Slerp 旋轉，再轉至前相機 bag reference。定位比較逐位元核對相同 prior CSV；沒有使用原 map posterior，亦未改動 fusion 模型。body→camera lever arm、header 曝光／硬體時鐘語義仍未完整標定。

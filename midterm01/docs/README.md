@@ -2,7 +2,7 @@
 
 更新：2026-10-17。正式要求依同目錄 [官方 PDF](<SDC 2026 Midterm01 Competition -  Localization.pdf>) 全部 24 頁與 [Kaggle 原文紀錄](KAGGLE_DATASET_SPEC.md)；本次未登入網站查最新公告。使用者單人完成，實際貢獻記為 100%。
 
-**目前開發／建置／測試統一使用 [GPU 工作區](../../midterm01_gpu/README.md)**，日常命令見 [GPU 操作手冊](../../midterm01_gpu/doc/MANUAL_WORKFLOW.md)。新版為 `sensor_guided`／`cuda_robust_icp`，不是舊 CPU NDT 或首次 CUDA D2D。
+**目前開發／建置／測試統一使用 [GPU 工作區](../../midterm01_gpu/doc/27_PROJECT_OVERVIEW.md)**，日常命令見 [GPU 操作手冊](../../midterm01_gpu/doc/08_MANUAL_WORKFLOW.md)。新版為 `sensor_guided`／`cuda_robust_icp`，不是舊 CPU NDT 或首次 CUDA D2D。
 
 新版兩條完整序列已完成本機檢查。使用者截圖回報 Track1 Kaggle **1.22369**、同圖 baseline **1.79075**；Track2 分數尚未回報。CPU Track1 另有完整 3011 筆結果，已修正 run 讀取權限，見 [CPU 完成紀錄](CPU_TRACK1_COMPLETED_20261017.md)。各版本成績與證據不能混用。
 
@@ -25,10 +25,10 @@ PDF 把 `localization.cpp` 標成 TODO，但取得的 package 已含基礎 NDT�
 | 版本 | 行為／文件 |
 | --- | --- |
 | 原 CPU PCL NDT | 第一幀 init_guess，後續前一接受 pose；bag 可讀但未融合。單幀／前 50 幀見 [Ubuntu 首跑](UBUNTU_FIRST_RUN_20261017.md)，完整 Track1 見 [CPU 完成紀錄](CPU_TRACK1_COMPLETED_20261017.md) |
-| 首次 CUDA D2D | 與 PCL 不同目標函數／最佳化；曾完整追蹤漂移。見 [歷史比較](../../midterm01_gpu/ACCURACY_COMPARISON_20261017.md) |
-| 目前 sensor_guided | GNSS／IMU 同步先驗、CUDA 最近鄰、CPU robust 四自由度細修，拒絕時回當下先驗。見 [新版實測與限制](../../midterm01_gpu/SENSOR_GUIDED_20261017.md) |
+| 首次 CUDA D2D | 與 PCL 不同目標函數／最佳化；曾完整追蹤漂移。見 [歷史比較](../../midterm01_gpu/doc/05_ACCURACY_COMPARISON_20261017.md) |
+| 目前 sensor_guided | GNSS／IMU 同步先驗、CUDA 最近鄰、CPU robust 四自由度細修，拒絕時回當下先驗。見 [新版實測與限制](../../midterm01_gpu/doc/06_SENSOR_GUIDED_20261017.md) |
 
-三階段資料流、原有功能與新增貢獻見 [演算法教學](../../midterm01_gpu/doc/ALGORITHM_WALKTHROUGH_20261017.md)。新版 profile 必須明確選用，CLI 未指定時仍是 legacy。兩個 workspace 與 outputs 獨立，原始資料唯一放 `midterm01/data`，GPU 唯讀共用。
+三階段資料流、原有功能與新增貢獻見 [演算法教學](../../midterm01_gpu/doc/07_ALGORITHM_WALKTHROUGH_20261017.md)。新版 profile 必須明確選用，CLI 未指定時仍是 legacy。兩個 workspace 與 outputs 獨立，原始資料唯一放 `midterm01/data`，GPU 唯讀共用。
 
 前相機與 MapAnything 的數量、時間、index、bag／影像對應與 camera_info 位置已保存於首跑報告；官方 submission sample 本地尚未找到。PLY 只掃第一層，以檔名整數奈秒排序；MapAnything index 不直接作 submission，也不直接沿用前相機尺度或重套外參。原始資料與檢查入口見 [data/README](../data/README.md)。
 

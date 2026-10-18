@@ -1,6 +1,6 @@
 # Ubuntu 已建立的 Midterm01 資料
 
-目前唯一原始資料仍在本目錄；後續由 [GPU 工作區](../../midterm01_gpu/README.md) 唯讀共用，不建立 `midterm01_gpu/data`。GPU `.env` 使用 `MIDTERM_GPU_DATA_DIR=../midterm01/data`，CPU 舊 `.env` 的 `MIDTERM_DATA_DIR` 不會自動設定 GPU。GPU 的新報告／cache 寫 `midterm01_gpu/outputs`，CPU 舊結果保留 `midterm01/outputs`。
+目前唯一原始資料仍在本目錄；後續由 [GPU 工作區](../../midterm01_gpu/doc/27_PROJECT_OVERVIEW.md) 唯讀共用，不建立 `midterm01_gpu/data`。GPU `.env` 使用 `MIDTERM_GPU_DATA_DIR=../midterm01/data`，CPU 舊 `.env` 的 `MIDTERM_DATA_DIR` 不會自動設定 GPU。GPU 的新報告／cache 寫 `midterm01_gpu/outputs`，CPU 舊結果保留 `midterm01/outputs`。
 
 2026-10-17 已直接檢查 Ubuntu 資料：兩條前相機及 MapAnything 各為 3011／3299 幀，無空 PLY、無重複或不可解析時間。MapAnything index 與前相機時間／編號逐列一致；`camera_info` 已找到，位置為 `TrackN/TrackN_images/camera_info/`。兩份 bag SQLite quick_check 通過；前相機每個 PLY timestamp 均存在於 bag 的前相機 **bag timestamp**，且有同名影像。完整檢查範圍、幾何抽樣與限制見 [實測報告](../docs/UBUNTU_FIRST_RUN_20261017.md)。未找到官方 submission sample。
 

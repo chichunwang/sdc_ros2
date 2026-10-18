@@ -4,12 +4,18 @@
 
 使用者已指定：**Midterm01 後續開發、建置與測試統一使用 `midterm01_gpu/`**。`midterm01/` 保留原 CPU 程式、結果、共用原始資料與官方文件；不搬移、覆寫或重新計算既有 CPU 結果。Windows 靜態交接與 Ubuntu 首跑屬不同階段，現況以本機證據及下列文件為準。
 
-- GPU 主入口：[midterm01_gpu/README.md](midterm01_gpu/README.md)。日常操作與權限：[GPU 操作手冊](midterm01_gpu/doc/MANUAL_WORKFLOW.md)。另遵守 [GPU 工作約定](midterm01_gpu/AGENTS.md)。
+- GPU 主入口：[midterm01_gpu/README.md](midterm01_gpu/README.md)。文件集中於 `midterm01_gpu/doc/`；先讀 [01｜架構與完整流程](midterm01_gpu/doc/01_PROGRAM_FLOW.md)，歷史編號／舊名／官方參考見 [28｜文件目錄](midterm01_gpu/doc/28_DOCUMENTATION_INDEX.md)。日常操作與權限：[GPU 操作手冊](midterm01_gpu/doc/08_MANUAL_WORKFLOW.md)。另遵守 [GPU 工作約定](midterm01_gpu/AGENTS.md)。
 - 目前使用 `--profile sensor_guided`，後端為 `cuda_robust_icp`：GNSS／IMU 先驗、CUDA 最近鄰搜尋、CPU 正則化四自由度細修。這是 CPU／GPU 協作，並非新版 NDT。
 - 程式為相容重現，省略 profile 仍預設 `legacy`／`cuda_ndt`；文件主流程必須明確加 `--profile sensor_guided`。不得把文件推薦寫成程式預設已改。
-- 最新已評分為 `--profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional`；使用者兩條完整序列 3011／3299 筆通過本機核對，截圖回報 Track1 **1.15275**／baseline **1.79075**、Track2 **0.30576**／baseline **1.92587**，截圖當下第 3／第 1 名。相較 geometry off 的 1.16951／0.31967，總分降低 1.43%／4.35%；改動與 SHA256 見 [幾何成績紀錄](midterm01_gpu/doc/GEOMETRY_RESULTS_20261017.md)，上一輪保留於 [heading_rts 紀錄](midterm01_gpu/doc/HEADING_RTS_RESULTS_20261017.md)。省略 fusion 仍是 fixed、geometry 仍是 off；motion_rts 只有短測。舊 Track2 文字 0.56063 與歷史截圖前最佳 0.56083 的差異保留，不回填到未核對的舊 CSV；排名不是即時查榜。
+- 最新已評分為 `--profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional`；使用者兩條完整序列 3011／3299 筆通過本機核對，截圖回報 Track1 **1.15275**／baseline **1.79075**、Track2 **0.30576**／baseline **1.92587**，截圖當下第 3／第 1 名。相較 geometry off 的 1.16951／0.31967，總分降低 1.43%／4.35%；改動與 SHA256 見 [幾何成績紀錄](midterm01_gpu/doc/17_GEOMETRY_RESULTS_20261017.md)，上一輪保留於 [heading_rts 紀錄](midterm01_gpu/doc/14_HEADING_RTS_RESULTS_20261017.md)。省略 fusion 仍是 fixed、geometry 仍是 off；motion_rts 只有短測。舊 Track2 文字 0.56063 與歷史截圖前最佳 0.56083 的差異保留，不回填到未核對的舊 CSV；排名不是即時查榜。
+- **2026-10-18 新排名快照**：使用者為 Team 3，新截圖 Track1 第 4／Track2 第 2 名，分數仍為 1.15275／0.30576；第一名分別為 Team 13／0.85886、Team 12／0.28263。現行算法與精度改善假說見 [2026-10-18 分析](midterm01_gpu/doc/20_CURRENT_ALGORITHM_AND_ACCURACY_20261018.md)。原第 3／第 1 名保留為 2026-10-17 歷史。初始文件分析僅只讀核對既有輸出，契約診斷、均衡幾何／多尺度與 joint smoother 為研究方向；同日後續三相機實作見下一項，仍無新分數。
+- 2026-10-18 使用者先允許評估三相機，後明確要求實作尺度／同步並對照。已加入實驗來源／尺度／短段／相同 prior 重用介面、尺度估計及同步工具，完成 12×24=288 幀對照與 21 項 Python 測試；共享尺度候選 0.87124954，尚非真值校準。已確認完整 index 的前相機為 bag timestamp、左右為 header timestamp，統一 header 後左右相對前方的中位差為 Track1 +6.952／+21.189 ms、Track2 −2.395／+20.704 ms。merged PLY 已為前相機 FLU，無 camera_id／per-view pose，尚未實際逐相機 motion compensation；不重套外參／軸轉換。三相機增加幾何方向但高度／形狀差異仍大，不能宣稱 XY／yaw 更準；預設與推薦最佳仍為前相機。證據及限制見 [實作紀錄](midterm01_gpu/doc/22_THREE_CAMERA_IMPLEMENTATION_20261018.md)，初始 audit 見 [評估](midterm01_gpu/doc/21_THREE_CAMERA_ASSESSMENT_20261018.md)。沒有新完整 Track 或 Kaggle 分數，完整測試仍由使用者執行。
+- 同日後續依使用者要求，已從 8 groups／24 張 raw JPG 完成有校正三相機重建、固定 rig 安裝高度、per-view depth／camera_id 保存、逐相機 header 運動補償及 normal／camera／spatial 均衡取樣。左右相對前相機高 0.0783861／0.1004340 m，不假設未知 body 高度；map 全局 Z 仍可隨道路變化。新增 `--cloud-source reconstruction --ply-scale 1 --source-report ...`，只接受 outputs 下 SHA／原始 idx／整數時間吻合的來源。稀疏 stereo 共用深度尺度候選 0.64738877，只縮放 camera depth，不縮放 baseline；holdout 尚有明顯偏差，不能升為最佳。64×2=128 筆 pose 與 26 項 Python 測試通過，側面增加局部約束但尚無精度勝出證據。主機隔離 ML venv，ROS／C++ solver／CPU 環境不變。方法與公平小段對照見 [raw 三相機報告](midterm01_gpu/doc/23_CALIBRATED_RIG_RESULTS_20261018.md)；沒有完整 Track 或新 Kaggle 分數。
+- 後續三相機偏差驗證選 16 個分散場景，fit／holdout 沿路線相隔 90–143 m；spatial SIFT 去重後 stereo 尺度 0.67398047，支持 holdout groups 差異 median／P90 18.2%／30.6%，temporal 參考 0.79228787 也未通過，不能升為最佳或稱定位誤差。已補 `scripts/run_three_camera_full.sh`／`run_rig_full.py`，由使用者手動完整 raw 重建→原 prior／directional 定位；逐幀原子保存，續跑核對原始影像／輸出／模型／程式／套件／標定與 prior。batch 明確允許最多 30 ms motion 外推處理首尾約 10–14 ms 的 header 範圍，原 trajectory 預設仍嚴格、定位 prior 不改。完整命令 dry-run、首尾小段與續跑已測；沒有自動完整序列或新分數。見 [偏差驗證與完整入口](midterm01_gpu/doc/24_BIAS_VALIDATION_20261018.md)。
 - CPU Track1 完整結果已讀取核對：`midterm01/outputs/runs/first_test_9vBOV7le/track1_n0_xLOSykY4/result.txt` 有 3011 筆有限矩陣、退出碼 0、log 記錄 0 次失敗，耗時 14813.444 秒。權限已由 root:root 的 `700` 修正為可讀取的 `755`；沒有改動結果內容。見 [CPU 完成與權限紀錄](midterm01/docs/CPU_TRACK1_COMPLETED_20261017.md)。不能據此宣稱 CPU 精度合格或 Track2 完整 CPU 已完成。
 - **後續完整 Track 測試由使用者手動執行並回報結果**；沒有新明確指示，不自行啟動下一輪完整序列。文件更新／讀取既有輸出不需要重跑定位。
+
+- 後續三相機兩條完整已由使用者完成並回報截圖：Track1 **1.15346**、Track2 **0.31064**，比前相機最佳增加 0.0616%／1.5960%，未升為最佳。已核對 3011／3299 筆與 CSV／矩陣／manifest，完成完整配對、32 個分散場景相機級／Z 診斷及 Track1 24×12 幀消融；側面增加方向資訊，但新舊深度／frame／高度一致性仍待釐清，不能以更高接受率或更小 map 殘差宣稱更準。最新方法、證據及改進順序見 [29｜三相機完整成績分析](midterm01_gpu/doc/29_THREE_CAMERA_SCORED_ANALYSIS_20261018.md)。先核對 frame、跨時間靜態幾何與深度不確定度，再研究增量側面融合／prior；不直接補固定 Z 或按榜分盲調。本輪分析沒有修改 solver／重建設定或自行啟動新完整序列。
 
 ## 學習目的與算法改進原則（2026-10-17 使用者指定）
 
@@ -18,7 +24,7 @@
 - 優先找適合問題、可泛化到其他序列與真實場景的算法。非必要不以特定 Track、幀區間或排行榜回饋的特定化調參作為提高分數的主要手段，不以大量盲目參數搜尋取代模型分析。
 - 必要調參仍可進行，但需說明其必要性、參數的物理／統計意義、假說與驗證方法，例如依感測器噪聲、實測標定、模型適用範圍或數值穩定性設定。對不同 Track 的設定差異，需有可說明的資料／標定依據，不能只因分數較低就視為通用改進。
 - 消融實驗用於理解算法機制與驗證假說；Kaggle 分數作為結果證據之一。保存算法變更與參數變更的區別、成功／失敗結果及限制，不把局部診斷或單次分數改善當作泛化證明。
-- 詳細紀錄見 [GPU 學習與開發原則](midterm01_gpu/doc/DEVELOPMENT_PRINCIPLES.md)。本次僅記錄原則，不因此改動現有算法、參數或結果。
+- 詳細紀錄見 [GPU 學習與開發原則](midterm01_gpu/doc/19_DEVELOPMENT_PRINCIPLES.md)。本次僅記錄原則，不因此改動現有算法、參數或結果。
 
 ## 專案與目錄
 
@@ -37,9 +43,9 @@
 
 1. [官方題目 PDF](<midterm01/docs/SDC 2026 Midterm01 Competition -  Localization.pdf>)，共 24 頁；檔名在 `-` 後有兩個空白。
 2. [題目分析與交付要求](midterm01/docs/README.md)、[Kaggle 規格](midterm01/docs/KAGGLE_DATASET_SPEC.md)、[資料說明](midterm01/data/README.md)。
-3. [新版演算法與實測](midterm01_gpu/SENSOR_GUIDED_20261017.md)、[架構教學](midterm01_gpu/doc/ALGORITHM_WALKTHROUGH_20261017.md)。
+3. [新版演算法與實測](midterm01_gpu/doc/06_SENSOR_GUIDED_20261017.md)、[架構教學](midterm01_gpu/doc/07_ALGORITHM_WALKTHROUGH_20261017.md)。
 4. GPU `scripts/accuracy/benchmark.py`、`scripts/prepare_sensor_prior.py`；`workspace/src/localization/` 的 CMake、package、標頭、`localization.cpp`、`sensor_guided.cpp`、launch、轉檔；`workspace/src/cuda_ndt_backend/` 的 CMake 與 `nearest_neighbor.cu`。
-5. 只有重現舊版本時才讀 [CPU 首跑](midterm01/docs/UBUNTU_FIRST_RUN_20261017.md)、[CUDA NDT](midterm01_gpu/CUDA_NDT_20261017.md)、[CPU／D2D 短序列比較](midterm01_gpu/ACCURACY_COMPARISON_20261017.md)。
+5. 只有重現舊版本時才讀 [CPU 首跑](midterm01/docs/UBUNTU_FIRST_RUN_20261017.md)、[CUDA NDT](midterm01_gpu/doc/03_CUDA_NDT_20261017.md)、[CPU／D2D 短序列比較](midterm01_gpu/doc/05_ACCURACY_COMPARISON_20261017.md)。
 
 資源索引在 `midterm01/docs/DOWNLOADS.md`。不重建 `localreference/`，不引用不存在的 `docs/UBUNTU_DATA_DOWNLOAD.md` 或 `scripts/download_kaggle.py`。正式要求以 PDF、Kaggle 及後續公告為準；分析建議不是課程指定演算法。
 
@@ -92,7 +98,7 @@ GPU map 快取只能寫 outputs，由 benchmark 核對 Track、map SHA256 與 le
 
 ## 正式要求與協作規則
 
-- 使用繁體中文說明／文件，保留英文技術名詞及使用者既有修改。`doc/command_paste.txt` 的手動紀錄優先保留，可複製流程另放 `doc/run_sensor_guided.txt`。
+- 使用繁體中文說明／文件，保留英文技術名詞及使用者既有修改。GPU 文件正文集中 `midterm01_gpu/doc/`，兩位數編號；`01` 固定為架構入口，日期／同日排序依據見 `28`。`00_Personal_Record.txt` 原樣保留；`command_paste.txt` 已由使用者刪除，不復原舊內容。最新前相機命令見 `doc/16_run_geometry_directional.txt`，`doc/10_run_sensor_guided.txt` 保留 fixed 歷史命令。
 - 兩條 Track 都需完成並超過助教 baseline；CSV 表頭順序 `idx,x,y,yaw`、資料列恰為 3011／3299。完整 ID／順序及車體規格須對照官方 sample／公告。
 - 分清內部弧度、提交單位與評分旋轉誤差的度。PDF p.19 是「平移 RMSE + 0.2 × 旋轉 RMSE」，PCL fitness、地圖殘差、GNSS 差異、GPU 使用率和收斂都不是正式 ATE。
 - 保留實際 Kaggle 分數與來源；本地模板 R0 不等於助教 baseline，舊 CUDA D2D 成績不等於 CPU 成績。下採樣／submap／原 NDT 不宣稱自己的新增貢獻。
