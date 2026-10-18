@@ -29,6 +29,8 @@ services:
       - ./data:/ros_ws/data
       # Your code, so edits on the host show up in the container immediately.
       - ./workspace:/ros_ws/workspace
+      # HW4 EKF workspace, using the same Humble environment.
+      - ../hw4/colcon_ws:/ros_ws/hw4
 
     # rviz2 runs fine WITHOUT a GPU: Mesa falls back to software rendering
     # (llvmpipe) and still holds the 30 Hz frame cap on this dataset.
