@@ -39,7 +39,7 @@
 
 若後續要改善，優先確認相機／車體 frame 與外參、使用跨時間一致的靜態特徵，並研究跨幀共同尺度／深度不確定度。不要依每個 Track 或每幀的分數分別乘一個倍率。
 
-![偏差驗證圖](../outputs/runs/rig_bias_validation_2610181142/bias_validation.png)
+![偏差驗證圖](../outputs/run/track00_test_2610181142/bias_validation.png)
 
 ## 完整一輪的指令
 
@@ -58,7 +58,7 @@ bash scripts/run_three_camera_full.sh --dry-run
 bash scripts/run_three_camera_full.sh
 ```
 
-終端會先印出 `Run: .../outputs/runs/three_camera_full_YYMMDDHHmm`。完成後：
+終端會先印出 `Run: .../outputs/run/three_camera_full_YYMMDDHHmm`。完成後：
 
 ```text
 <Run>/result_1.csv      # 表頭 + 3011 筆 idx,x,y,yaw
@@ -70,7 +70,7 @@ bash scripts/run_three_camera_full.sh
 中斷後，使用終端印出的**同一個** run：
 
 ```bash
-bash scripts/run_three_camera_full.sh --resume outputs/runs/three_camera_full_YYMMDDHHmm
+bash scripts/run_three_camera_full.sh --resume outputs/run/three_camera_full_YYMMDDHHmm
 ```
 
 首次建立 run 時凍結 candidate；續跑核對模型、程式、Python 套件版本、校正、index、prior、原始影像及已完成輸出的 hash。每幀先寫 temporary directory，再原子提交；已完成的幀不重新推論。完成的定位／CSV 也會重用；定位失敗保留 log，可在重建完成狀態重新啟動定位。資料或設定不一致會直接失敗，不靜默混合結果，也不在 CUDA 錯誤時切換 CPU。
@@ -83,4 +83,4 @@ bash scripts/run_three_camera_full.sh --resume outputs/runs/three_camera_full_YY
 
 已實測序列開頭兩幀、Track2 結尾兩幀、完成後續跑及部分完成的恢復，並驗證有限／完整 pose 與短段 CSV。部分完成狀態是從私有測試輸出保留第一個已提交 frame 人工建立，用於測試恢復分支，不冒充真實斷電事件。兩幀診斷 CSV 名為 `diagnostic_subset.csv`；只有完整 frame set 才匯出 `result_N.csv`。測試還檢查原始影像／輸出損壞、尺度／模型／設定不符的拒絕。**沒有在本次自動跑完整序列。**
 
-本機證據：`outputs/runs/rig_bias_validation_2610181142/`，包含 `plan.json`、`reconstruction/`、`bias_final/bias_report.json`、`candidate_final.json`、`full_command_dry_run.log`、各 smoke／resume log、測試紀錄與來源快照。早期未去重／較少 temporal 診斷的結果也保留，正式判斷以 `bias_final` 為準。outputs、模型及資料不進 Git，交接須另行保存。
+本機證據：`outputs/run/track00_test_2610181142/`，包含 `plan.json`、`reconstruction/`、`bias_final/bias_report.json`、`candidate_final.json`、`full_command_dry_run.log`、各 smoke／resume log、測試紀錄與來源快照。早期未去重／較少 temporal 診斷的結果也保留，正式判斷以 `bias_final` 為準。outputs、模型及資料不進 Git，交接須另行保存。

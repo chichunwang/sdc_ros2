@@ -122,19 +122,19 @@ T_front_ref_camera_i = inverse(T_map_front(t_ref))
 
 本任務 CSV 只提交 XY／yaw，因此共同三維 probe 的惡化也不能直接等同正式分數變差。較保守的結論是：三相機提供更多幾何方向、尺度候選有局部支持，但兩種重建來源仍有明顯高度／形狀契約差異，XY／yaw 的改動是否更準尚無證據。**本輪不將三相機設為推薦最佳，不因 rank 較高就啟動完整替換；下一步應釐清來源 frame／高度與 per-view 融合品質。**
 
-來源、完整命令、原始 idx、輸出與驗證全部保存在下方實驗目錄。[尺度／同步／共同 probe 比較圖](../outputs/runs/three_camera_dev_2610181055/scale_sync_comparison.png) 將候選與限制放在同一張圖，沒有把內部 cost 當正式分數。
+來源、完整命令、原始 idx、輸出與驗證全部保存在下方實驗目錄。[尺度／同步／共同 probe 比較圖](../outputs/run/track00_test_2610181055/scale_sync_comparison.png) 將候選與限制放在同一張圖，沒有把內部 cost 當正式分數。
 
 本輪 Python 測試 21 項通過，涵蓋已知尺度、地面退化、運動補償、時間來源混合／歧義、精確 prior 重用及既有融合／幾何／濾波契約。修改 benchmark 後，另以相同完整先驗重跑 Track2 前 24 幀，`result.txt` 與原已評分完整 run 的前 24 行逐 byte 相同。C++／CUDA 未修改，沒有把這些合成或回歸檢查當成實測精度。
 
 ## 重現、操作與證據
 
-唯一實驗目錄：`outputs/runs/three_camera_dev_2610181055/`，不覆寫既有最佳檔。
+唯一實驗目錄：`outputs/run/track00_test_2610181055/`，不覆寫既有最佳檔。
 
-- [Track1 尺度與同步報告](../outputs/runs/three_camera_dev_2610181055/calibration_track1_3/report.json)、[Track2 報告](../outputs/runs/three_camera_dev_2610181055/calibration_track2/report.json)。Track1 前兩次嘗試的 ROS 環境未載入／誤假設左右 index 為 bag 時間之失敗 log 保留。
-- [共享尺度與保留影格檢查](../outputs/runs/three_camera_dev_2610181055/joint_scale.json)、[可重現的共享尺度程式](../outputs/runs/three_camera_dev_2610181055/joint_fit.py)。
-- [高度參考敏感度](../outputs/runs/three_camera_dev_2610181055/height_anchor_sensitivity.json)。
-- [片段選取](../outputs/runs/three_camera_dev_2610181055/windows.json)、[每輪完整命令與來源](../outputs/runs/three_camera_dev_2610181055/comparison_runs.json)、[比較分析程式](../outputs/runs/three_camera_dev_2610181055/analyze_comparison.py)。
-- [12 組短段與共同 probe 摘要](../outputs/runs/three_camera_dev_2610181055/comparison_summary.json)。
-- [最終 Python 測試 log](../outputs/runs/three_camera_dev_2610181055/python_tests_final.log)、[完整時間契約終檢](../outputs/runs/three_camera_dev_2610181055/final_time_verification.json)、[原前相機回歸 log](../outputs/runs/three_camera_dev_2610181055/front_regression.log)。
+- [Track1 尺度與同步報告](../outputs/run/track00_test_2610181055/calibration_track1_3/report.json)、[Track2 報告](../outputs/run/track00_test_2610181055/calibration_track2/report.json)。Track1 前兩次嘗試的 ROS 環境未載入／誤假設左右 index 為 bag 時間之失敗 log 保留。
+- [共享尺度與保留影格檢查](../outputs/run/track00_test_2610181055/joint_scale.json)、[可重現的共享尺度程式](../outputs/run/track00_test_2610181055/joint_fit.py)。
+- [高度參考敏感度](../outputs/run/track00_test_2610181055/height_anchor_sensitivity.json)。
+- [片段選取](../outputs/run/track00_test_2610181055/windows.json)、[每輪完整命令與來源](../outputs/run/track00_test_2610181055/comparison_runs.json)、[比較分析程式](../outputs/run/track00_test_2610181055/analyze_comparison.py)。
+- [12 組短段與共同 probe 摘要](../outputs/run/track00_test_2610181055/comparison_summary.json)。
+- [最終 Python 測試 log](../outputs/run/track00_test_2610181055/python_tests_final.log)、[完整時間契約終檢](../outputs/run/track00_test_2610181055/final_time_verification.json)、[原前相機回歸 log](../outputs/run/track00_test_2610181055/front_regression.log)。
 
 outputs 被 Git 忽略；報告、cache、短段結果與來源快照需另行保存。移機後不能只靠同步 Git 就假設報告路徑存在。日常入口與本輪新選項見 [操作手冊](08_MANUAL_WORKFLOW.md)。

@@ -11,7 +11,7 @@
 
 分數越低越好。來源為使用者 2026-10-18 回報的提交截圖；Track2 上傳名為 `result_2_tricam.csv`。本地候選依使用者 IDE 路徑及上下文對應，截圖本身沒有 SHA256；沒有登入查榜或代為上傳。總分無法分解出平移／旋轉各自改善或惡化多少，也沒有逐幀真值可定位是哪個片段造成分數增加。
 
-使用者完整 run：`outputs/runs/three_camera_full_fast_imported_2610181301/`。
+使用者完整 run：`outputs/run/track00_full_2610181301/`。
 
 | 檔案 | 筆數 | SHA256 |
 | --- | ---: | --- |
@@ -48,7 +48,7 @@ information 是 data-only 局部 normal 指標，排除 prior、normal gain 與 
 
 這些是版本差異，不是誤差。兩版 XY／yaw 都主要接近同一 prior，可解釋為何整套來源改動後總分仍接近。Z 的來源偏差可以經由對應點與法向耦合到 XY／yaw，即使提交 CSV 沒有 Z，也會影響求解。
 
-![完整配對差異](../outputs/runs/rig_track1_diagnosis_2610181322/paired_trajectories.png)
+![完整配對差異](../outputs/run/track01_test_2610181322/paired_trajectories.png)
 
 ### 有效權重與限幅
 
@@ -85,7 +85,7 @@ Track2 原版拒絕地圖的 252 幀，在三相機全數接受；這批 XY 版�
 
 固定 rig 安裝高度只表示左右相對前相機高 7.8／10.0 cm 不變；並沒有解決 source→body 的未知外參，也不保證網路深度與 map Z 一致。[MapAnything](https://github.com/facebookresearch/map-anything) 接受 calibration／pose 作幾何輸入；本程式固定外參反投影可保住合併契約，但尚未以跨相機／跨時間 reprojection 對預測 depth 施加共同靜態場景約束。
 
-![只交換高度的診斷](../outputs/runs/rig_track1_diagnosis_2610181322/height_counterfactual.png)
+![只交換高度的診斷](../outputs/run/track01_test_2610181322/height_counterfactual.png)
 
 ## 同一份 depth 的側面消融
 
@@ -144,7 +144,7 @@ probe 數值仍不是定位誤差。C++ voxel 會合併重疊點，所以 600 �
 
 新的 source-frame 校準、跨幀共同重建、深度不確定度融合及 joint smoother **尚未實作，沒有改善分數證據**。現階段推薦最佳仍是前相機 `sensor_guided + heading_rts + directional`。
 
-完整證據目錄：`outputs/runs/rig_track1_diagnosis_2610181322/`。
+完整證據目錄：`outputs/run/track01_test_2610181322/`。
 
 - `track1/`、`track2/full_comparison.json`／`paired_frames.csv`：兩條完整配對；`full_outputs_validation.json`：CSV／矩陣／manifest 核對。
 - `camera_probe.json`、`height_counterfactual.json`、`track2/camera_probe.json`：固定距離場景／共同 probe／交換 Z。

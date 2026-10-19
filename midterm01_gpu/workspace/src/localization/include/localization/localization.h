@@ -117,6 +117,10 @@ private:
     std::string save_file_;
     std::string localization_profile_ = "legacy";
     std::string sensor_prior_file_;
+    std::string sensor_height_mode_ = "carry";
+    std::string sensor_height_reference_file_;
+    std::vector<double> sensor_height_references_;
+    std::vector<Eigen::Matrix3f> sensor_height_rotations_;
     std::vector<Eigen::Matrix4f> sensor_priors_;
     double sensor_max_xy_correction_ = 1.5;
     double sensor_max_yaw_correction_deg_ = 8.0;

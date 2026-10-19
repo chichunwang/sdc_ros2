@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """完整軌跡診斷：感測器輸入不是真值；不計算或推估 Kaggle 成績。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import csv
 import json
@@ -47,10 +48,10 @@ def trajectory_metrics(poses):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--track1-run', type=Path, required=True)
-    parser.add_argument('--track2-run', type=Path, required=True)
-    parser.add_argument('--reference-track1', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--track1-run', type=saved_path, required=True)
+    parser.add_argument('--track2-run', type=saved_path, required=True)
+    parser.add_argument('--reference-track1', type=saved_path, required=True)
+    parser.add_argument('--output', type=saved_path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     summary = {'scope': 'Sensor inputs and map consistency; no ground-truth or new Kaggle evaluation', 'tracks': {}}
@@ -71,7 +72,7 @@ def main():
         methods = [('GNSS/IMU input prior', priors, '#888888', '--'), ('Sensor-guided estimate', poses, '#1467ad', '-')]
         info = {'run': str(directory), 'guided': trajectory_metrics(poses),
                 'max_xy_offset_to_input_m_not_accuracy': float(np.max(correction)),
-                'validation': json.loads((directory / 'validation.json').read_text()),
+                'validation': loads_saved_json((directory / 'validation.json').read_text()),
                 'sample_map_evaluation': None}
         if track == 1:
             reference_frames, reference = load_run(args.reference_track1)

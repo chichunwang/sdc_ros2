@@ -74,14 +74,14 @@ Track2 歷史數值保留差異：使用者先前文字回報前最佳 **0.56063
 
 原 run 與 CSV：
 
-- Track1：[`track1_sensor_guided_heading_rts_cuda_robust_icp_d2d_3011f_f7zs6f2e/diagnostic.csv`](../outputs/runs/track1_sensor_guided_heading_rts_cuda_robust_icp_d2d_3011f_f7zs6f2e/diagnostic.csv)，[validation](../outputs/runs/track1_sensor_guided_heading_rts_cuda_robust_icp_d2d_3011f_f7zs6f2e/validation.json)。
-- Track2：[`track2_sensor_guided_heading_rts_cuda_robust_icp_d2d_3299f_84_esf9m/diagnostic.csv`](../outputs/runs/track2_sensor_guided_heading_rts_cuda_robust_icp_d2d_3299f_84_esf9m/diagnostic.csv)，[validation](../outputs/runs/track2_sensor_guided_heading_rts_cuda_robust_icp_d2d_3299f_84_esf9m/validation.json)。
+- Track1：[`track01_full_2610172201/diagnostic.csv`](../outputs/run/track01_full_2610172201/diagnostic.csv)，[validation](../outputs/run/track01_full_2610172201/validation.json)。
+- Track2：[`track02_full_2610172206/diagnostic.csv`](../outputs/run/track02_full_2610172206/diagnostic.csv)，[validation](../outputs/run/track02_full_2610172206/validation.json)。
 
 兩份 CSV 都已再次核對 `idx,x,y,yaw`、連續 0-based idx、3011／3299 列及有限數值，並以 byte 相同的方式另存到新的唯一保存目錄：
 
-- [Track1 result_1.csv](../outputs/submissions/heading_rts_20261017_2akh94t6/result_1.csv)
-- [Track2 result_2.csv](../outputs/submissions/heading_rts_20261017_2akh94t6/result_2.csv)
-- [分數、來源、參數與 SHA256](../outputs/submissions/heading_rts_20261017_2akh94t6/provenance.json)
+- [Track1 result_1.csv](../outputs/run/track00_test_2610172215/result_1.csv)
+- [Track2 result_2.csv](../outputs/run/track00_test_2610172215/result_2.csv)
+- [分數、來源、參數與 SHA256](../outputs/run/track00_test_2610172215/provenance.json)
 
 | 檔案 | SHA256 |
 | --- | --- |
@@ -91,7 +91,7 @@ Track2 歷史數值保留差異：使用者先前文字回報前最佳 **0.56063
 | 本次 prepare_sensor_prior.py | `182114fd3dab299b87b2f6d477d369192cd36ed6f1e8e5f8558689a39f029355` |
 | 本次 accuracy/benchmark.py | `4560deb970fe6b62b6d556390f00bdfb92528d72abe3da68a116ba7796c4199d` |
 
-這些雜湊綁定本機當次檔案與對話中的提交回報；截圖本身不含上傳檔案 hash，本次沒有從 Kaggle 下載 submission metadata 作獨立核對。保存目錄另記在 `outputs/latest_heading_rts_submission.txt`。outputs 依 `.gitignore` 忽略，跨環境時須另備份這兩份 CSV 與 provenance，不能假設只靠 Git 會同步。
+這些雜湊綁定本機當次檔案與對話中的提交回報；截圖本身不含上傳檔案 hash，本次沒有從 Kaggle 下載 submission metadata 作獨立核對。保存目錄另記在 `outputs/run/track00_test_2610192315/historical_notes/latest_heading_rts_submission.txt`。outputs 依 `.gitignore` 忽略，跨環境時須另備份這兩份 CSV 與 provenance，不能假設只靠 Git 會同步。
 
 ## 重現本版
 

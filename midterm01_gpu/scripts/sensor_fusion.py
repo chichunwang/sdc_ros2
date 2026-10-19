@@ -24,6 +24,7 @@ class FusionConfig:
     max_bias_rate_degps: float = .2
     robust_gate_sigma: float = 3.0
     min_heading_blocks: int = 3
+    pose_heading_std_deg: float = 3.0  # experimental block noise floor, not calibrated accuracy
 
     def validate(self):
         if not all(np.isfinite(value) and value > 0 for value in asdict(self).values()):
@@ -127,6 +128,66 @@ def bias_rts(times, observations, std, queries, config):
                                  'bounded_blocks': int(np.count_nonzero(np.abs(smooth - bounded) > 1e-12))}
 
 
+def pose_heading_observations(gt, quaternions, it, imu_yaw, config):
+    """Pose yaw minus simultaneous IMU yaw, one observation per original GNSS block.
+
+    Unlike course this can observe bias during turns/stops, *if* the supplied yaw
+    is a valid independent heading. That premise is experimental, not verified.
+    The block noise floor is not divided by sqrt(sample count).
+    """
+    q = np.asarray(quaternions, dtype=float)
+    if q.shape != (len(gt), 4):
+        raise ValueError('GNSS heading timestamp/quaternion shape mismatch')
+    valid = np.all(np.isfinite(q), axis=1) & (np.abs(np.linalg.norm(q, axis=1) - 1) <= .02)
+    yaw = np.full(len(gt), np.nan)
+    if np.any(valid):
+        yaw[valid] = Rotation.from_quat(q[valid]).as_euler('xyz')[:, 2]
+    bins = np.floor((gt - gt[0]) / config.course_window_s).astype(int)
+    rows = []
+    for block in np.unique(bins):
+        indices = np.flatnonzero(bins == block)
+        t = gt[indices]
+        row = {'time_s': float(np.mean(t)), 'samples': int(len(t)), 'accepted': False,
+               'reason': '', 'speed_mps': None, 'offset_deg': None, 'std_deg': None,
+               'source': 'gnss_pose'}
+        if (len(t) < 5 or t[-1] - t[0] < 1 or t[0] < it[0] or t[-1] > it[-1]
+                or not np.all(valid[indices])):
+            row['reason'] = 'invalid_quaternion_or_insufficient_coverage'
+        else:
+            offsets = wrap(yaw[indices] - np.interp(t, it, imu_yaw))
+            center = np.arctan2(np.mean(np.sin(offsets)), np.mean(np.cos(offsets)))
+            center = float(wrap(center + np.median(wrap(offsets - center))))
+            residual = wrap(offsets - center)
+            scatter = float(1.4826 * np.median(np.abs(residual)))
+            row.update(offset_deg=float(np.rad2deg(center)),
+                       std_deg=max(config.pose_heading_std_deg, float(np.rad2deg(scatter))))
+            if abs(center) >= np.deg2rad(config.max_observation_deg):
+                row['reason'] = 'heading_disagreement'
+            elif np.quantile(np.abs(residual), .9) >= np.deg2rad(config.max_heading_span_deg):
+                row['reason'] = 'inconsistent_heading_block'
+            else:
+                row.update(accepted=True, reason='accepted')
+        rows.append(row)
+    return rows
+
+
+def independent_heading_product(rows):
+    """Combine simultaneous bias factors under the explicit independence assumption.
+
+    Matching timestamps share one random-walk state; combining before RTS avoids
+    duplicate interpolation knots and is invariant to factor ordering.
+    """
+    result = []
+    for stamp in sorted({row['time_s'] for row in rows if row['accepted']}):
+        group = [row for row in rows if row['accepted'] and row['time_s'] == stamp]
+        weights = 1 / np.square([row['std_deg'] for row in group])
+        row = dict(group[0])
+        row.update(offset_deg=float(np.average([r['offset_deg'] for r in group], weights=weights)),
+                   std_deg=float(1 / np.sqrt(np.sum(weights))), source='independent_product')
+        result.append(row)
+    return result
+
+
 def position_rts(gt, xy, queries, config):
     """原始 GNSS 每筆只更新一次的 [x,y,vx,vy] KF/RTS；frame 時刻只有 prediction。"""
     grid = np.unique(np.concatenate((gt, queries)))
@@ -182,9 +243,10 @@ def position_rts(gt, xy, queries, config):
 
 
 def fuse_priors(gnss_ns, positions, imu_ns, quaternions, frame_ns, baseline_xyz,
-                baseline_meta, mode, config):
+                baseline_meta, mode, config, gnss_quaternions=None):
     config.validate()
-    if mode not in ('heading_rts', 'motion_rts'):
+    experimental_heading = mode in ('pose_heading_rts', 'independent_heading_rts')
+    if mode not in ('heading_rts', 'motion_rts', 'pose_heading_rts', 'independent_heading_rts', 'pose_yaw', 'turn_heading_rts'):
         raise ValueError('Unknown fusion mode')
     # GNSS origin makes block boundaries independent of requested image count.
     origin = int(gnss_ns[0])
@@ -196,9 +258,53 @@ def fuse_priors(gnss_ns, positions, imu_ns, quaternions, frame_ns, baseline_xyz,
     imu_yaw = np.unwrap(rotations.as_euler('xyz')[:, 2])
     rows = heading_observations(gt, positions[:, :2], it, imu_yaw, config)
     selected = [row for row in rows if row['accepted']]
+    heading_meta = {}
+    if mode == 'turn_heading_rts':
+        from turn_heading import TurnHeadingConfig, turn_heading_observations
+        rows = turn_heading_observations(gt, positions[:, :2], it, imu_yaw, config)
+        selected = [row for row in rows if row['accepted']]
+        heading_meta = {'heading_source': 'raw GNSS trajectory fitted to integrated IMU directions with linear speed',
+            'experimental': True, 'heading_independence_assumed': False,
+            'heading_source_verified': False, 'heading_covariance_available': False,
+            'turn_heading_config': asdict(TurnHeadingConfig()),
+            'lever_arm_uncertainty_scope': 'common experimental 2m allowance propagated through angular rate / speed; not measured calibration',
+            'turn_aware_course': True,
+            'nonholonomic_assumption': 'velocity approximately follows IMU forward axis after a slowly varying yaw correction; unknown lever arm and sideslip remain'}
+    if experimental_heading:
+        if gnss_quaternions is None:
+            raise ValueError('Experimental heading mode requires raw GNSS Pose orientation')
+        course_rows = [dict(row, source='course') for row in rows]
+        pose_rows = pose_heading_observations(gt, gnss_quaternions, it, imu_yaw, config)
+        rows = course_rows + pose_rows
+        selected = (independent_heading_product(rows) if mode == 'independent_heading_rts'
+                    else [row for row in pose_rows if row['accepted']])
+        for row in rows:
+            row['used_for_fusion'] = row['accepted'] and (mode == 'independent_heading_rts' or row['source'] == 'gnss_pose')
+        heading_meta = {'heading_source_verified': False,
+            'heading_independence_assumed': mode == 'independent_heading_rts',
+            'accepted_course_blocks': sum(row['accepted'] for row in course_rows),
+            'accepted_pose_blocks': sum(row['accepted'] for row in pose_rows),
+            'pose_heading_use': 'added as independent factor' if mode == 'independent_heading_rts' else 'replaces course factors',
+            'pose_heading_noise': 'block floor in degrees; no sqrt(N) reduction; model assumption only',
+            'experimental': True}
     fixed = np.deg2rad(baseline_meta['heading_bias_deg'])
     notes = {}
-    if len(selected) >= config.min_heading_blocks:
+    if mode == 'pose_yaw':
+        if gnss_quaternions is None:
+            raise ValueError('Direct pose_yaw requires raw GNSS Pose orientation')
+        from direct_heading import interpolate_pose_yaw
+        target_yaw, heading_meta = interpolate_pose_yaw(gt, gnss_quaternions, ft)
+        frame_rotation = Slerp(it, rotations)(np.clip(ft, it[0], it[-1]))
+        bias = wrap(target_yaw-frame_rotation.as_euler('xyz')[:,2])
+        uncertainty = None
+        fallback = None
+        supplied_yaw = Rotation.from_quat(gnss_quaternions).as_euler('xyz')[:,2]
+        rows = [{'time_s': float(t), 'samples': 1, 'accepted': True, 'reason': 'direct_yaw_source',
+            'offset_deg': float(np.rad2deg(wrap(y-np.interp(t,it,imu_yaw)))),
+            'std_deg': None, 'source': 'gnss_pose_direct'} for t,y in zip(gt,supplied_yaw)]
+        selected = rows
+        heading_meta['heading_observation_unit'] = 'GNSS sample; heading_blocks count field is historical'
+    elif len(selected) >= config.min_heading_blocks:
         bias, uncertainty, notes = bias_rts(np.array([row['time_s'] for row in selected]),
                 np.deg2rad([row['offset_deg'] for row in selected]),
                 np.deg2rad([row['std_deg'] for row in selected]), ft, config)
@@ -207,13 +313,16 @@ def fuse_priors(gnss_ns, positions, imu_ns, quaternions, frame_ns, baseline_xyz,
         bias = np.full(len(ft), fixed)
         uncertainty = np.full(len(ft), np.deg2rad(10.))
         fallback = 'insufficient reliable heading blocks; explicitly retained fixed baseline bias'
-    orientation = Rotation.from_euler('z', bias) * Slerp(it, rotations)(np.clip(ft, it[0], it[-1]))
+    # Explicit (N,1) single-axis batch works in both ROS SciPy and the isolated
+    # analysis environment; some newer SciPy backends reject a length-N vector.
+    orientation = Rotation.from_euler('z', bias[:, None]) * Slerp(it, rotations)(np.clip(ft, it[0], it[-1]))
     xyz = baseline_xyz.copy()
     diagnostic = {'timestamp_ns': np.asarray(frame_ns, dtype=np.int64),
-                  'bias_deg': np.rad2deg(bias), 'bias_model_std_deg': np.rad2deg(uncertainty),
+                  'bias_deg': np.rad2deg(bias),
+                  **({'bias_model_std_deg': np.rad2deg(uncertainty)} if uncertainty is not None else {}),
                   'fixed_bias_deg': np.full(len(ft), np.rad2deg(fixed)),
                   'xy_change_from_fixed_m': np.zeros(len(ft))}
-    if mode == 'motion_rts':
+    if mode != 'heading_rts':
         xy, velocity, std, position_meta = position_rts(gt, positions[:, :2], ft, config)
         xyz[:, :2] = xy
         diagnostic.update(vx_mps=velocity[:, 0], vy_mps=velocity[:, 1],
@@ -226,10 +335,11 @@ def fuse_priors(gnss_ns, positions, imu_ns, quaternions, frame_ns, baseline_xyz,
             'heading_support_seconds_from_gnss_start': [selected[0]['time_s'], selected[-1]['time_s']] if selected else None,
             'heading_fallback': fallback, 'bias_range_deg': [float(np.min(diagnostic['bias_deg'])), float(np.max(diagnostic['bias_deg']))],
             'max_xy_change_from_fixed_m': float(np.max(diagnostic['xy_change_from_fixed_m'])),
-            'position_method': 'raw GNSS constant-velocity Kalman + RTS' if mode == 'motion_rts' else 'unchanged fixed-mode GNSS Savitzky-Golay + linear interpolation',
+            'position_method': 'raw GNSS constant-velocity Kalman + RTS' if mode != 'heading_rts' else 'unchanged fixed-mode GNSS Savitzky-Golay + linear interpolation',
             'correlation': 'course is derived from GNSS; no independent XY-heading covariance claim; no map posterior reused as GNSS observation',
-            'uncertainty': 'model diagnostics only; not calibrated accuracy or passed as independent map covariance',
-            'imu_usage': 'quaternion orientation only; no raw acceleration/gyro integration', **notes}
+            'uncertainty': ('not estimated for direct heading source replacement' if mode == 'pose_yaw' else
+                            'model diagnostics only; not calibrated accuracy or passed as independent map covariance'),
+            'imu_usage': 'quaternion orientation only; no raw acceleration/gyro integration', **notes, **heading_meta}
     if not np.all(np.isfinite(xyz)) or not np.all(np.isfinite(orientation.as_quat())):
         raise ValueError('Nonfinite fused prior')
     return xyz, orientation.as_quat(), meta, diagnostic, rows

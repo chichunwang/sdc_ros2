@@ -32,8 +32,7 @@ USAGE
 case "$action" in
     help|-h|--help) usage; exit 0 ;;
     init)
-        mkdir -p "$gpu_dir/workspace/src" "$gpu_dir/outputs/runs" \
-            "$gpu_dir/outputs/submissions" "$gpu_dir/outputs/figures"
+        mkdir -p "$gpu_dir/workspace/src" "$gpu_dir/outputs/run"
         if [[ ! -e "$gpu_dir/.env" ]]; then cp "$gpu_dir/.env.example" "$gpu_dir/.env"; fi
         printf 'Initialized %s; data stays in ../midterm01/data.\n' "$gpu_dir"
         exit 0 ;;

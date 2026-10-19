@@ -17,7 +17,16 @@ docker exec -it "docker name" bash
 ```bash
 exit
 ```
+正在執行
+```bash
+docker ps
+```
+所以容器
+```bash
+docker ps -a
+```
 關機
 ```bash
 sudo shutdown -h now
 ```
+

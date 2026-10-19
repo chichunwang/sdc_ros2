@@ -15,7 +15,7 @@ cuda_robust_icp scan update failed at frame 410; using current sensor prior.
 使用者手動 run：
 
 ```text
-outputs/runs/track2_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_3299f_7o_atg6_
+outputs/run/track02_full_2610172238
 ```
 
 原 `validation.json`、log、result 與 CSV 保持原樣：
@@ -66,7 +66,7 @@ GPU workspace Release 重建完成。2 個 CTest 與兩個額外真實 CUDA NN �
 - 309 幀接受更新；62 幀 `insufficient_reliable_geometry`；79 幀 `insufficient_unique_targets`。這段 141 次退回都已由新候選紀錄確認原因。
 - idx 410 確認 `insufficient_unique_targets`，候選 reliable_points=10、unique_targets=1；輸出當幀先驗。
 
-另以正式 benchmark 入口完成 Track2 directional 前 50 幀整合測試，run 為 `track2_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_50f_s9nfbcjs`：退出碼 0、空驗證錯誤、50 次接受更新，`validation.json` 已正確寫出新增原因摘要與歷史欄位 scope。
+另以正式 benchmark 入口完成 Track2 directional 前 50 幀整合測試，run 為 `track02_test_2610172245`：退出碼 0、空驗證錯誤、50 次接受更新，`validation.json` 已正確寫出新增原因摘要與歷史欄位 scope。
 
 新 log 實例：
 
@@ -76,4 +76,4 @@ Map update skipped at frame 410: insufficient_unique_targets (candidate reliable
 
 此為數值回歸與診斷驗證，沒有宣稱重播後精度提升。450 幀重播不是完整提交檔。原完整 3299 筆 `diagnostic.csv` 仍是該候選可供使用者提交的檔案，不需只因原 WARN 或本次診斷修正就重新跑完整序列。
 
-證據保存在 [本次修正目錄](../outputs/runs/geometry_fallback_fix_gxsz1a7r)，包含修改前快照、建置／測試 log、可重現的 `replay_prefix.py`、[450 幀重播驗證](../outputs/runs/geometry_fallback_fix_gxsz1a7r/replay_track2_450/validation.json)、來源／binary SHA256 及原最佳／完整 run 的保護雜湊。主機 Python 沒有 numpy 的首次測試 log 另留存；完整 Python 測試使用具備專案依賴的 GPU 容器執行。outputs 被 Git 忽略，需另行備份。
+證據保存在 [本次修正目錄](../outputs/run/track00_test_2610172242)，包含修改前快照、建置／測試 log、可重現的 `replay_prefix.py`、[450 幀重播驗證](../outputs/run/track00_test_2610172242/replay_track2_450/validation.json)、來源／binary SHA256 及原最佳／完整 run 的保護雜湊。主機 Python 沒有 numpy 的首次測試 log 另留存；完整 Python 測試使用具備專案依賴的 GPU 容器執行。outputs 被 Git 忽略，需另行備份。

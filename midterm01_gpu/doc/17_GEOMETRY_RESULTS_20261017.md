@@ -6,6 +6,8 @@
 
 同日後續已依使用者要求完成 [三相機尺度／同步與短段對照](22_THREE_CAMERA_IMPLEMENTATION_20261018.md)：共享尺度候選 0.87124954、釐清混合 bag／header 時間，12 組短段均完整，但尚無精度改善或新 Kaggle 分數。本文最佳 CSV、分數與原始 provenance 不變，不將它們歸到三相機候選。
 
+2026-10-19 後續：位置單項 motion_rts 已由使用者完整評分 **1.15008／0.30488** 並升為最佳，見 [35｜新最佳與航向消融](35_MOTION_RTS_AND_GNSS_HEADING_20261019.md)。本文的 heading_rts CSV／provenance 與歷史分數原樣保存。
+
 ## 成績
 
 | 項目 | Track1 | Track2 |
@@ -76,22 +78,22 @@ Score = sqrt(mean(||Δp||²)) + 0.2 × sqrt(mean(||Δθ||²))
 
 原完整 run：
 
-- Track1：`outputs/runs/track1_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_3011f_70rv9cj4/`。
-- Track2：`outputs/runs/track2_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_3299f_7o_atg6_/`。
+- Track1：`outputs/run/track01_full_2610172233/`。
+- Track2：`outputs/run/track02_full_2610172238/`。
 
-新的唯一保存目錄為 `outputs/submissions/geometry_directional_20261017_xuvs_ka3/`：
+新的唯一保存目錄為 `outputs/run/track00_test_2610172250/`：
 
-- [Track1 result_1.csv](../outputs/submissions/geometry_directional_20261017_xuvs_ka3/result_1.csv)
-- [Track2 result_2.csv](../outputs/submissions/geometry_directional_20261017_xuvs_ka3/result_2.csv)
-- [成績／來源／參數與 SHA256](../outputs/submissions/geometry_directional_20261017_xuvs_ka3/provenance.json)
-- [兩版修正量與幾何比較](../outputs/submissions/geometry_directional_20261017_xuvs_ka3/comparison_not_accuracy.json)
+- [Track1 result_1.csv](../outputs/run/track00_test_2610172250/result_1.csv)
+- [Track2 result_2.csv](../outputs/run/track00_test_2610172250/result_2.csv)
+- [成績／來源／參數與 SHA256](../outputs/run/track00_test_2610172250/provenance.json)
+- [兩版修正量與幾何比較](../outputs/run/track00_test_2610172250/comparison_not_accuracy.json)
 
 | 檔案 | SHA256 |
 | --- | --- |
 | Track1 CSV | `dfa1900d095e654ebc31048eda78b53ba789616644b909ff4a1f100b5ce92834` |
 | Track2 CSV | `a462479d0a5fee5cb9be4e883fd8dc0a56e27b394b0949d7136e02cf41a396d5` |
 
-兩份是原 CSV 的 byte 相同副本；各 Track evidence 另保存原參數、validation、frame／prior／geometry、來源快照及 binary hash。原 heading_rts 最佳、原完整 run 與其 validation 都保持不變。新目錄指標為 `outputs/latest_geometry_submission.txt`。outputs 被 Git 忽略，跨環境須另備份 CSV 與證據。
+兩份是原 CSV 的 byte 相同副本；各 Track evidence 另保存原參數、validation、frame／prior／geometry、來源快照及 binary hash。原 heading_rts 最佳、原完整 run 與其 validation 都保持不變。新目錄指標為 `outputs/run/track00_test_2610192315/historical_notes/latest_geometry_submission.txt`。outputs 被 Git 忽略，跨環境須另備份 CSV 與證據。
 
 日常推薦明確加三個選項；程式預設仍為 legacy／fixed／geometry off，沒有修改預設。手動完整命令見 [16_run_geometry_directional.txt](16_run_geometry_directional.txt)，較舊 heading_rts 已評分流程仍可依原文件重現。
 

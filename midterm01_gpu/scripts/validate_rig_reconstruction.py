@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """獨立影像幾何檢查：固定外參的 epipolar 誤差與有視差點的尺度診斷。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import json
 from pathlib import Path
@@ -31,9 +32,9 @@ def validate(directory):
     sift = cv2.SIFT_create(nfeatures=5000)
     matcher = cv2.BFMatcher()
     for group in sorted(directory.glob('track[12]_*')):
-        report = json.loads((group / 'report.json').read_text())
+        report = loads_saved_json((group / 'report.json').read_text())
         track = report['track']
-        rig = json.loads((directory / f'rig_track{track}.json').read_text())['fixed_optical_front_from_camera']
+        rig = loads_saved_json((directory / f'rig_track{track}.json').read_text())['fixed_optical_front_from_camera']
         images = [cv2.imread(str(group / f'{tag}_rectified.jpg'), 0) for tag in ('f', 'fl', 'fr')]
         valid_masks = [cv2.imread(str(group / f'{tag}_valid.png'), 0) for tag in ('f', 'fl', 'fr')]
         features = [sift.detectAndCompute(image, mask) for image, mask in zip(images, valid_masks)]
@@ -89,7 +90,7 @@ def validate(directory):
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('reconstruction', type=Path)
+    p.add_argument('reconstruction', type=saved_path)
     args = p.parse_args()
     result = validate(args.reconstruction)
     print(json.dumps(result, indent=2))

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """已評分 Track 的前相機／三相機完整輸出診斷；不估真值誤差。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import csv
 import hashlib
@@ -39,19 +40,19 @@ def information(data):
 
 def analyze(args):
     root=Path(__file__).resolve().parents[1];out=args.output.resolve()
-    out.relative_to((root/'outputs/runs').resolve())
+    out.relative_to((root/'outputs/run').resolve())
     if (out/'full_comparison.json').exists():raise ValueError('Existing diagnostic evidence cannot be overwritten')
     out.mkdir(exist_ok=True)
     sources=out/'sources';sources.mkdir(exist_ok=True);shutil.copy2(Path(__file__),sources/Path(__file__).name)
     track=args.track;count=3011 if track==1 else 3299
-    old_runs={1:'track1_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_3011f_70rv9cj4',
-              2:'track2_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_3299f_7o_atg6_'}
-    front=root/'outputs/runs'/old_runs[track]
-    full=root/f'outputs/runs/three_camera_full_fast_imported_2610181301/track{track}'
-    rig=Path(json.loads((full/'localization.json').read_text())['run'])
+    old_runs={1:'track01_full_2610172233',
+              2:'track02_full_2610172238'}
+    front=root/'outputs/run'/old_runs[track]
+    full=root/f'outputs/run/track00_full_2610181301/track{track}'
+    rig=Path(loads_saved_json((full/'localization.json').read_text())['run'])
     sets={};table=[]
     for label,p in [('front',front),('rig',rig)]:
-        validation=json.loads((p/'validation.json').read_text())
+        validation=loads_saved_json((p/'validation.json').read_text())
         if not validation['output_complete_and_finite'] or validation['frames']!=count:raise ValueError('Invalid full Track')
         g=rows(p/'guidance.csv');geom=rows(p/'geometry.csv');f=rows(p/'frames.csv')
         if len(g)!=count or len(geom)!=count or len(f)!=count:raise ValueError('Wrong row count')
@@ -83,7 +84,7 @@ def analyze(args):
     if any(not np.array_equal(numbers(a['guidance'],k),numbers(b['guidance'],k)) for k in ['prior_x','prior_y','prior_yaw']):raise ValueError('Unequal applied XY/yaw prior')
     d=b['pose'][:,:,3]-a['pose'][:,:,3]
     dyaw=np.arctan2(b['pose'][:,1,0],b['pose'][:,0,0])-np.arctan2(a['pose'][:,1,0],a['pose'][:,0,0]);dyaw=np.arctan2(np.sin(dyaw),np.cos(dyaw))
-    frames=json.loads((full/'report.json').read_text())['frames']
+    frames=loads_saved_json((full/'report.json').read_text())['frames']
     counts=np.array([[r['camera_counts'][str(i)] for i in range(3)] for r in frames]);fractions=counts/counts.sum(axis=1)[:,None]
     paired={'xy_delta_m':stats(np.linalg.norm(d[:,:2],axis=1)),'abs_yaw_delta_deg':stats(np.rad2deg(np.abs(dyaw))),
             'z_delta_m':stats(d[:,2]),'fraction_xy_delta_lt_5cm':float(np.mean(np.linalg.norm(d[:,:2],axis=1)<.05)),
@@ -115,6 +116,6 @@ def analyze(args):
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=Path,required=True)
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=saved_path,required=True)
     p.add_argument('--track',type=int,choices=(1,2),default=1)
     analyze(p.parse_args())

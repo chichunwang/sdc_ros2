@@ -14,6 +14,7 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(pcl_conversions REQUIRED)
@@ -61,6 +62,12 @@ target_link_libraries(map_modified
   ${PCL_LIBRARIES}
 )
 
+add_executable(replay_localization src/replay_localization.cpp)
+ament_target_dependencies(replay_localization
+  rclcpp sensor_msgs geometry_msgs nav_msgs visualization_msgs tf2_ros pcl_conversions
+)
+target_link_libraries(replay_localization ${PCL_LIBRARIES} Eigen3::Eigen)
+
 add_executable(visualization src/visualization.cpp)
 ament_target_dependencies(visualization
   rclcpp
@@ -80,6 +87,7 @@ install(
     localization
     map_modified
     visualization
+    replay_localization
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -101,6 +109,12 @@ if(BUILD_TESTING)
   add_executable(geometry_weighting_test tests/geometry_weighting_test.cpp src/sensor_guided.cpp src/geometry_weighting.cpp)
   target_link_libraries(geometry_weighting_test ${PCL_LIBRARIES} Eigen3::Eigen cuda_ndt_backend::cuda_ndt_backend)
   add_test(NAME geometry_weighting_contract COMMAND geometry_weighting_test)
+  add_executable(height_constraint_test tests/height_constraint_test.cpp src/sensor_guided.cpp src/geometry_weighting.cpp)
+  target_link_libraries(height_constraint_test ${PCL_LIBRARIES} Eigen3::Eigen cuda_ndt_backend::cuda_ndt_backend)
+  add_test(NAME height_constraint_contract COMMAND height_constraint_test)
+  add_executable(gicp_metric_test tests/gicp_metric_test.cpp src/sensor_guided.cpp src/geometry_weighting.cpp)
+  target_link_libraries(gicp_metric_test ${PCL_LIBRARIES} Eigen3::Eigen cuda_ndt_backend::cuda_ndt_backend)
+  add_test(NAME gicp_metric_contract COMMAND gicp_metric_test)
 endif()
 
 ament_package()

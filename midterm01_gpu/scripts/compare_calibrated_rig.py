@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """三相機小片段公平消融；主機呼叫既有 GPU benchmark，不啟動完整 Track。"""
+from output_layout import saved_path
 import argparse
 import json
 from pathlib import Path
@@ -9,12 +10,12 @@ import sys
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--reconstruction', type=Path, required=True)
-    p.add_argument('--prior-track1', type=Path, required=True)
-    p.add_argument('--prior-track2', type=Path, required=True)
-    p.add_argument('--map-cache-track1', type=Path, required=True)
-    p.add_argument('--map-cache-track2', type=Path, required=True)
-    p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--reconstruction', type=saved_path, required=True)
+    p.add_argument('--prior-track1', type=saved_path, required=True)
+    p.add_argument('--prior-track2', type=saved_path, required=True)
+    p.add_argument('--map-cache-track1', type=saved_path, required=True)
+    p.add_argument('--map-cache-track2', type=saved_path, required=True)
+    p.add_argument('--output', type=saved_path, required=True)
     p.add_argument('--labels', default='front,single,predicted,rig_front,rig_static,rig,rig_uniform_matched,balanced')
     p.add_argument('--label-prefix', default='', help='Distinguish e.g. a lower point-budget control in the report')
     args = p.parse_args()

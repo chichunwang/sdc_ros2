@@ -1,17 +1,26 @@
 # 09｜GPU 工作區輸出
 
-目前 Midterm01 的新實驗統一放本目錄。GPU 容器 `sdc_midterm01_gpu` 的 `/root/outputs/` 對應主機 `/home/ricky/sdc_ros2/midterm01_gpu/outputs/`；原 CPU 容器同名路徑則對應 `midterm01/outputs/`，不能混用。
+所有測試統一放在 `midterm01_gpu/outputs/run/`。容器對應 `/root/outputs/run/`；CPU環境與原資料不搬移。
 
-- `runs/`：每次唯一 run 的參數、版本／來源、frame、TXT／CSV、sensor prior、guidance、耗時、GPU 取樣與驗證。
-- `submissions/`：完整候選 `result_1.csv`／`result_2.csv`、來源與 SHA256；Kaggle 分數另記，CSV 存在不代表已提交。
-- `figures/`：衍生軌跡與點雲圖。
+```text
+outputs/run/
+  track01_full_2610192232/
+  track02_full_2610192240/
+  track01_test_YYMMDDHHmm/
+  track02_test_YYMMDDHHmm/
+  track00_test_YYMMDDHHmm/
+```
 
-最新已評分最佳為 heading_rts＋directional，Track1 **1.15275**／Track2 **0.30576**。`latest_geometry_submission.txt` 指向這輪獨立保存的 CSV／provenance；成績與雜湊見 [紀錄](17_GEOMETRY_RESULTS_20261017.md)。前一版 `latest_heading_rts_submission.txt` 與既有 CSV 保持不變。
+`full` 表示要求完整Track，成功與否仍看validation；`test` 包含短段、消融與研究。Track00為跨Track或環境測試。台北時間格式`YYMMDDHHmm`，重名加`_0002`等碰撞序號。版本不放目錄名，不建立其他分類或測試索引。
 
-主機執行 `scripts/benchmark.py --profile sensor_guided` 自動建立唯一 run 並印主機 `Run:` 路徑；查看 `validation.json` 後再使用 `diagnostic.csv`。完整 Track1／Track2 為 3011／3299 資料列，不含表頭。詳細欄位、計時、快取與 chmod 見 [GPU 操作手冊](08_MANUAL_WORKFLOW.md)。
+- `test_info.json`：測試種類、時間、版本／來源，已評分來源可有reported_score。
+- `params.json`／`pipeline_source_sha256.json`／`git_commit.txt`：參數、來源版本與未提交差異。
+- `diagnostic.csv`：提交CSV；完整Track1／2應有3011／3299資料列。
+- `result.txt`：每幀3×4矩陣，回放使用。
+- `validation.json`：完整性檢查、退出碼及錯誤；通過不代表精度提升。
 
-benchmark 新 run 尾碼為建立時的台北時間 `YYMMDDHHmm`，例如 `track1_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_2610172250`；不再附幀數或隨機字串。同分鐘同名依序加 `_2`、`_3`，既有目錄保留原名。實際幀數查看 `params.json.max_frames` 或 `validation.json.expected_frames`。
+benchmark會印出本次Run實際路徑。回放省略`--run`時選該Track最近通過完整性檢查的full目錄，也可指定任何一次已保存run。
 
-現有完整新版候選來源見 [06_SENSOR_GUIDED_20261017.md](06_SENSOR_GUIDED_20261017.md)，本機 `latest_improvement_run.txt` 與 `latest_improved_submission.txt` 是該批驗證／候選的位置紀錄；不代表每次手動 benchmark 都會更新這些指標。
+既有結果已集中搬移，原始CSV、矩陣、manifest及SHA不改。舊路徑記在各次test_info.json，工具僅在讀取時解析；原始證據檔不重寫。
 
-所有實際結果由 Git 忽略，另行備份；不覆寫舊結果，不把忽略的輸出當成能由 Git 還原。map cache 是 outputs 中可選的衍生資料，須保留 Track／原 map SHA256／leaf sidecar。原始資料唯一在 `../../midterm01/data`，唯讀共用，不複製到這裡。
+`outputs/ml_runtime/`是模型與隔離Python環境，維持原位置。大型輸出由Git忽略，需另行備份。日常命令及欄位說明見[08](08_MANUAL_WORKFLOW.md)。

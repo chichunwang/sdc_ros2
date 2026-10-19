@@ -13,7 +13,7 @@ void GeometryConfig::Validate() const {
         !std::isfinite(tangent_weight) || tangent_weight < 0 || tangent_weight > 1 ||
         !std::isfinite(radius_m) || radius_m <= 0 ||
         !std::isfinite(min_planarity) || min_planarity <= 0 || min_planarity >= 1 ||
-        min_neighbors < 6 || neighbors < min_neighbors)
+        min_neighbors < 6 || neighbors < min_neighbors || (generalized() && tangent_weight <= 0))
         throw std::invalid_argument("Invalid geometry weighting configuration");
 }
 
@@ -98,7 +98,7 @@ void WriteGeometryCsvHeader(std::ostream& s) {
     s << '\n';
 }
 void WriteGeometryConfigJson(std::ostream& s, const GeometryConfig& c) {
-    const char* mode = c.directional() ? "directional" : (c.enabled() ? "diagnostic" : "off");
+    const char* mode = c.generalized() ? "gicp" : (c.directional() ? "directional" : (c.enabled() ? "diagnostic" : "off"));
     s << "{\n  \"algorithm_version\": 1,\n  \"mode\": \"" << mode
       << "\",\n  \"normal_gain\": " << c.normal_gain << ",\n  \"tangent_weight\": " << c.tangent_weight
       << ",\n  \"radius_m\": " << c.radius_m << ",\n  \"neighbors\": " << c.neighbors
@@ -107,7 +107,11 @@ void WriteGeometryConfigJson(std::ostream& s, const GeometryConfig& c) {
       << "\n  \"scaled_state_units\": [1, 1, 1, " << 3.0 * std::acos(-1.0) / 180.0 << "],"
       << "\n  \"rank_relative_threshold\": 0.05,\n  \"rank_absolute_threshold\": 0.0001,"
       << "\n  \"min_reliable_points\": 10,\n  \"min_unique_targets\": 6,"
-      << "\n  \"information_scope\": \"data-only normal information; excludes prior, tangent weight and normal gain; not covariance\"\n}\n";
+      << "\n  \"information_scope\": \"data-only normal information; excludes prior, tangent weight and normal gain; not covariance\"";
+    if (c.generalized()) s << ",\n  \"gicp_model\": \"robust symmetric source/target regularized surface covariance; each contributes half variance; same 4DOF prior and bounds\","
+        "\n  \"gicp_covariance_calibrated\": false,\n  \"gicp_missing_source_geometry\": \"constant unmatched cost; no directional fallback\","
+        "\n  \"gicp_diagnostic_scope\": \"target-normal information over mutually supported pairs, not full GICP Hessian\"";
+    s << "\n}\n";
 }
 void WriteGeometryCsvRow(std::ostream& s, std::size_t idx, std::int64_t timestamp,
                          bool accepted, const GeometryMetrics& m) {

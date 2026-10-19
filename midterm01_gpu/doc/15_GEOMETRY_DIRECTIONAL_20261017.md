@@ -108,7 +108,7 @@ effective rank 採門檻 `max(1e-4, 0.05 × 最大特徵值)`。它受狀態尺�
 
 這些短測顯示模式可運作與診斷能揭露弱方向，**不證明新候選分數更好**。directional 在前 50 幀的 XY 修正 RMS 比原版更小（Track1 約 0.00564 m、Track2 約 0.00050 m），反映切向拉力被壓低；修正較小本身也不是精度改善。後段、轉彎與整條 Track 的取捨需依使用者完整測試及 Kaggle 分數。
 
-證據位於 [本次開發驗證目錄](../outputs/runs/geometry_dev_07284ae0)、[四輪短測摘要](../outputs/runs/geometry_dev_07284ae0/smoke_summary.json)。各 run 的 params、frame、source／binary SHA256、來源快照、geometry CSV、耗時與 validation 均保留，原最佳 CSV 不變。outputs 被 Git 忽略，交接需另備份證據。
+證據位於 [本次開發驗證目錄](../outputs/run/track00_test_2610172223)、[四輪短測摘要](../outputs/run/track00_test_2610172223/smoke_summary.json)。各 run 的 params、frame、source／binary SHA256、來源快照、geometry CSV、耗時與 validation 均保留，原最佳 CSV 不變。outputs 被 Git 忽略，交接需另備份證據。
 
 ## 完整測試與上傳：由使用者執行
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """少量原始影像 MapAnything 重建；主機獨立 ML venv，不更動 ROS Python。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import csv
 import json
@@ -51,7 +52,7 @@ def run(args):
     reports, trajectories, indices, headers, rigs = {}, {}, {}, {}, {}
     for track in sorted({t for t, _ in groups}):
         prior_run = getattr(args, f'prior_track{track}')
-        metadata = json.loads((prior_run / 'validation.json').read_text())
+        metadata = loads_saved_json((prior_run / 'validation.json').read_text())
         if metadata['track'] != track or metadata['sensor_fusion'] != 'heading_rts':
             raise ValueError('Wrong original prior Track/fusion')
         trajectories[track] = PriorTrajectory(prior_run / 'sensor_prior.csv')
@@ -207,13 +208,13 @@ def run(args):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--data-root', type=Path, required=True)
-    p.add_argument('--checkpoint', type=Path, required=True)
+    p.add_argument('--data-root', type=saved_path, required=True)
+    p.add_argument('--checkpoint', type=saved_path, required=True)
     p.add_argument('--checkpoint-revision', default='00f9c245bbcb60522d1ed7f9e9d88462c6e3f38a')
-    p.add_argument('--model-repo', type=Path, required=True)
-    p.add_argument('--prior-track1', type=Path, required=True)
-    p.add_argument('--prior-track2', type=Path, required=True)
-    p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--model-repo', type=saved_path, required=True)
+    p.add_argument('--prior-track1', type=saved_path, required=True)
+    p.add_argument('--prior-track2', type=saved_path, required=True)
+    p.add_argument('--output', type=saved_path, required=True)
     p.add_argument('--groups', default='1:1505,1:1506,1:1823,1:1824,2:1661,2:1662,2:1397,2:1398')
     p.add_argument('--width', type=int, default=448)
     p.add_argument('--height', type=int, default=294)

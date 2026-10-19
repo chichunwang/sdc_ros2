@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """分離場景的三相機偏差驗證；以跨時間剛體一致性篩除可疑尺度錨點。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import csv
 import json
@@ -79,7 +80,7 @@ def estimate(records, field):
 def run(args):
     args.output.resolve().relative_to((Path(__file__).resolve().parents[1] / 'outputs').resolve())
     args.output.mkdir(parents=True, exist_ok=False)
-    plan = json.loads(args.plan.read_text())
+    plan = loads_saved_json(args.plan.read_text())
     cv2.setNumThreads(1)
     sift = cv2.SIFT_create(nfeatures=5000)
     trajectories, index, header = {}, {}, {}
@@ -197,5 +198,5 @@ def run(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('plan','reconstruction','data-root','prior-track1','prior-track2','output'):
-        parser.add_argument('--'+name, type=Path, required=True)
+        parser.add_argument('--'+name, type=saved_path, required=True)
     run(parser.parse_args())

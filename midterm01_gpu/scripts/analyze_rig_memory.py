@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """彙整交錯基線的顯存／耗時／數值一致性；不把資料一致性當精度。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import json
 from pathlib import Path
@@ -7,7 +8,7 @@ import statistics
 
 
 def summarize(directory):
-    rows=json.loads((directory/'model_results.json').read_text())
+    rows=loads_saved_json((directory/'model_results.json').read_text())
     summary=[]
     for name in dict.fromkeys(r['variant'] for r in rows):
         chosen=[r for r in rows if r['variant']==name and r['status']=='ok']
@@ -39,7 +40,7 @@ def summarize(directory):
             result['paired_reference_mean_seconds']=statistics.mean(paired)
             result['paired_time_reduction_pct']=100*(1-result['mean_frame_seconds']/statistics.mean(paired))
         summary.append(result)
-    chunks=json.loads((directory/'chunk_results.json').read_text())
+    chunks=loads_saved_json((directory/'chunk_results.json').read_text())
     chunk_summary=[]
     for chunk in dict.fromkeys(r['chunk'] for r in chunks):
         chosen=[r for r in chunks if r['chunk']==chunk]
@@ -55,5 +56,5 @@ def summarize(directory):
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('directory',type=Path)
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('directory',type=saved_path)
     summarize(p.parse_args().directory)

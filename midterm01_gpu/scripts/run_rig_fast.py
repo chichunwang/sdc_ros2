@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """獨立加速入口；保留正在執行的 reference 檔案及其續跑契約。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import json
 from pathlib import Path
@@ -113,7 +114,7 @@ def run(args):
         reference.run(args)
         if not args.dry_run:
             previous=args.output/'performance.json'
-            prior_frames=json.loads(previous.read_text())['frames'] if previous.exists() else []
+            prior_frames=loads_saved_json(previous.read_text())['frames'] if previous.exists() else []
             by_index={r['original_idx']:r for r in prior_frames+totals}
             reference.atomic_json(previous,{'execution':execution,'frames':[by_index[i] for i in sorted(by_index)],
                                   'scope':'Per-frame timers. Cached replay excludes model computation; not full-run speed or accuracy evidence.'})
@@ -131,14 +132,14 @@ if __name__=='__main__':
     p.add_argument('--track',type=int,choices=(1,2),required=True)
     p.add_argument('--frames',type=int,required=True)
     p.add_argument('--start-frame',type=int,default=0)
-    for name in ('data-root','checkpoint','model-repo','prior-run','candidate','output'):p.add_argument('--'+name,type=Path,required=True)
-    p.add_argument('--map-cache',type=Path)
+    for name in ('data-root','checkpoint','model-repo','prior-run','candidate','output'):p.add_argument('--'+name,type=saved_path,required=True)
+    p.add_argument('--map-cache',type=saved_path)
     p.add_argument('--budget',type=int,default=6000)
     p.add_argument('--resume',action='store_true');p.add_argument('--localize',action='store_true')
     p.add_argument('--save-depth',action='store_true');p.add_argument('--dry-run',action='store_true')
     p.add_argument('--geometry-backend',choices=('reference','cpu','cuda'),default='cuda')
     p.add_argument('--verify-sampling',action='store_true',help='Diagnostic: recompute scalar reference and require exact chosen indices/report; costs extra time')
-    p.add_argument('--replay-directory',type=Path,help='Diagnostic only: real cached per-view predictions; no new model inference')
+    p.add_argument('--replay-directory',type=saved_path,help='Diagnostic only: real cached per-view predictions; no new model inference')
     a=p.parse_args()
     if a.budget<100:p.error('Budget must be >=100')
     run(a)

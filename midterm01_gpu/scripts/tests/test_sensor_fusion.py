@@ -97,7 +97,7 @@ class SensorFusionTests(unittest.TestCase):
         origin = 1727234445000000000
         gt = origin + np.arange(9, dtype=np.int64) * 250000000
         it = origin + np.arange(201, dtype=np.int64) * 10000000
-        quat = Rotation.from_euler('z', np.full(len(it), .1)).as_quat()
+        quat = Rotation.from_euler('z', np.full((len(it), 1), .1)).as_quat()
         result = make_priors(gt, np.zeros((len(gt), 3)), it, quat, gt[1:-1], fusion='heading_rts')
         self.assertIn('insufficient', result[2]['sensor_fusion']['heading_fallback'])
         np.testing.assert_allclose(result[1], np.tile(quat[0], (len(gt) - 2, 1)), atol=1e-12)

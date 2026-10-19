@@ -8,7 +8,7 @@
 #include <pcl/point_types.h>
 
 namespace localization {
-enum class GeometryMode { Off, Diagnostic, Directional };
+enum class GeometryMode { Off, Diagnostic, Directional, Gicp };
 
 struct GeometryConfig {
     GeometryMode mode = GeometryMode::Off;
@@ -19,7 +19,8 @@ struct GeometryConfig {
     int neighbors = 16;
     int min_neighbors = 6;
     bool enabled() const { return mode != GeometryMode::Off; }
-    bool directional() const { return mode == GeometryMode::Directional; }
+    bool directional() const { return mode == GeometryMode::Directional || mode == GeometryMode::Gicp; }
+    bool generalized() const { return mode == GeometryMode::Gicp; }
     void Validate() const;
 };
 

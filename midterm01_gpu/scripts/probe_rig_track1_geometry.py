@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """只讀既有點雲的 camera-level 地圖一致性與改善候選來源；不是精度評估。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import csv
 import json
@@ -48,18 +49,18 @@ def projection_metrics(scene,source,pose,camera_ids):
 
 
 def main(args):
-    root=Path(__file__).resolve().parents[1];out=args.output.resolve();out.relative_to((root/'outputs/runs').resolve())
+    root=Path(__file__).resolve().parents[1];out=args.output.resolve();out.relative_to((root/'outputs/run').resolve())
     if (out/'camera_probe.json').exists():raise ValueError('Existing probe cannot be overwritten')
     track=args.track
-    full=root/f'outputs/runs/three_camera_full_fast_imported_2610181301/track{track}'
-    front=root/'outputs/runs'/({1:'track1_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_3011f_70rv9cj4',
-                              2:'track2_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_3299f_7o_atg6_'}[track])
-    rig=Path(json.loads((full/'localization.json').read_text())['run'])
-    report=json.loads((full/'report.json').read_text());rposes=np.loadtxt(rig/'result.txt').reshape(-1,3,4);fposes=np.loadtxt(front/'result.txt').reshape(-1,3,4)
+    full=root/f'outputs/run/track00_full_2610181301/track{track}'
+    front=root/'outputs/run'/({1:'track01_full_2610172233',
+                              2:'track02_full_2610172238'}[track])
+    rig=Path(loads_saved_json((full/'localization.json').read_text())['run'])
+    report=loads_saved_json((full/'report.json').read_text());rposes=np.loadtxt(rig/'result.txt').reshape(-1,3,4);fposes=np.loadtxt(front/'result.txt').reshape(-1,3,4)
     with (front/'sensor_prior.csv').open() as f:prior=list(csv.DictReader(f))
     xyz=np.array([[float(r[k]) for k in ('x','y','z')] for r in prior]);arc=np.r_[0.,np.cumsum(np.linalg.norm(np.diff(xyz[:,:2],axis=0),axis=1))]
     indices=np.searchsorted(arc,np.linspace(.05,.95,16)*arc[-1]).astype(int)
-    map_cache=root/'outputs/runs'/({1:'cuda_ndt_20261017_nlvdk4j5/cache_track1_leaf1.pcd',2:'three_camera_dev_2610181055/cache_track2_leaf1.pcd'}[track])
+    map_cache=root/'outputs/run'/({1:'track00_test_2610171550/cache_track1_leaf1.pcd',2:'track00_test_2610181055/cache_track2_leaf1.pcd'}[track])
     scene=SurfaceMap(load_binary_map(map_cache))
     data=root.parent/f'midterm01/data/Track{track}/raw_ply';old_by_stamp={int(p.stem.rsplit('_ts_',1)[1]):p for p in data.glob('*.ply')}
     result=[];provenance=[]
@@ -120,6 +121,6 @@ def main(args):
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=Path,required=True)
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=saved_path,required=True)
     p.add_argument('--track',type=int,choices=(1,2),default=1);p.add_argument('--skip-ablations',action='store_true')
     main(p.parse_args())

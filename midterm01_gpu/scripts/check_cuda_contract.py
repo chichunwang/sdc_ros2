@@ -13,8 +13,9 @@ import tempfile
 
 def main():
     root = Path(__file__).resolve().parent.parent
-    run = Path(tempfile.mkdtemp(prefix="cuda_contract_", dir=root / "outputs/runs"))
-    container_root = "/root/outputs/runs/" + run.name
+    from accuracy.benchmark import create_run_directory
+    run = create_run_directory(root / "outputs/run", "cuda_contract")
+    container_root = "/root/outputs/run/" + run.name
     rng = random.Random(20261017)
     source = [(cluster % 5 * 2.7 + rng.gauss(0, .2), (cluster // 5) % 4 * 3.1 + rng.gauss(0, .2),
                cluster // 20 * 2.2 + rng.gauss(0, .2)) for cluster in range(60) for _ in range(120)]

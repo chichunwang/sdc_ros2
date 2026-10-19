@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """在容器內彙整共用地圖診斷與 pose 差異；不計算無真值的正式 ATE。"""
+from output_layout import loads_saved_json
 import csv
 import json
 import math
@@ -12,7 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 root = Path(sys.argv[1])
-config = json.loads((root / "config.json").read_text())
+config = loads_saved_json((root / "config.json").read_text())
 colors = {"CPU": "#2864BD", "CUDA": "#D77812"}
 plt.rcParams.update({"font.size": 10, "axes.spines.top": False, "axes.spines.right": False,
                      "axes.grid": True, "grid.alpha": .18, "figure.dpi": 150})

@@ -8,12 +8,28 @@
 
 閱讀本文後，再依 [28｜文件目錄與舊名對照](28_DOCUMENTATION_INDEX.md) 找歷史；實際操作命令集中在 [08｜操作手冊](08_MANUAL_WORKFLOW.md)。
 
+2026-10-19 補充：[32｜高度漂移分析](32_HEIGHT_DRIFT_ANALYSIS_20261019.md) 新增實驗 `--height-mode anchored`，約束 Z 的總 offset 並分開記錄 `height.csv`。本文已評分主流程仍使用預設 `carry`；新候選的短測貼合未一致改善，沒有取代最佳。
+
+同日後續 [33｜幾何高度／姿態參考](33_SURFACE_HEIGHT_REFERENCE_20261019.md) 在原 sensor prior 之外，另產生 `height_reference.csv`；`surface_tilt` 可提供保留 yaw 的有界幾何 roll／pitch。它是新的實驗分支，原已評分的固定 IMU roll／pitch／carry 主線保留。
+
+此分支已補通用完整入口：`benchmark.py --track N --full --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional --height-mode surface_tilt`。未指定歷史 prior／cache 時，由原始 bag／map 在新 output 建立先驗與 0.3 m 高度 map，再定位；不依賴特定舊 run。`--full` 與顯式 `--frames` 互斥，預設仍只跑 50 幀；完整測試由使用者手動啟動。
+
+後續高度候選 Track1 1.15519 未勝原最佳；[34｜位置先驗與水平觀測](34_POSITION_PRIOR_AND_HORIZONTAL_UPDATE_20261019.md) 改為原姿態／carry／directional、只換位置模型的 motion_rts 消融。GNSS 留段、864 筆短段與通用入口等價檢查已完成，後續使用者完整回報 **1.15008／0.30488**，motion_rts 已升為最佳，見 [35](35_MOTION_RTS_AND_GNSS_HEADING_20261019.md)；視覺／立面／外參檢查未通過，沒有新增 joint solver。程式預設不變；GNSS orientation 新實驗尚未升為最佳。
+
+後續 [36｜配準與融合升級](36_REGISTRATION_AND_FUSION_UPGRADE_20261019.md) 新增實驗 `--geometry-mode gicp`：同 prior／四自由度，兩邊局部平面 covariance 的 robust cost；原 directional 完全保留。另完成 `kinematic_graph.py` 研究原型，聯合 GNSS／raw gyro／側向速度模型，尚未接入 production sensor-fusion 或 map factors。兩條留段沒有一致改善，不升為最佳。
+
+2026-10-19 水平 map／joint 新分支見 [37｜細 map 水平觀測與跨幀聯合估計](37_HORIZONTAL_SURFEL_JOINT_20261019.md)。`--horizontal-refinement surfel_joint` 已接入通用 benchmark，0.3 m surfel／空間與時間留出／raw GNSS＋gyro＋map 平面聯合模型已有實作與短測。真實 8 組短段尚無可靠 map factor，輸出保留原 bytes；不能宣稱精度進步。預設／最佳不變，完整候選命令及未確認外參見 37。
+
 ## 1. 先看整張架構圖
+
+2026-10-20 本輪 [39｜航向與stereo尺度](39_HEADING_AND_STEREO_SCALE_20261020.md) 新增 `turn_heading_rts`：raw GNSS block 對齊積分 IMU 方向的線性車速，取代原 course factors 再進 bias RTS；`pose_yaw` 直接換用 GNSS Pose yaw，保留同 motion XY／IMU tilt。原前相機 stereo 推導的 scale=7.404260939740923 已透過原 `--ply-scale` 實際進入 C++ 配準短測；full 通用命令見16。下圖仍描述已評分 scale3／motion_rts 主線，新版本沒有新 Kaggle 分數，程式預設保留。
+
+2026-10-20 的來源層研究見 [38｜跨幀剛體一致性與尺度](38_SOURCE_RIGIDITY_AND_SCALE_20261020.md)：新增獨立於定位主流程的 RGB vertex 對應、剛體／相似模型與共用尺度診斷。已完成 96 對真實來源檢查與 16 場景 map 對照；沒有新 pose／可靠 factor 或精度改善證據，下面已評分主流程的 source scale=3／solver 不變。
 
 目前已有 Kaggle 成績的前相機流程，明確指定三個選項：
 
 ```text
---profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
+--profile sensor_guided --sensor-fusion motion_rts --geometry-mode directional --height-mode carry
 ```
 
 ```mermaid
@@ -25,7 +41,7 @@ flowchart TD
     I --> F["frames.csv、params.json／yaml、來源 hash"]
     F --> S["docker exec：prepare_sensor_prior.py"]
     BAG["TrackN.db3：GNSS position、IMU orientation"] --> S
-    S --> SF["sensor_fusion.py：可靠 course 觀測、heading bias KF／RTS"]
+    S --> SF["sensor_fusion.py：可靠 course／heading bias KF／RTS、原始 XY 常速度 KF／RTS"]
     SF --> PR["sensor_prior.csv：每幀位置與 quaternion"]
     PR --> RUN["docker exec：ros2 run localization localization"]
     F --> RUN
@@ -59,7 +75,7 @@ flowchart TD
   → 主機 Python：result.txt → diagnostic.csv + validation.json
 ```
 
-這張圖描述的是 `sensor_guided + heading_rts + directional`。程式省略選項仍預設 `legacy + fixed + off`；`legacy` 使用不同配準流程，見第 12 節。
+這張圖描述的是目前最佳 `sensor_guided + motion_rts + directional + carry`；下文保留 heading_rts 的觀測推導。程式省略選項仍預設 `legacy + fixed + off`；`legacy` 使用不同配準流程，見第 12 節。
 
 ## 2. 這套程式到底在求什麼？
 
@@ -94,7 +110,7 @@ container 提供 ROS 2 Humble、PCL、CUDA 等執行環境；它不是定位演�
 | `midterm01/data` | `/root/data` | 共用原始資料，容器唯讀 |
 | `midterm01_gpu/outputs` | `/root/outputs` | 新 run 與結果，讀寫 |
 
-例如主機的 `midterm01_gpu/outputs/runs/ABC/result.txt`，在 GPU 容器內叫 `/root/outputs/runs/ABC/result.txt`。它們是同一個檔案，不是執行後另做一次複製。CPU 容器的 `/root/outputs` 則對應另一個主機目錄。
+例如主機的 `midterm01_gpu/outputs/run/ABC/result.txt`，在 GPU 容器內叫 `/root/outputs/run/ABC/result.txt`。它們是同一個檔案，不是執行後另做一次複製。CPU 容器的 `/root/outputs` 則對應另一個主機目錄。
 
 ### 3.1 啟動與進入 container 各做什麼
 
@@ -164,7 +180,7 @@ python3 scripts/benchmark.py --track 1 --frames 50 \
 2. **讀 Compose 的實際設定。** 找出容器名稱與 `/root/data` 掛載來源，避免猜主機資料路徑。若容器已有 `localization` 程序，拒絕開第二輪。
 3. **若明確指定 map cache，核對身分。** 比對 Track、原 map SHA256、1 m leaf sidecar；預設不使用 cache。
 4. **掃描輸入 PLY 第一層。** 從 `_ts_<正整數奈秒>` 解析時間，依時間排序。`--start-frame 0 --frames 50` 選前 50 幀；還沒載入每個 PLY 的點座標。
-5. **建立唯一 run。** 位置是 `outputs/runs/<名稱>_YYMMDDHHmm`，時間用台北時區；同分鐘重名加 `_2` 等。終端印出的 `Run:` 是主機路徑。
+5. **建立唯一 run。** 位置是 `outputs/run/<名稱>_YYMMDDHHmm`，時間用台北時區；同分鐘重名加 `_2` 等。終端印出的 `Run:` 是主機路徑。
 6. **保存輸入契約。** `source_input.json` 記原始 idx、timestamp、檔名、PLY SHA256、來源與尺度；實驗來源另存來源報告。
 7. **產生 `params.json`／`params.yaml` 與 `frames.csv`。** 前者是實際交給 ROS node 的參數；後者是這輪影格順序。JSON 格式也可作合法 YAML 傳給 ROS。
 8. **保存 Python 與 C++ 來源快照等重現資訊，準備感測器先驗。** 細節在下一節。
@@ -198,8 +214,8 @@ docker exec <GPU容器> bash -c
   source /opt/ros/humble/setup.bash
   → python3 /root/scripts/prepare_sensor_prior.py
       --bag /root/data/Track1/Track1.db3
-      --frames /root/outputs/runs/<run>/frames.csv
-      --output /root/outputs/runs/<run>/sensor_prior.csv
+      --frames /root/outputs/run/<run>/frames.csv
+      --output /root/outputs/run/<run>/sensor_prior.csv
       --fusion heading_rts ...
 ```
 
@@ -209,7 +225,7 @@ docker exec <GPU容器> bash -c
 
 | bag topic | message type | 真正使用的數值 |
 | --- | --- | --- |
-| `/localizer_node/gnss_pose` | `geometry_msgs/msg/PoseStamped` | position x、y、z |
+| `/localizer_node/gnss_pose` | `geometry_msgs/msg/PoseStamped` | position x、y、z；實驗 pose_heading_rts／independent_heading_rts 才加讀 orientation |
 | `/imu/data` | `sensor_msgs/msg/Imu` | orientation quaternion qx、qy、qz、qw |
 
 這個流程沒有積分 raw acceleration 或 gyro 來算位置。GNSS 是有誤差的輸入，不是評分真值。前處理直接讀完整 bag 的這兩個 topic，再查詢所選 PLY 的時間；因此只跑前 50 幀，heading 平滑仍可能利用較晚的可靠觀測，這是離線方法。
@@ -250,7 +266,7 @@ GNSS 一小段移動的速度方向叫 course。車輛高速近直行時，cours
 
 可靠區塊不足 3 個時，明確退回原 `fixed` bias。先前估出的固定中位 bias 在 heading_rts 正常運作時只是參考，不會被當成另一筆獨立量測重複更新。
 
-**heading_rts 的位置仍是上一小節的 GNSS 平滑＋插值。** 另一個 `motion_rts` 選項才額外對 `[x,y,vx,vy]` 做位置／速度 KF＋RTS，目前不能把 heading_rts 的分數算給它。地圖細修也不是把完整車輛狀態送入 EKF 更新。
+**heading_rts 的位置仍是上一小節的 GNSS 平滑＋插值。** 另一個 `motion_rts` 選項才額外對 `[x,y,vx,vy]` 做位置／速度 KF＋RTS，後續完整分數為 1.15008／0.30488（35）；兩者成績分開記錄。新增 pose_heading_rts／independent_heading_rts 也使用相同 motion XY，只改 bias 觀測。地圖細修也不是把完整車輛狀態送入 EKF 更新。
 
 ### 5.5 這階段輸出什麼？
 
@@ -273,7 +289,7 @@ docker exec <GPU容器> bash -c '
   source /opt/ros/humble/setup.bash &&
   source /root/midterm/install/setup.bash &&
   exec ros2 run localization localization --ros-args
-    --params-file /root/outputs/runs/<run>/params.yaml
+    --params-file /root/outputs/run/<run>/params.yaml
 '
 ```
 
@@ -470,7 +486,7 @@ R00 R01 R02 tx R10 R11 R12 ty R20 R21 R22 tz
 | `/localization_path` | 到目前為止累積的 path |
 | `/map_pc` | 可選全局地圖；benchmark 預設不發布 |
 
-RViz 是讀這些訊息的顯示器，不負責計算 pose。benchmark 沒開 RViz，程式仍會發布逐幀訊息。`keep_alive=false` 讓批次做完就退出。
+RViz 是讀這些訊息的顯示器，不負責計算 pose。benchmark 沒開 RViz，程式仍會發布逐幀訊息。`keep_alive=false` 讓批次做完就退出。2026-10-19 另加入 `scripts/replay.py` → C++ `replay_localization`，直接讀已保存的 pose／來源點雲，在獨立 `/replay/*` topics 與 `map → replay_source` TF 重演；不重新執行本章的定位流程。[30｜回放與座標朝向](30_RVIZ_REPLAY_20261019.md) 記操作、座標及時間契約。
 
 ### 9.3 benchmark 直接轉 CSV，不再呼叫另一個轉檔程式
 
@@ -519,7 +535,7 @@ geometry CSV 描述**最終輸出 pose**；若候選被拒絕，裡面是 prior 
 
 一般 benchmark 的 CSV 叫 `diagnostic.csv`，不會自動改名 `result_1.csv`，也不會自動提交或更新每個 `latest_*` 指標。三相機 wrapper 會在完整結果通過後另外複製成 `result_1.csv`／`result_2.csv`，如下節。
 
-這些檢查確認程式與格式完整，不能證明定位精度、官方 body frame／單位契約都正確；正式精度仍需要評分證據。最新已評分前相機分數紀錄在 [17](17_GEOMETRY_RESULTS_20261017.md)。
+這些檢查確認程式與格式完整，不能證明定位精度、官方 body frame／單位契約都正確；正式精度仍需要評分證據。最新已評分前相機分數紀錄在 [35](35_MOTION_RTS_AND_GNSS_HEADING_20261019.md)，[17](17_GEOMETRY_RESULTS_20261017.md) 保留歷史。
 
 ## 10. 你目前查看的三相機 result_2.csv 從哪裡來？
 
@@ -578,7 +594,7 @@ MapAnything／PyTorch 在**主機獨立 ML venv**，不是 ROS 容器 Python。�
 ### 10.3 檔案樹與這次實際輸出
 
 ```text
-outputs/runs/three_camera_full_fast_imported_2610181301/
+outputs/run/track00_full_2610181301/
   candidate.json
   track1/
     identity.json、frames/、report.json、completion.json
@@ -598,10 +614,10 @@ outputs/runs/three_camera_full_fast_imported_2610181301/
 
 | Track | 真正執行 C++、保存 TXT／guidance／validation 的 run |
 | --- | --- |
-| 1 | [track1…reconstruction…2610181312](../outputs/runs/track1_sensor_guided_heading_rts_geometry_directional_reconstruction_s1_from0_cuda_robust_icp_d2d_2610181312/) |
-| 2 | [track2…reconstruction…2610181356](../outputs/runs/track2_sensor_guided_heading_rts_geometry_directional_reconstruction_s1_from0_cuda_robust_icp_d2d_2610181356/) |
+| 1 | [track1…reconstruction…2610181312](../outputs/run/track01_full_2610181312/) |
+| 2 | [track2…reconstruction…2610181356](../outputs/run/track02_full_2610181356/) |
 
-因此想追你開的 [track2/result_2.csv](../outputs/runs/three_camera_full_fast_imported_2610181301/track2/result_2.csv)，先看同資料夾的 [localization.json](../outputs/runs/three_camera_full_fast_imported_2610181301/track2/localization.json)，再到它的 `run` 看 `params.json`、`source_input.json`、`guidance.csv` 與 `result.txt`。不要因為 CSV 在重建資料夾，就以為它是網路直接預測的車輛位置。
+因此想追你開的 [track2/result_2.csv](../outputs/run/track00_full_2610181301/track2/result_2.csv)，先看同資料夾的 [localization.json](../outputs/run/track00_full_2610181301/track2/localization.json)，再到它的 `run` 看 `params.json`、`source_input.json`、`guidance.csv` 與 `result.txt`。不要因為 CSV 在重建資料夾，就以為它是網路直接預測的車輛位置。
 
 本次只讀核對：兩條分別為 3011／3299 筆，表頭正確，CSV SHA256 與 localization.json 相符，總 run 根目錄副本相同；兩輪 validation 都為退出碼 0、完整有限輸出、空 validation_errors、完整 frame set。沒有為此重跑定位。
 
@@ -636,7 +652,9 @@ outputs/runs/three_camera_full_fast_imported_2610181301/
 | 首次 CUDA | 同上 | 上游 CUDA D2D NDT | GPU 歷史版本 |
 | sensor_guided 初版 | 每幀 GNSS／IMU，固定 heading bias | robust 點到點，4 自由度 | fixed＋off 歷史版本 |
 | heading_rts | 每幀 GNSS／IMU＋慢變 heading bias | robust 點到點，4 自由度 | 前一已評分版本 |
-| heading_rts＋directional | 同上 | 表面方向性 robust 細修 | 最新已評分前相機方法 |
+| heading_rts＋directional | 同上 | 表面方向性 robust 細修 | 歷史最佳 1.15275／0.30576 |
+| motion_rts＋directional＋carry | 相同 heading；XY 常速度 KF／RTS | 同一個 solver | 最新最佳 1.15008／0.30488，見 35 |
+| independent_heading_rts | 同 motion XY，GNSS pose yaw 假設獨立加入 bias | 同一個 solver | 實驗，未評分，見 35 |
 | calibrated rig＋fast | 重用同一批 heading_rts prior | 同一個 directional solver，改三相機 source | 完整實驗輸出；後續成績與診斷見 [29](29_THREE_CAMERA_SCORED_ANALYSIS_20261018.md)，推薦最佳仍為前相機 |
 
 `cuda_ndt_backend` 的 package 名、run 名中的 `_d2d_`、`timings.csv.ndt_ms` 和部分 TODO／log 仍保留歷史名稱。**判斷實際運算要看 profile／registration_backend／geometry 與程式分支，不能只看資料夾名稱。**

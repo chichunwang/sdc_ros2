@@ -4,7 +4,7 @@
 
 已完成獨立加速入口，不更換模型、解析度、深度尺度、同步方式或幾何取樣規則。四個真實場景的取樣階段暖機快 **6.5–7.6 倍**；另用真正的 MapAnything 推論重建 Track1 2483–2486，暖機後三幀平均 **0.780 s/frame**，同位置原版紀錄 **1.990 s/frame**，四幀 PLY／labels／取樣／相機 pose 完全相同。這是小段實測，尚無新完整序列耗時或 Kaggle 分數。
 
-使用者已停止 `outputs/runs/three_camera_full_2610181155`，Track1 已提交 **2487／3011 幀**，剩 **524** 幀。原 run 保留；已將核對過的幀複製到 **`outputs/runs/three_camera_full_fast_imported_2610181301`**，可用加速入口接續。三相機尺度候選仍為 0.67398047，跨場景驗證未通過，效能改進不能代替精度驗證。
+使用者已停止 `outputs/run/track00_full_2610181155`，Track1 已提交 **2487／3011 幀**，剩 **524** 幀。原 run 保留；已將核對過的幀複製到 **`outputs/run/track00_full_2610181301`**，可用加速入口接續。三相機尺度候選仍為 0.67398047，跨場景驗證未通過，效能改進不能代替精度驗證。
 
 ## 一幀 1.x 秒花在哪裡
 
@@ -81,7 +81,7 @@ cached real predictions 的 Track1 1505–1506、Track2 1661–1662，原版與�
 ```bash
 cd /home/ricky/sdc_ros2/midterm01_gpu
 bash scripts/run_three_camera_full_fast.sh --resume \
-  outputs/runs/three_camera_full_fast_imported_2610181301
+  outputs/run/track00_full_2610181301
 ```
 
 預期先核對已完成 2487 幀，重建 Track1 剩餘 524 幀，定位 Track1，再重建／定位 Track2。初始 hash 核對與模型載入仍需時間。後續中斷使用同一命令。
@@ -95,4 +95,4 @@ bash scripts/run_three_camera_full_fast.sh
 
 若需匯入其他已停止原版 run，執行 `outputs/ml_runtime/venv/bin/python scripts/migrate_rig_fast.py <原 run root>` 一次，再把工具印出的新 Run 交給加速 wrapper 的 `--resume`。wrapper 拒絕同時啟動另一個重建或 localization；結果在該 run 的 `result_1.csv`／`result_2.csv`，不自動提交。
 
-完整證據目錄為 `outputs/runs/rig_performance_2610181247/`：`live_run_observation.json`、`reference_profile.json`／pstats、`accelerator_components.json`、`performance_summary.json`、`output_equivalence.json`、`real_inference_comparison.json`／`real_inference_summary.json`、逐組 command／log／source snapshot、`migration.log`／`migration_validation.json`。資料與 outputs 被 Git 忽略，跨機需另外保存。新幀的 `stage_seconds`／`sampling_stage_details` 與 `performance.json` 可用來確認下一輪真正瓶頸；`--verify-sampling` 會額外重跑 CPU reference，僅供短段核對，不作速度量測。
+完整證據目錄為 `outputs/run/track00_test_2610181247/`：`live_run_observation.json`、`reference_profile.json`／pstats、`accelerator_components.json`、`performance_summary.json`、`output_equivalence.json`、`real_inference_comparison.json`／`real_inference_summary.json`、逐組 command／log／source snapshot、`migration.log`／`migration_validation.json`。資料與 outputs 被 Git 忽略，跨機需另外保存。新幀的 `stage_seconds`／`sampling_stage_details` 與 `performance.json` 可用來確認下一輪真正瓶頸；`--verify-sampling` 會額外重跑 CPU reference，僅供短段核對，不作速度量測。

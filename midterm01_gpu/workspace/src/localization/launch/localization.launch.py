@@ -1,5 +1,8 @@
 import os
-from datetime import datetime
+import json
+from pathlib import Path
+import re
+import sys
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -10,6 +13,23 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
+def prepare_output(context):
+    existing = LaunchConfiguration('save_path').perform(context).strip()
+    if existing:
+        return existing
+    sys.path.insert(0, '/root/scripts')
+    from accuracy.benchmark import create_run_directory
+    data_path = LaunchConfiguration('data_path').perform(context)
+    match = re.fullmatch(r'Track([12])', Path(data_path).name)
+    track = int(match[1]) if match else 0
+    count = int(LaunchConfiguration('max_frames').perform(context).strip() or '0')
+    full = count == 0 or (track in (1,2) and count == (3011 if track == 1 else 3299))
+    run = create_run_directory(Path('/root/outputs/run'), 'ros_launch', track=track, full=full)
+    (run/'launch_overrides.json').write_text(json.dumps({k:str(v) for k,v in context.launch_configurations.items()},indent=2)+'\n')
+    context.launch_configurations['save_path'] = str(run)
+    return str(run)
+
+
 def generate_launch_description():
     pkg_share = get_package_share_directory('localization')
     arguments = [
@@ -18,7 +38,7 @@ def generate_launch_description():
         DeclareLaunchArgument('ply_path', default_value=PathJoinSubstitution([LaunchConfiguration('data_path'), 'raw_ply'])),
         DeclareLaunchArgument('init_guess_file', default_value=PathJoinSubstitution([LaunchConfiguration('data_path'), 'init_guess.txt'])),
 
-        DeclareLaunchArgument('save_path', default_value='/root/outputs/runs/launch_' + datetime.now().strftime('%Y%m%dT%H%M%S_%f')),
+        DeclareLaunchArgument('save_path', default_value='', description='Empty allocates outputs/run/trackNN_full-or-test_YYMMDDHHmm'),
         DeclareLaunchArgument('use_rviz', default_value='false'),
         DeclareLaunchArgument('map_cache_file', default_value='', description='Empty disables cache; use a unique absolute outputs path for explicit caches'),
         DeclareLaunchArgument('save_file', default_value='Track1_result.txt'),
@@ -28,6 +48,8 @@ def generate_launch_description():
         DeclareLaunchArgument('cuda_ndt_mode', default_value='D2D'),
         DeclareLaunchArgument('localization_profile', default_value='legacy'),
         DeclareLaunchArgument('sensor_prior_file', default_value=''),
+        DeclareLaunchArgument('sensor_height_mode', default_value='carry'),
+        DeclareLaunchArgument('sensor_height_reference_file', default_value=''),
         DeclareLaunchArgument('geometry_mode', default_value='off'),
     ]
     parameter_types = {
@@ -48,6 +70,7 @@ def generate_launch_description():
     ]
 
     def create_nodes(context):
+        prepare_output(context)
         # Pass only explicit terminal overrides; let the C++ node own defaults.
         overrides = {
             name: ParameterValue(LaunchConfiguration(name), value_type=value_type)
@@ -73,6 +96,8 @@ def generate_launch_description():
                 'cuda_ndt_mode': LaunchConfiguration('cuda_ndt_mode'),
                 'localization_profile': LaunchConfiguration('localization_profile'),
                 'sensor_prior_file': ParameterValue(LaunchConfiguration('sensor_prior_file'), value_type=str),
+                'sensor_height_mode': ParameterValue(LaunchConfiguration('sensor_height_mode'), value_type=str),
+                'sensor_height_reference_file': ParameterValue(LaunchConfiguration('sensor_height_reference_file'), value_type=str),
                 'geometry_mode': ParameterValue(LaunchConfiguration('geometry_mode'), value_type=str),
 
                 **overrides,

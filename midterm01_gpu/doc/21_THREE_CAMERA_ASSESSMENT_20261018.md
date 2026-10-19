@@ -79,7 +79,7 @@ MapAnything 上游 API 使用 OpenCV camera pose convention，並可提供 per-v
 
 ## 本次證據與重現
 
-有效報告：[完整 index／header 與抽樣 XYZ audit](../outputs/runs/three_camera_audit_261018_62wbvytl/report.json)；[獨立 audit 程式快照](../outputs/runs/three_camera_audit_261018_62wbvytl/audit.py)。報告包含來源 commit、index／report／校正 SHA256、抽樣 PLY SHA256、完整時間差及原始座標分位數。audit 不讀 map、不估 pose、不讀真值，也不啟動 localization。
+有效報告：[完整 index／header 與抽樣 XYZ audit](../outputs/run/track00_test_2610181047/report.json)；[獨立 audit 程式快照](../outputs/run/track00_test_2610181047/audit.py)。報告包含來源 commit、index／report／校正 SHA256、抽樣 PLY SHA256、完整時間差及原始座標分位數。audit 不讀 map、不估 pose、不讀真值，也不啟動 localization。
 
 最初 audit 因誤把 index 的相機標籤要求套到本機影像名，出現假缺檔；該目錄已加入 `AUDIT_INVALID.txt`，保留失敗紀錄，未引用為資料缺失證據。上方為修正成 index＋整數時間對應後重新完成的有效報告，缺檔為 0。
 

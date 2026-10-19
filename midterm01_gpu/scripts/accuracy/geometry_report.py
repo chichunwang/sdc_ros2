@@ -1,4 +1,5 @@
 """幾何 CSV 契約與摘要；只檢查內部數值，不推估定位精度。"""
+from output_layout import loads_saved_json
 import csv
 import json
 import math
@@ -44,7 +45,7 @@ def validate_geometry(run, timestamps, mode, normal_gain, tangent_weight):
     errors = []
     summary = {}
     try:
-        config = json.loads((run / 'geometry_config.json').read_text())
+        config = loads_saved_json((run / 'geometry_config.json').read_text())
         with (run / 'geometry.csv').open() as stream:
             rows = list(csv.DictReader(stream))
         if config['mode'] != mode or config['normal_gain'] != normal_gain or config['tangent_weight'] != tangent_weight:
@@ -65,7 +66,7 @@ def validate_geometry(run, timestamps, mode, normal_gain, tangent_weight):
                 raise ValueError('Invalid geometry update flags')
             if mode == 'diagnostic' and values['directional_update_used']:
                 raise ValueError('Diagnostic-only run changed weighting')
-            if mode == 'directional' and values['directional_update_used'] != values['map_accepted']:
+            if mode in ('directional', 'gicp') and values['directional_update_used'] != values['map_accepted']:
                 raise ValueError('Directional update flag differs from accepted map update')
             eigenvalues = [values[f'scaled_eigenvalue_{i}'] for i in range(4)]
             if min(eigenvalues) < -1e-9 or eigenvalues != sorted(eigenvalues):
@@ -81,6 +82,20 @@ def validate_geometry(run, timestamps, mode, normal_gain, tangent_weight):
                     reconstructed = sum(vectors[r][k] * eigenvalues[k] * vectors[c][k] for k in range(4))
                     if abs(orthogonal - int(r == c)) > 1e-7 or abs(reconstructed - info[r][c]) > 1e-7 * max(1., abs(info[r][c])):
                         raise ValueError('Geometry eigensystem inconsistent with data-only information')
+        if mode == 'gicp':
+            with (run / 'gicp.csv').open() as stream:
+                source_rows = list(csv.DictReader(stream))
+            with (run / 'guidance.csv').open() as stream:
+                guidance = list(csv.DictReader(stream))
+            if [int(r['timestamp_ns']) for r in source_rows] != timestamps or len(guidance) != len(rows):
+                raise ValueError('GICP source diagnostic timestamp/count mismatch')
+            for index, (source, geometry, update) in enumerate(zip(source_rows, rows, guidance)):
+                if (int(source['idx']) != index or source['input_points'] != geometry['input_points'] or
+                    source['map_accepted'] != geometry['map_accepted'] or
+                    source['candidate_paired_points'] != update['candidate_reliable_points'] or
+                    source['candidate_unique_targets'] != update['candidate_unique_targets'] or
+                    not 0 <= int(source['candidate_paired_points']) <= int(source['source_reliable_points']) <= int(source['input_points'])):
+                    raise ValueError('GICP source geometry count/acceptance mismatch')
         ratios = [float(row['reliable_points']) / max(1, int(row['input_points'])) for row in rows]
         ranks = [int(row['observable_rank']) for row in rows]
         summary = {'config': config, 'frames': len(rows), 'rank_histogram': {str(i): ranks.count(i) for i in range(5)},

@@ -22,7 +22,7 @@ class SensorPriorTests(unittest.TestCase):
         gnss = np.array([origin + i * 250000000 for i in range(5)], dtype=np.int64)
         imu = np.array([origin + i * 10000000 for i in range(101)], dtype=np.int64)
         # Interpolation crosses +/-180 degrees, never through a zero heading.
-        quat = Rotation.from_euler('z', np.linspace(179, 181, 101), degrees=True).as_quat()
+        quat = Rotation.from_euler('z', np.linspace(179, 181, 101)[:, None], degrees=True).as_quat()
         xyz = np.zeros((5, 3))
         queries = np.array([origin + 499999999, origin + 500000000, origin + 500000001], dtype=np.int64)
         p, q, meta = make_priors(gnss, xyz, imu, quat, queries)

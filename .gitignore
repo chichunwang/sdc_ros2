@@ -22,7 +22,13 @@ Thumbs.db
 *.swp
 *~
 tmp/
-.codex/
+.codex/*
+!.codex/config.toml
+!.codex/agents/
+.codex/agents/*
+!.codex/agents/quick_scan.toml
+!.codex/agents/docs_helper.toml
+!.codex/agents/small_fix.toml
 
 # Dataset / ROS bag
 data/

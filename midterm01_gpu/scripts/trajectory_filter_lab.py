@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """唯讀既有 sensor_guided run，另存離線濾波候選；不重跑定位或推估 Kaggle 分數。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import csv
 import hashlib
@@ -22,7 +23,7 @@ def write_json(path, value):
 
 
 def load_run(run, track):
-    validation = json.loads((run / 'validation.json').read_text())
+    validation = loads_saved_json((run / 'validation.json').read_text())
     if (validation.get('track') != track or validation.get('profile') != 'sensor_guided'
             or validation.get('returncode') != 0 or validation.get('validation_errors')
             or validation.get('output_complete_and_finite') is not True):
@@ -118,7 +119,7 @@ def filtered_poses(poses, values):
     original_yaw = np.arctan2(poses[:, 1, 0], poses[:, 0, 0])
     # 左乘合法 Rz，保留原始 roll/pitch；禁止逐元素平滑旋轉矩陣。
     delta = np.arctan2(np.sin(values[:, 2] - original_yaw), np.cos(values[:, 2] - original_yaw))
-    result[:, :, :3] = Rotation.from_euler('z', delta).as_matrix() @ poses[:, :, :3]
+    result[:, :, :3] = Rotation.from_euler('z', delta[:,None]).as_matrix() @ poses[:, :, :3]
     result[:, :2, 3] = values[:, :2]
     return result
 
@@ -219,7 +220,7 @@ def plot_comparison(output, t, original, candidates, audit):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--run', type=Path, required=True)
+    parser.add_argument('--run', type=saved_path, required=True)
     parser.add_argument('--track', type=int, choices=(1, 2), required=True)
     parser.add_argument('--window-seconds', type=float, default=.5)
     parser.add_argument('--ema-alpha', type=float, default=.25)
@@ -227,13 +228,13 @@ def main():
     parser.add_argument('--rts-yaw-std-deg', type=float, default=.2)
     parser.add_argument('--rts-xy-accel-psd', type=float, default=4., help='white acceleration PSD, m^2/s^3')
     parser.add_argument('--rts-yaw-accel-psd-deg2', type=float, default=25., help='angular acceleration PSD, deg^2/s^3')
-    parser.add_argument('--bag', type=Path, help='optional read-only heading audit; requires sourced ROS environment')
+    parser.add_argument('--bag', type=saved_path, help='optional read-only heading audit; requires sourced ROS environment')
     parser.add_argument('--plot', action='store_true', help='requires Matplotlib')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     run = args.run.resolve()
     try:
-        run.relative_to((root / 'outputs/runs').resolve())
+        run.relative_to((root / 'outputs/run').resolve())
         positive = (args.window_seconds, args.rts_xy_std, args.rts_yaw_std_deg,
                     args.rts_xy_accel_psd, args.rts_yaw_accel_psd_deg2)
         if not all(math.isfinite(x) and x > 0 for x in positive) or not 0 < args.ema_alpha <= 1:
@@ -253,7 +254,8 @@ def main():
     candidates = {'baseline': original, 'sg_xy': sg_xy, 'sg_yaw': sg_yaw,
                   'sg_xy_yaw': sg, 'rts_xy_yaw': rts,
                   'ema_lag_control': ema_control(original, args.ema_alpha)}
-    output = Path(tempfile.mkdtemp(prefix=f'trajectory_filters_track{args.track}_', dir=root / 'outputs/runs'))
+    from accuracy.benchmark import create_run_directory
+    output = create_run_directory(root / 'outputs/run', f'track{args.track}_trajectory_filters')
     # docker exec 以 root 執行時，仍讓主機 VS Code 可讀新 run；只改本次產生的目錄。
     output.chmod(0o755)
     summary = {'source_run': str(run), 'track': args.track, 'frames': len(t),

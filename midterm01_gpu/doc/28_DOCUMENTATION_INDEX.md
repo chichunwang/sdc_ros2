@@ -1,6 +1,6 @@
 # 28｜文件目錄、開發時間序與舊名對照
 
-整理日期：2026-10-18（Asia/Taipei）。Midterm01 GPU 的說明正文集中在 `/home/ricky/sdc_ros2/midterm01_gpu/doc/`；文件名使用兩位數前綴。**先讀 [01｜程式架構與完整流程](01_PROGRAM_FLOW.md)**，再依問題選讀下面的文件。
+整理日期：2026-10-18；回放索引更新：2026-10-19（Asia/Taipei）。Midterm01 GPU 的說明正文集中在 `/home/ricky/sdc_ros2/midterm01_gpu/doc/`；文件名使用兩位數前綴。**先讀 [01｜程式架構與完整流程](01_PROGRAM_FLOW.md)**，再依問題選讀下面的文件。
 
 ## 編號與保存規則
 
@@ -9,6 +9,7 @@
 - 日期以文件與既有實驗紀錄為準。同日沒有可核對的精確建立時刻時，依已知開發先後與依賴排列，操作／命令／後端說明附在相關階段；不把檔案 mtime 當成事件時間。
 - `08` 操作手冊、`09` 輸出指南、`19` 開發原則與 `27` 專案總覽會持續更新，編號不是它們最後更新時間。`27` 保存整理當時原 GPU README 的完整內容；`28` 是本次新增目錄。
 - `29` 是整理期間同步新增的三相機完整評分／診斷文件，接續納入此目錄；它沒有改變 `01` 作為架構入口的安排。
+- `30` 為 2026-10-19 新增的既有結果 RViz 回放、座標朝向與 GUI 操作。
 - 歷史文件的「目前／尚未」保留當時語境。判斷現在實際流程先讀 `01`；判斷舊結果看該輪日期、run、參數與 SHA256。
 - `00_Personal_Record.txt` 是你的個人紀錄，保留原名、原內容，不加入歷史報告排序。原 `command_paste.txt` 在本次整理之前已被刪除；此次保留刪除狀態，沒有用 Git 舊內容復原。
 - 根目錄、CUDA package、outputs 的 `README.md` 保留短入口；`AGENTS.md` 保留工具辨識所需的位置與名稱。它們連到這個集中目錄。`CMakeLists.txt` 是建置程式，不是應改名的 documentation。
@@ -35,7 +36,7 @@
 | 13／2026-10-17 | [heading_rts＋geometry off 歷史命令](13_run_sensor_fusion.txt)：融合階段重現 | `doc/run_sensor_fusion.txt` |
 | 14／2026-10-17 | [heading_rts 完整進步紀錄](14_HEADING_RTS_RESULTS_20261017.md)：1.16951／0.31967、來源與 SHA256 | `doc/HEADING_RTS_RESULTS_20261017.md` |
 | 15／2026-10-17 | [方向性配準設計](15_GEOMETRY_DIRECTIONAL_20261017.md)：PCA、法向／切向 metric、幾何診斷 | `doc/GEOMETRY_DIRECTIONAL_20261017.md` |
-| 16／2026-10-17 | [heading_rts＋directional 手動命令](16_run_geometry_directional.txt)：最新已評分前相機組合 | `doc/run_geometry_directional.txt` |
+| 16／2026-10-17 | [heading_rts＋directional 手動命令](16_run_geometry_directional.txt)：前相機命令，開頭已更新 motion_rts；保留 heading 歷史 | `doc/run_geometry_directional.txt` |
 | 17／2026-10-17 | [方向性配準完整成績](17_GEOMETRY_RESULTS_20261017.md)：1.15275／0.30576、最佳 CSV 與證據 | `doc/GEOMETRY_RESULTS_20261017.md` |
 | 18／2026-10-17 | [幾何 fallback 調查](18_GEOMETRY_FALLBACK_20261017.md)：第 410 幀、候選拒絕原因與 log 修正 | `doc/GEOMETRY_FALLBACK_20261017.md` |
 | 19／2026-10-17 | [學習與開發原則](19_DEVELOPMENT_PRINCIPLES.md)：觀察、假說、模型推導、驗證與泛化 | `doc/DEVELOPMENT_PRINCIPLES.md` |
@@ -49,6 +50,18 @@
 | 27／2026-10-18 整理，持續更新 | [專案總覽](27_PROJECT_OVERVIEW.md)：原 GPU README 完整內容與狀態紀錄 | `README.md` |
 | 28／2026-10-18 新增 | [本文件](28_DOCUMENTATION_INDEX.md)：中央目錄、閱讀路線、舊名與參考索引 | 本次新增 |
 | 29／2026-10-18 | [三相機完整成績與原因診斷](29_THREE_CAMERA_SCORED_ANALYSIS_20261018.md)：後續評分、完整配對、camera／Z probe 與消融 | 整理期間同步新增 |
+| 30／2026-10-19 | [RViz 結果回放與座標朝向](30_RVIZ_REPLAY_20261019.md)：既有 pose／PLY 重演、GUI、XYZ／RPY／TF 與逐幀操作 | 本次新增 |
+| 31／2026-10-19 | [回放播放與高度診斷](31_REPLAY_PLAYBACK_AND_HEIGHT_20261019.md)：連續播放 TF 丟雲修正、64 幀前後對照、保留原 pose 的高度／形狀分析 | 使用者回報後新增 |
+| 32／2026-10-19 | [Z 漂移與高度模式對照](32_HEIGHT_DRIFT_ANALYSIS_20261019.md)：累積回授、anchored 候選、12 組短段與負面結果；未替換最佳 | 使用者要求分析／修改後新增 |
+| 33／2026-10-19 | [來源／LiDAR 平面高度參考](33_SURFACE_HEIGHT_REFERENCE_20261019.md)：獨立細 map、surface／surface_tilt；含後續完整 Track1 1.15519 退步、兩條配對與下一步優化順序 | 接續 32 的幾何驗證 |
+| 34／2026-10-19 | [位置先驗與水平觀測更新](34_POSITION_PRIOR_AND_HORIZONTAL_UPDATE_20261019.md)：只換 XY 的 motion_rts 消融、GNSS 留段、864 筆短段、影像／立面與外參拒絕證據；joint 未接入 | 使用者授權下一波開發 |
+
+| 35／2026-10-19 | [motion_rts 新最佳與 GNSS 航向消融](35_MOTION_RTS_AND_GNSS_HEADING_20261019.md)：1.15008／0.30488、輸入 quaternion、假設獨立／替代因子及留段限制 | 後續分數與航向實驗 |
+
+| 36／2026-10-19 | [配準與融合升級](36_REGISTRATION_AND_FUSION_UPGRADE_20261019.md)：最佳完整輸出的方向／界線診斷、有界 GICP 864 筆短段、最小 GNSS／gyro 聯合原型與 24 留段，未升為最佳 | 使用者要求分析後即測試 |
+| 37／2026-10-19 | [細 map 水平觀測與跨幀聯合估計](37_HORIZONTAL_SURFEL_JOINT_20261019.md)：0.3 m surfel、frame／lag audit、可靠 map factors 接入 planar graph、拒絕保留與通用完整命令；尚無真實精度提升 | 使用者指定下一階段實作與驗證 |
+| 38／2026-10-20 | [來源剛體一致性與尺度](38_SOURCE_RIGIDITY_AND_SCALE_20261020.md)：最新 Track1 第 6 名快照、96 對 RGB／3D 跨幀檢查、共用尺度與 16 場景 map 消融；候選未通過，不替換最佳 | 使用者要求持續優化 Track1 |
+| 39／2026-10-20 | [向Track1 0.6推進：航向與原前相機stereo尺度](39_HEADING_AND_STEREO_SCALE_20261020.md)：turn_heading_rts／pose_yaw接入通用定位、原PLY的stereo固定尺度7.40426、分散短段與full指令；尚無本輪正式分數 | 使用者指定0.6目標，完整評分仍由使用者執行 |
 
 ## 開發脈絡
 
@@ -78,6 +91,7 @@
 | 想回答的問題 | 閱讀路線 |
 | --- | --- |
 | 從哪支程式開始？每一步讀什麼、輸出什麼？ | 01 → 08 |
+| 跑完後怎麼看 RViz、座標與朝向？ | [30｜回放操作與座標契約](30_RVIZ_REPLAY_20261019.md) |
 | 模板、舊 GPU 與現在方法差在哪？ | 07 → 03／05 → 06 → 12 → 15 |
 | Kalman filter 在哪？為什麼估 heading bias？ | 01 第 5 節 → 11 → 12 |
 | cost、先驗權重、normal 與四自由度如何推導？ | 01 第 8 節 → 15 → 07 的初版公式對照 |

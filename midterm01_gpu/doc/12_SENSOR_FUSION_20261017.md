@@ -55,7 +55,7 @@ RTS 是 Rauch–Tung–Striebel 離線後向平滑：Kalman forward pass 先累�
 
 以上為通用的初始實驗設定，**不是由真值或 Kaggle 校準出的共變異數**。完整品質門檻也會寫入每輪 `sensor_prior.json` 的 `sensor_fusion.config`；模型版本為 1。
 
-每輪仍用新的唯一 `outputs/runs/`，新增檔案如下：
+每輪仍用新的唯一 `outputs/run/`，新增檔案如下：
 
 | 檔案 | 用途 |
 | --- | --- |
@@ -85,7 +85,7 @@ RTS 是 Rauch–Tung–Striebel 離線後向平滑：Kalman forward pass 先累�
 
 兩條完整 bag 的 heading 區塊分別接受 47／48 個；這是離線感測器讀取，不代表處理了整條影像序列。另在全路線分散的 13 個 timestamp 作**感測器先驗診斷**，Track2 bias 約由 +3.644° 變到 −0.098°；沒有進行該 13 幀影像配準或全序列定位，也不能把這當誤差改善。
 
-證據：[本次驗證目錄](../outputs/runs/sensor_fusion_dev_4g2k458n)、[短測 JSON](../outputs/runs/sensor_fusion_dev_4g2k458n/smoke_summary.json)、[輸入診斷圖](../outputs/runs/sensor_fusion_dev_4g2k458n/heading_bias_samples.png)。各短測原始 run 路徑、參數、frame、來源快照、時間與完整 validation 由 JSON 連到原 run。Track1／Track2 快取條件不同，不作速度倍率比較；合成測試也不是競賽精度測試。
+證據：[本次驗證目錄](../outputs/run/track00_test_2610172152)、[短測 JSON](../outputs/run/track00_test_2610172152/smoke_summary.json)、[輸入診斷圖](../outputs/run/track00_test_2610172152/heading_bias_samples.png)。各短測原始 run 路徑、參數、frame、來源快照、時間與完整 validation 由 JSON 連到原 run。Track1／Track2 快取條件不同，不作速度倍率比較；合成測試也不是競賽精度測試。
 
 改進前的文字回報為 Track1 1.22369、Track2 0.56063；新截圖的 Track2 前最佳顯示 0.56083，差異與來源均保留在 [成績紀錄](14_HEADING_RTS_RESULTS_20261017.md)。本輪新最佳為 **1.16951／0.31967**，已另存新的 CSV／provenance，沒有覆寫舊結果。
 
@@ -103,7 +103,7 @@ python3 scripts/benchmark.py --track 1 --frames 3011 --profile sensor_guided --s
 python3 scripts/benchmark.py --track 2 --frames 3299 --profile sensor_guided --sensor-fusion heading_rts
 ```
 
-每次終端印出 `Run: /home/ricky/sdc_ros2/midterm01_gpu/outputs/runs/...`。先檢查該 run 的 `validation.json`：`returncode=0`、`output_complete_and_finite=true`、`validation_errors=[]`、正確幀數與 `sensor_fusion=heading_rts`。完整候選是同目錄的 **`diagnostic.csv`**，欄位 `idx,x,y,yaw`，yaw 為弧度；保留各自 run，不覆寫目前最佳答案。這兩份完整測試與 Kaggle 提交由使用者執行。
+每次終端印出 `Run: /home/ricky/sdc_ros2/midterm01_gpu/outputs/run/...`。先檢查該 run 的 `validation.json`：`returncode=0`、`output_complete_and_finite=true`、`validation_errors=[]`、正確幀數與 `sensor_fusion=heading_rts`。完整候選是同目錄的 **`diagnostic.csv`**，欄位 `idx,x,y,yaw`，yaw 為弧度；保留各自 run，不覆寫目前最佳答案。這兩份完整測試與 Kaggle 提交由使用者執行。
 
 欲獨立比較 GNSS 位置模型，再手動以相同命令改成 `--sensor-fusion motion_rts`；回舊版則用 `--sensor-fusion fixed`。不要在同一輪同時改其他配準權重；以實際完整結果、Kaggle 分數與對應 CSV SHA256 決定是否接受新版本。
 

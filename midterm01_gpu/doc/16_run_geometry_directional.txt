@@ -1,3 +1,62 @@
+# 2026-10-20 本輪更新：以Track1 0.6為目標；以下是新版本full命令，尚無本輪Kaggle分數。
+# 原前相機PLY以已知stereo baseline估共用尺度7.404260939740923，直接取代3，不是3再乘此值。
+# turn_heading_rts：原GNSS路徑對齊沿IMU方向積分的線性車速，保留motion XY與IMU roll/pitch。
+# 新尺度仍有跨場景／距離形變與motion prior依賴，實際效果以你的Kaggle評分確認。
+# 只改Python；本機現有C++／CUDA執行檔可直接用，不需重編。細節見doc/39_HEADING_AND_STEREO_SCALE_20261020.md。
+cd /home/ricky/sdc_ros2/midterm01_gpu
+bash scripts/dev.sh up
+
+python3 scripts/benchmark.py --track 1 --full \
+  --profile sensor_guided --sensor-fusion turn_heading_rts \
+  --cloud-source front --ply-scale 7.404260939740923 \
+  --geometry-mode directional --height-mode carry
+
+# Track1完成並核對validation後再執行Track2。
+python3 scripts/benchmark.py --track 2 --full \
+  --profile sensor_guided --sensor-fusion turn_heading_rts \
+  --cloud-source front --ply-scale 7.404260939740923 \
+  --geometry-mode directional --height-mode carry
+
+# 各自新建outputs/run/track01_full_YYMMDDHHmm／track02_full_YYMMDDHHmm，提交該run的diagnostic.csv。
+# validation.json須returncode=0、output_complete_and_finite=true、validation_errors=[]，Track1／2為3011／3299筆。
+# 單項理解：只換尺度可將fusion改回motion_rts；直接航向來源消融則用pose_yaw、ply-scale 3。
+# 這輪主命令不加surfel_joint，保留該分支原scale3／motion_rts契約。
+# 請選取需要的一條貼上，不要將保存多種用途與歷史命令的整份txt當shell腳本執行。
+
+# 以下為目前已評分最佳重現與先前操作說明；最佳仍是1.15008／0.30488。
+# 2026-10-20 使用者最新決定：Kaggle只取最佳成績，不另設「完整候選」資格。
+# 有可解釋的新改動、必要程式／來源／輸出檢查通過，即提供 full 命令供實際評分；
+# 本地尚未證明精度提升不阻擋 full。完整計算與提交仍由使用者手動執行。
+# 最新 doc/38 的工具目前只做來源診斷，尚未改變定位主流程；以下命令仍為目前最佳設定。
+# 候選 ply_scale=6.06515 未通過跨場景／map 檢查，不套進下列定位命令。
+# 本次僅新增 Python 研究工具，不需重編 C++。
+# 後續若更新 C++／CUDA，先執行 bash scripts/dev.sh build-workspace（Release）。
+# 目前最佳 motion_rts＋directional＋carry：1.15008／0.30488。
+# 以下 full 用於重現目前最佳；不是新的精度改善版本，現在無須重跑。
+# 完整測試由使用者手動執行；兩條依序執行，完成後先核對 validation。
+cd /home/ricky/sdc_ros2/midterm01_gpu
+bash scripts/dev.sh up
+python3 scripts/benchmark.py --track 1 --full --profile sensor_guided --sensor-fusion motion_rts --geometry-mode directional --height-mode carry
+python3 scripts/benchmark.py --track 2 --full --profile sensor_guided --sensor-fusion motion_rts --geometry-mode directional --height-mode carry
+# 已評分 CSV：outputs/run/track01_full_2610191750/diagnostic.csv、outputs/run/track02_full_2610191757/diagnostic.csv；新航向實驗見 doc/35_MOTION_RTS_AND_GNSS_HEADING_20261019.md。
+
+# 短段定位範例：原始 0-based idx 905 起算，共 48 幀，同目前最佳設定。
+# 這是主流程操作範例；單次短段完整不等於候選精度通過。
+python3 scripts/benchmark.py --track 1 --start-frame 905 --frames 48 --profile sensor_guided --sensor-fusion motion_rts --geometry-mode directional --height-mode carry
+# --full 與 --frames 互斥，full 不可搭配非零 --start-frame。
+# 省略 --full／--frames 只跑預設 50 幀；勿省略 profile／fusion／geometry 設定。
+# 每次新建 outputs/run/track01_full_YYMMDDHHmm 或 track01_test_YYMMDDHHmm，Track2用track02。
+# full 完成須檢查 validation.json：returncode=0、output_complete_and_finite=true、validation_errors=[]，
+# 且 Track1 3011／Track2 3299 資料列，才使用該 run 的 diagnostic.csv。
+
+# 最新來源研究工具：重現兩條 Track 的小型跨幀檢查，不產生提交 CSV。
+# 本輪已執行，現在也不需重複跑；--stride 2 為短間隔，14 為較長間隔。
+outputs/ml_runtime/venv/bin/python scripts/audit_source_rigidity.py --stride 2
+# 研究輸出為 outputs/run/track00_test_YYMMDDHHmm/rigidity/report.json。
+# 尺度／map 研究的完整用法、證據與限制見 doc/38_SOURCE_RIGIDITY_AND_SCALE_20261020.md。
+# 本檔同時保存多種用途與歷史命令，請選取需要的一條貼上，不要整檔當 shell 腳本執行。
+
+# 以下保留 2026-10-17 heading_rts 歷史命令與成績：
 # 幾何可信度／方向性權重候選：完整測試與 Kaggle 上傳由使用者執行。
 # Ubuntu 主機執行，每條完成後再執行下一條。
 # 本機已完成 GPU workspace Release 建置；移機或再改 C++ 才需先重編。
@@ -6,12 +65,12 @@ cd /home/ricky/sdc_ros2/midterm01_gpu
 python3 scripts/benchmark.py --track 1 --frames 3011 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
 python3 scripts/benchmark.py --track 2 --frames 3299 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
 
-# Run: 路徑的名稱包含 geometry_directional。
+# 現行 Run: 路徑統一為 outputs/run/trackNN_full/test_YYMMDDHHmm；算法記在 params／test_info。
 # 先看 validation.json：returncode=0、output_complete_and_finite=true、validation_errors=[]。
 # Track1 3011／Track2 3299 筆；候選為各自 run/diagnostic.csv。
 # geometry.csv／geometry_config.json 是幾何診斷，不是上傳檔。
 # 使用者已完整測試／提交：Track1 1.15275、Track2 0.30576；詳見 doc/17_GEOMETRY_RESULTS_20261017.md。
-# 新最佳 CSV 另存 outputs/latest_geometry_submission.txt 指向的目錄，舊 1.16951／0.31967 仍保留。
+# 新最佳 CSV 另存 outputs/run/track00_test_2610192315/historical_notes/latest_geometry_submission.txt 指向的目錄，舊 1.16951／0.31967 仍保留。
 
 # 要只看診斷、保留原配準權重：--geometry-mode diagnostic
 # 要回前一版已評分配準權重：--geometry-mode off

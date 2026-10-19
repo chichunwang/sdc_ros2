@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """用固定 rig baseline 三角化的稀疏點，估共享深度尺度；安裝平移不縮放。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import json
 from pathlib import Path
@@ -24,7 +25,7 @@ def depth_scale_consensus(records):
 def anchor_records(reconstruction):
     records = []
     for group in sorted(reconstruction.glob('track[12]_*')):
-        report = json.loads((group / 'report.json').read_text())
+        report = loads_saved_json((group / 'report.json').read_text())
         front = np.load(group / 'rig_0.npz')
         logs, details = [], []
         for tag, camera_id in (('fl', 1), ('fr', 2)):
@@ -54,8 +55,8 @@ def anchor_records(reconstruction):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--reconstruction', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--reconstruction', type=saved_path, required=True)
+    parser.add_argument('--output', type=saved_path, required=True)
     parser.add_argument('--budget', type=int, default=6000)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -77,9 +78,9 @@ def main():
     (args.output / 'scale_anchor.json').write_text(json.dumps(scale_report, indent=2, allow_nan=False) + '\n')
     manifests = {}
     for group in sorted(args.reconstruction.glob('track[12]_*')):
-        report = json.loads((group / 'report.json').read_text())
+        report = loads_saved_json((group / 'report.json').read_text())
         track, index, stamp = report['track'], report['original_idx'], report['timestamp_ns']
-        raw_rig = json.loads((args.reconstruction / f'rig_track{track}.json').read_text())['fixed_optical_front_from_camera']
+        raw_rig = loads_saved_json((args.reconstruction / f'rig_track{track}.json').read_text())['fixed_optical_front_from_camera']
         points, static, colors, ids, confidence = [], [], [], [], []
         for camera_id, tag in enumerate(('f', 'fl', 'fr')):
             saved = np.load(group / f'rig_{camera_id}.npz')

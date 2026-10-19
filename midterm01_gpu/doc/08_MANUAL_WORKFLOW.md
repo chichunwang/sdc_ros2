@@ -1,18 +1,26 @@
 # 08｜Midterm01 GPU 日常操作與結果讀取
 
-更新：2026-10-18。以下 Docker／benchmark／檔案指令都在 **Ubuntu 主機** 執行。後續使用 `midterm01_gpu`，CPU 程式／結果保留；完整 Track 測試由使用者手動執行，不因整理文件而重跑。
+更新：2026-10-20。以下 Docker／benchmark／檔案指令都在 **Ubuntu 主機** 執行。後續使用 `midterm01_gpu`，CPU 程式／結果保留；完整 Track 測試由使用者手動執行，不因整理文件而重跑。
+
+本輪以 Track1 0.6 為目標，新增 `--sensor-fusion turn_heading_rts`／`pose_yaw` 及原前相機 stereo 尺度實驗。新 full 命令位於 [16檔案最上方](16_run_geometry_directional.txt)，方法與實測見 [39](39_HEADING_AND_STEREO_SCALE_20261020.md)；目前可用 `turn_heading_rts --cloud-source front --ply-scale 7.404260939740923 --geometry-mode directional --height-mode carry` 進行完整評分。本次只改 Python，不需重編。本輪尚無新分數，不把0.6目標寫成已達成；原最佳仍是 motion_rts／scale3。
+
+2026-10-20 使用者最新決定：Kaggle 只取最佳成績，後續不另設「完整候選」資格。有可解釋的算法改動並完成必要程式、來源契約及輸出檢查後，即提供對應 full 命令由使用者實際評分；本地尚未證明精度提升不作為阻擋 full 的理由。短段與消融用於檢查機制及理解差異，實際分數與來源 SHA 保存於各次 run，較差結果也保留。[常用指令檔](16_run_geometry_directional.txt) 同步此約定。
+
+[38｜來源剛體與尺度研究](38_SOURCE_RIGIDITY_AND_SCALE_20261020.md) 的最新工具目前僅做來源診斷，沒有改變定位主流程；scale=6.06515 尚非已校準設定，surfel_joint 仍無可靠 factor。這些是已知證據及限制，不是新建一個需批准才能完整測試的流程。本次 Python 研究更新不需重編 C++；相同 CSV bytes 的既有版本無須為同一結果重算。
 
 第一次理解程式請先讀 [01｜架構圖與逐步流程](01_PROGRAM_FLOW.md)；歷史、日期與舊名對照見 [28｜文件目錄](28_DOCUMENTATION_INDEX.md)。
 
 開發以使用者理解與應用知識為目的：先觀察、提出假說、討論適合的模型／算法，再實作驗證；非必要不以特定 Track 調參刷分為主。必要調參需有可說明的依據，詳見 [學習與算法改進原則](19_DEVELOPMENT_PRINCIPLES.md)。
 
-感測器融合 `heading_rts`／`motion_rts` 已加入 benchmark，省略選項仍為舊 `fixed`。先前 `heading_rts + geometry off` 已評分 1.16951／0.31967，歷史版本見 [融合進步紀錄](14_HEADING_RTS_RESULTS_20261017.md)；`motion_rts` 仍只有短測。
+感測器融合 `heading_rts`／`motion_rts` 已加入 benchmark，省略選項仍為舊 `fixed`。先前 `heading_rts + geometry off` 已評分 1.16951／0.31967，歷史版本見 [融合進步紀錄](14_HEADING_RTS_RESULTS_20261017.md)；`motion_rts` 後續已完成並評分，見 [35](35_MOTION_RTS_AND_GNSS_HEADING_20261019.md)。
 
-目前最佳為 **heading_rts＋directional，1.15275／0.30576**，使用者已完成兩條完整測試／提交，見 [成績與最佳 CSV](17_GEOMETRY_RESULTS_20261017.md)。此版本有修改 C++，本機已完成 Release 建置；明確加 `--geometry-mode directional` 才啟用，預設仍為 off。完整手動命令見 [16_run_geometry_directional.txt](16_run_geometry_directional.txt)，設計見 [幾何說明](15_GEOMETRY_DIRECTIONAL_20261017.md)。每輪上傳檔仍是 `diagnostic.csv`，另產生的 `geometry.csv` 是診斷資料。
+目前最佳為 **motion_rts＋directional＋carry，1.15008／0.30488**，已評分來源在 `outputs/run/track01_full_2610191750`／`track02_full_2610191757`，分數記於各自test_info.json。原 heading_rts＋directional 的歷史成績為 1.15275／0.30576，使用者已完成兩條完整測試／提交，見 [成績與最佳 CSV](17_GEOMETRY_RESULTS_20261017.md)。此版本有修改 C++，本機已完成 Release 建置；明確加 `--geometry-mode directional` 才啟用，預設仍為 off。完整手動命令見 [16_run_geometry_directional.txt](16_run_geometry_directional.txt)，設計見 [幾何說明](15_GEOMETRY_DIRECTIONAL_20261017.md)。每輪上傳檔仍是 `diagnostic.csv`，另產生的 `geometry.csv` 是診斷資料。
 
 2026-10-18 新截圖：使用者 Team 3 為 Track1 第 4／Track2 第 2 名，最佳分數未變；非即時查榜。[現行算法與改進分析](20_CURRENT_ALGORITHM_AND_ACCURACY_20261018.md) 記錄排名差距、地圖弱方向與候選方法。最初的文件整理沒有更改算法；同日後續實作見下段。
 
 同日後續依使用者要求已完成三相機尺度／同步與短段對照，見 [實作與確認方法](22_THREE_CAMERA_IMPLEMENTATION_20261018.md)。Python 新介面不需重編 C++；三相機仍為實驗來源，沒有新完整測試或分數，日常推薦保持前相機。
+
+2026-10-19 水平 map／joint 新分支見 [37｜細 map 水平觀測與跨幀聯合估計](37_HORIZONTAL_SURFEL_JOINT_20261019.md)。`--horizontal-refinement surfel_joint` 已接入通用 benchmark，0.3 m surfel／空間與時間留出／raw GNSS＋gyro＋map 平面聯合模型已有實作與短測。真實 8 組短段尚無可靠 map factor，輸出保留原 bytes；不能宣稱精度進步。預設／最佳不變，完整候選命令及未確認外參見 37。
 
 ## 工作位置與編輯檔案
 
@@ -31,7 +39,17 @@ VS Code 開啟 `/home/ricky/sdc_ros2`。主機修改透過 bind mount 直接出�
 
 新版是 CUDA 最近鄰＋CPU robust 最佳化，並非全部計算都在 GPU。架構與原有／新增貢獻見 [演算法教學](07_ALGORITHM_WALKTHROUGH_20261017.md)。
 
+2026-10-19 高度分析新增 `--height-mode anchored`，約束相對 nominal sensor altitude 的總 offset，另寫 `height.csv`。12 個短段 run 顯示部分浮動減少，但貼合未一致改善，**仍為實驗選項；省略仍是 carry，最佳及推薦命令不變**。原因、負面結果與已算好候選的回放見 [32｜高度漂移](32_HEIGHT_DRIFT_ANALYSIS_20261019.md)。
+
+接續的 `--height-mode surface`／`surface_tilt` 改用來源與 LiDAR 的下方平面建立 reference；後者估計有角度上限、保留 sensor yaw 的 roll／pitch。不指定 `--height-map-cache` 時，會從原 map／本輪 prior 範圍在新 run 建立 0.3 m 高度 map；定位仍以 1 m voxel 讀原 map，`--map-cache` 維持可選。保護不通過會停止，不默認常數 GNSS 高度。完整通用指令與候選限制見 [33｜幾何高度與傾斜](33_SURFACE_HEIGHT_REFERENCE_20261019.md#通用完整定位從原始資料另存新-output)，仍不是新的已評分最佳。`--full` 可選取整條 Track，無須手填幀數；完整測試仍由使用者啟動。
+
+後續兩條 surface_tilt 完整已由使用者完成；Track1 回報 1.15519，較原最佳退步 0.2117%，Track2 此候選尚未回報分數。兩條本機格式／有限值通過，但不因此視為精度通過；[33 最新評分分析](33_SURFACE_HEIGHT_REFERENCE_20261019.md#完整評分失敗與下一步使用者後續回報) 保存證據與限制。高度候選未升為最佳；後續 motion_rts 最佳見 35。
+
+使用者再授權的下一波已完成位置先驗單項消融與水平觀測檢查，見 [34｜研究結果與通用完整候選命令](34_POSITION_PRIOR_AND_HORIZONTAL_UPDATE_20261019.md)。位置版 `--sensor-fusion motion_rts --geometry-mode directional --height-mode carry` 已由使用者完整評分為 1.15008／0.30488；原姿態／前相機／尺度保留，不啟用 surface_tilt 或新 joint factors。研究摘要固定在 `outputs/run/track00_test_2610191627/README.md`，不與已評分最佳或完整輸出入口混用。
+
 ## 啟動、建置與指定幀數
+
+新配準／融合實驗見 [36](36_REGISTRATION_AND_FUSION_UPGRADE_20261019.md)：`--geometry-mode gicp` 已建置及完成短測，尚無正式分數；最小 GNSS／gyro 聯合模型仍是研究工具，沒有 production fusion 選項。本輪未變更目前最佳／預設，不建議僅因方法名稱較新就執行完整提交。
 
 ```bash
 cd /home/ricky/sdc_ros2/midterm01_gpu
@@ -42,15 +60,15 @@ bash scripts/dev.sh cuda-check
 bash scripts/dev.sh build-workspace --packages-select cuda_ndt_backend localization
 
 # 每條命令完成後再執行下一條。
-python3 scripts/benchmark.py --track 1 --frames 50 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
-python3 scripts/benchmark.py --track 2 --frames 50 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
+python3 scripts/benchmark.py --track 1 --frames 50 --profile sensor_guided --sensor-fusion motion_rts --geometry-mode directional --height-mode carry
+python3 scripts/benchmark.py --track 2 --frames 50 --profile sensor_guided --sensor-fusion motion_rts --geometry-mode directional --height-mode carry
 ```
 
 完整測試由使用者手動執行：
 
 ```bash
-python3 scripts/benchmark.py --track 1 --frames 3011 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
-python3 scripts/benchmark.py --track 2 --frames 3299 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
+python3 scripts/benchmark.py --track 1 --full --profile sensor_guided --sensor-fusion motion_rts --geometry-mode directional --height-mode carry
+python3 scripts/benchmark.py --track 2 --full --profile sensor_guided --sensor-fusion motion_rts --geometry-mode directional --height-mode carry
 ```
 
 `--frames 1` 是單幀，`--frames 100` 是前 100 幀；benchmark 預設 50，只接受正整數。原 ROS 節點的 `max_frames=0` 與 benchmark 介面不同，不要在這裡用 `--frames 0`。省略 profile 會執行舊 `legacy`／`cuda_ndt`；新版務必帶 `--profile sensor_guided`，自動選 `cuda_robust_icp`。
@@ -60,9 +78,9 @@ benchmark 從唯一 run 的 `frames.csv` 產生感測器先驗，source／map �
 基本資料檢查若要保存報告：
 
 ```bash
-check_run="$(mktemp -d outputs/runs/data_check_XXXXXXXX)"
+check_run="$(mktemp -d outputs/run/data_check_XXXXXXXX)"
 bash scripts/dev.sh check-data --strict-count \
-  --output "/root/outputs/runs/$(basename "$check_run")/data_check.json"
+  --output "/root/outputs/run/$(basename "$check_run")/data_check.json"
 ```
 
 這只檢查必要檔、非空與第一層 PLY 數量；不證明時間、frame、幾何或精度。原始資料保持唯讀。
@@ -89,9 +107,9 @@ cd /home/ricky/sdc_ros2/midterm01_gpu
 python3 scripts/benchmark.py --track 1 --frames 24 --start-frame 1493 \
   --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional \
   --cloud-source mapanything --ply-scale 0.8712495367580543 \
-  --source-report outputs/runs/three_camera_dev_2610181055/calibration_track1_3/report.json \
-  --prior-run outputs/runs/track1_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_3011f_70rv9cj4 \
-  --map-cache outputs/runs/cuda_ndt_20261017_nlvdk4j5/cache_track1_leaf1.pcd
+  --source-report outputs/run/track00_test_2610181055/calibration_track1_3/report.json \
+  --prior-run outputs/run/track01_full_2610172233 \
+  --map-cache outputs/run/track00_test_2610171550/cache_track1_leaf1.pcd
 ```
 
 改成 `--cloud-source front --ply-scale 3` 並移除 `--source-report`，可用同一段、同一先驗作前相機對照。實驗條件、來源／尺度、原始 idx 及每個 PLY SHA256 見 `source_input.json`；`source_calibration.json` 保存當輪來源報告；`sensor_prior.json.reused_prior` 記錄先驗來源。
@@ -102,21 +120,27 @@ python3 scripts/benchmark.py --track 1 --frames 24 --start-frame 1493 \
 
 ## 在 VS Code 找結果
 
-終端印出的 `Run: /home/ricky/sdc_ros2/midterm01_gpu/outputs/runs/...` 是主機路徑，可直接在 VS Code 開啟。
-
-benchmark 新 run 保留 Track／profile／後端名稱，尾碼改用建立 run 當下的台北時間（`Asia/Taipei`），格式為 `YYMMDDHHmm`，不再附幀數或隨機字串。例如 2026-10-17 22:50 開始的 directional 測試：
+完整與短段測試都直接放在 `midterm01_gpu/outputs/run/`，沒有另外的最近／最佳分類：
 
 ```text
-track1_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_2610172250
+outputs/run/track01_full_2610192232/
+outputs/run/track02_full_2610192240/
+outputs/run/track01_test_YYMMDDHHmm/
+outputs/run/track02_test_YYMMDDHHmm/
+outputs/run/track00_test_YYMMDDHHmm/
 ```
 
-同一分鐘若同名已存在，依序加 `_2`、`_3`，以免覆寫結果。幀數仍記在 `params.json.max_frames`、`validation.json.expected_frames`；既有 run 名稱保留。
+`full` 是完整序列嘗試；`test` 是短段／研究。Track00是跨Track／環境測試。台北時間格式`YYMMDDHHmm`，同分鐘重名加`_0002`／`_0003`碰撞序號。`test_info.json`記錄測試種類、算法版本與已回報分數；參數、來源SHA、commit仍在同一目錄。不新增測試索引。
+
+每次終端印出的`Run:`就是實際目錄。提交用`diagnostic.csv`，回放用`result.txt`，先檢查`validation.json`；完整Track1／2應有3011／3299筆。新run不保證成功或分數改善。
+
+既有測試已搬進單一run。原始CSV／矩陣／manifest內容及SHA保持；舊metadata路徑僅在讀取時解析，避免改動證據。VS Code維持依名稱排序，doc按00_、01_…排列。
 
 容器路徑要依容器換成主機路徑：
 
 | 容器 | 容器內位置 | 主機 VS Code 對應位置 |
 | --- | --- | --- |
-| GPU `sdc_midterm01_gpu` | `/root/outputs/runs/<run>` | `/home/ricky/sdc_ros2/midterm01_gpu/outputs/runs/<run>` |
+| GPU `sdc_midterm01_gpu` | `/root/outputs/run/<run>` | `/home/ricky/sdc_ros2/midterm01_gpu/outputs/run/<run>` |
 | CPU `sdc_midterm01` | `/root/outputs/runs/<run>` | `/home/ricky/sdc_ros2/midterm01/outputs/runs/<run>` |
 
 相同 `/root/outputs` 不代表同一個目錄；在 GPU 容器找 CPU run 會找不到。主機 `/root` 也不是任一容器的 `/root`。掛載不確定時在主機查看：
@@ -145,7 +169,7 @@ docker inspect sdc_midterm01 sdc_midterm01_gpu \
 
 `pipeline_elapsed_seconds` 包含感測器前處理與 ROS 執行；`elapsed_seconds` 不含前處理。`timings.csv.ndt_ms` 新版記 CUDA 搜尋＋CPU 細修，不是 NDT。快取預設停用，要明確指定 GPU outputs 下的 `--map-cache` 並保留 SHA256／leaf sidecar；比較時間須固定快取與 Release 條件。
 
-目前最新已評分的 heading_rts＋directional 結果為 **Track1 1.15275／Track2 0.30576**，見 [完整進步紀錄與 CSV](17_GEOMETRY_RESULTS_20261017.md)。來源是使用者手動提交與本輪截圖，兩份本機 CSV 已核對 SHA256 並另外保存。前一版仍在 [heading_rts 歷史紀錄](14_HEADING_RTS_RESULTS_20261017.md)；地圖殘差或收斂不能代替 Kaggle 成績。
+目前最新已評分的 motion_rts＋directional＋carry 結果為 **Track1 1.15008／Track2 0.30488**，見 [35](35_MOTION_RTS_AND_GNSS_HEADING_20261019.md)；heading_rts 的歷史結果為 1.15275／0.30576，見 [完整進步紀錄與 CSV](17_GEOMETRY_RESULTS_20261017.md)。來源是使用者手動提交與本輪截圖，兩份本機 CSV 已核對 SHA256 並另外保存。前一版仍在 [heading_rts 歷史紀錄](14_HEADING_RTS_RESULTS_20261017.md)；地圖殘差或收斂不能代替 Kaggle 成績。
 
 ## CPU 結果看不到與 chmod
 
@@ -154,7 +178,7 @@ docker inspect sdc_midterm01 sdc_midterm01_gpu \
 ```bash
 # 在 Ubuntu 主機執行；sdc_midterm01 是 CPU 容器。
 docker exec --user root sdc_midterm01 chmod -R a+rX \
-  /root/outputs/runs/first_test_9vBOV7le/track1_n0_xLOSykY4
+  /root/outputs/run/first_test_9vBOV7le/track1_n0_xLOSykY4
 
 ls -lah /home/ricky/sdc_ros2/midterm01/outputs/runs/first_test_9vBOV7le/track1_n0_xLOSykY4
 wc -l /home/ricky/sdc_ros2/midterm01/outputs/runs/first_test_9vBOV7le/track1_n0_xLOSykY4/result.txt
@@ -180,7 +204,7 @@ sudo chmod -R a+rX \
 ```bash
 cd /home/ricky/sdc_ros2/midterm01_gpu
 cpu_txt=/home/ricky/sdc_ros2/midterm01/outputs/runs/first_test_9vBOV7le/track1_n0_xLOSykY4/result.txt
-csv_run="$(mktemp -d outputs/runs/cpu_track1_csv_XXXXXXXX)"
+csv_run="$(mktemp -d outputs/run/cpu_track1_csv_XXXXXXXX)"
 python3 workspace/src/localization/processing_codes/txt_to_idx_x_y_yaw.py \
   "$cpu_txt" "$csv_run/cpu_track1.csv"
 wc -l "$csv_run/cpu_track1.csv"
@@ -190,7 +214,17 @@ wc -l "$csv_run/cpu_track1.csv"
 
 ## 視覺化與歷史重現
 
-目前 GPU benchmark 不開 RViz；GPU dev.sh **沒有 `--gui`**，不要直接套用舊 CPU GUI 指令。現有 GPU Compose 未掛載 DISPLAY／X11，GUI 需另行配置並驗證。現有軌跡與疊圖可先看 [新版報告](06_SENSOR_GUIDED_20261017.md) 連結的 PNG。舊 `visualization.cpp` 是 Radar／PCD 介面，不是本次 RGB PLY 回放器。
+2026-10-19 已加入保存結果回放，直接從 Ubuntu 桌面主機終端執行：
+
+```bash
+cd /home/ricky/sdc_ros2/midterm01_gpu
+python3 scripts/replay.py --track 1
+# 關閉後可改成 --track 2；--paused 可先停在第一幀。
+```
+
+預設讀取已評分前相機最佳，無須重算定位。三相機可加 `--run outputs/run/track00_full_2610181301`。入口自動建立獨立 GUI 回放容器，配好 map 固定座標、完整姿態軸、yaw 箭頭、XYZ／RPY 文字；終端空白鍵暫停、n／b 逐幀、q 結束，另存座標 CSV。完整契約、命令與實測見 [30｜RViz 回放](30_RVIZ_REPLAY_20261019.md)。
+
+GPU benchmark 本身仍不開 RViz；`dev.sh` 仍沒有 `--gui`，GPU Compose 也沒有 DISPLAY／X11 掛載。回放使用獨立視窗容器，不需為 GUI 重建原容器。舊 `visualization.cpp` 仍是 Radar／PCD 介面，不是本次 RGB PLY 回放器。
 
 只有比較舊方法時才使用以下前 50 幀命令：
 
@@ -210,11 +244,11 @@ CPU／D2D 是不同配準實作，前一估計不是 ground truth。完整新版
 
 ```bash
 cd /home/ricky/sdc_ros2/midterm01_gpu
-RIG_RUN="$(python3 -c 'import sys; from pathlib import Path; sys.path.insert(0,"scripts/accuracy"); from benchmark import create_run_directory; print(create_run_directory(Path("outputs/runs"),"calibrated_rig_manual"))')"
-RIG_P1=outputs/runs/track1_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_3011f_70rv9cj4
-RIG_P2=outputs/runs/track2_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_3299f_7o_atg6_
-RIG_M1=outputs/runs/cuda_ndt_20261017_nlvdk4j5/cache_track1_leaf1.pcd
-RIG_M2=outputs/runs/three_camera_dev_2610181055/cache_track2_leaf1.pcd
+RIG_RUN="$(python3 -c 'import sys; from pathlib import Path; sys.path.insert(0,"scripts/accuracy"); from benchmark import create_run_directory; print(create_run_directory(Path("outputs/run"),"calibrated_rig_manual"))')"
+RIG_P1=outputs/run/track01_full_2610172233
+RIG_P2=outputs/run/track02_full_2610172238
+RIG_M1=outputs/run/track00_test_2610171550/cache_track1_leaf1.pcd
+RIG_M2=outputs/run/track00_test_2610181055/cache_track2_leaf1.pcd
 RIG_PY=outputs/ml_runtime/venv/bin/python
 
 # 預設 8 groups、24 張原始影像；最多接受 24 groups，不會啟動整條 Track。
@@ -280,7 +314,7 @@ bash scripts/run_three_camera_full.sh
 終端印出唯一 `Run:`。完成後 `<Run>/result_1.csv`／`result_2.csv` 分別應有表頭加 3011／3299 筆；不是舊 merged PLY，也不會自動提交。中斷後續跑同一個 run：
 
 ```bash
-bash scripts/run_three_camera_full.sh --resume outputs/runs/three_camera_full_YYMMDDHHmm
+bash scripts/run_three_camera_full.sh --resume outputs/run/YYMMDDHHmm
 ```
 
 預設不存 dense depth／rectified JPG；保留逐幀選取點雲、camera labels/confidence、固定外參／運動 pose、時間與來源 hash。會核對模型／程式／套件／校正／原始影像與已完成檔案，拒絕混用不同設定。完整開頭／結尾的 header 比原 prior 範圍多出約 10–14 ms，以明確上限 30 ms 的等速度／等角速度外推並記錄，不靜默 clamp；原定位 prior 不變。
@@ -294,7 +328,7 @@ bash scripts/run_three_camera_full.sh --resume outputs/runs/three_camera_full_YY
 ```bash
 cd /home/ricky/sdc_ros2/midterm01_gpu
 bash scripts/run_three_camera_full_fast.sh --resume \
-  outputs/runs/three_camera_full_fast_imported_2610181301
+  outputs/run/track00_full_2610181301
 ```
 
 下一輪從頭開始的手動入口：
@@ -305,15 +339,15 @@ bash scripts/run_three_camera_full_fast.sh --dry-run
 bash scripts/run_three_camera_full_fast.sh
 ```
 
-若要接續已停止的**原版** run，先執行一次匯入工具；它只複製經核對的已提交幀，不啟動完整重建。使用者 2026-10-18 的舊 run 為 `outputs/runs/three_camera_full_2610181155`，停止時 Track1 已保存 2487 幀。
+若要接續已停止的**原版** run，先執行一次匯入工具；它只複製經核對的已提交幀，不啟動完整重建。使用者 2026-10-18 的舊 run 為 `outputs/run/track00_full_2610181155`，停止時 Track1 已保存 2487 幀。
 
 ```bash
 outputs/ml_runtime/venv/bin/python scripts/migrate_rig_fast.py \
-  outputs/runs/three_camera_full_2610181155
+  outputs/run/track00_full_2610181155
 
 # 將下列目錄換成匯入工具印出的新 Run；後續中斷也使用同一指令。
 bash scripts/run_three_camera_full_fast.sh --resume \
-  outputs/runs/three_camera_full_fast_imported_YYMMDDHHmm
+  outputs/run/YYMMDDHHmm
 ```
 
 不能直接把原版目錄交給加速版 `--resume`：新版另外核對 execution 的程式 hash、backend、精度、chunk 及匯入紀錄。原版已完成幀不重算；尚未完成幀用加速版，之後照原流程定位 Track1，再重建／定位 Track2。結果仍是實驗候選，尺度驗證未通過，沒有新增精度或 Kaggle 分數證據。

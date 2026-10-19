@@ -12,7 +12,7 @@ case "${1:-}" in
   *) echo '用法：bash scripts/run_three_camera_full.sh [--dry-run | --resume <run 目錄>]' >&2; exit 2 ;;
 esac
 RIG_PY="$RIG_PROJECT/outputs/ml_runtime/venv/bin/python"
-RIG_CANDIDATE="$RIG_PROJECT/outputs/runs/rig_bias_validation_2610181142/candidate_final.json"
+RIG_CANDIDATE="$RIG_PROJECT/outputs/run/track00_test_2610181142/candidate_final.json"
 if [[ "$RIG_DRY" == 0 ]]; then
   [[ "$(docker inspect -f '{{.State.Running}}' sdc_midterm01_gpu)" == true ]] || {
     echo '請先執行 bash scripts/dev.sh up 啟動 GPU 容器。' >&2; exit 2;
@@ -22,13 +22,13 @@ if [[ "$RIG_DRY" == 0 ]]; then
   fi
 fi
 if [[ "$RIG_DRY" == 1 ]]; then
-  RIG_RUN="$RIG_PROJECT/outputs/runs/three_camera_full_preview"
+  RIG_RUN="$RIG_PROJECT/outputs/run/three_camera_full_preview"
 elif [[ -n "$RIG_RESUME" ]]; then
   RIG_RUN="$(realpath "$RIG_RESUME")"
   [[ -f "$RIG_RUN/candidate.json" ]] || { echo '找不到該 run 的 candidate.json' >&2; exit 2; }
   RIG_CANDIDATE="$RIG_RUN/candidate.json"
 else
-  RIG_RUN="$(python3 -c 'from pathlib import Path; import sys; sys.path.insert(0,"scripts/accuracy"); from benchmark import create_run_directory; print(create_run_directory(Path("outputs/runs").resolve(),"three_camera_full"))')"
+  RIG_RUN="$(python3 -c 'from pathlib import Path; import sys; sys.path.insert(0,"scripts/accuracy"); from benchmark import create_run_directory; print(create_run_directory(Path("outputs/run").resolve(),"three_camera_full",full=True))')"
   cp "$RIG_CANDIDATE" "$RIG_RUN/candidate.json"
   RIG_CANDIDATE="$RIG_RUN/candidate.json"
 fi
@@ -37,12 +37,12 @@ echo '這是驗證未通過尺度的三相機實驗候選；既有最佳 CSV 不
 for RIG_TRACK in 1 2; do
   if [[ "$RIG_TRACK" == 1 ]]; then
     RIG_COUNT=3011
-    RIG_PRIOR="$RIG_PROJECT/outputs/runs/track1_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_3011f_70rv9cj4"
-    RIG_MAP="$RIG_PROJECT/outputs/runs/cuda_ndt_20261017_nlvdk4j5/cache_track1_leaf1.pcd"
+    RIG_PRIOR="$RIG_PROJECT/outputs/run/track01_full_2610172233"
+    RIG_MAP="$RIG_PROJECT/outputs/run/track00_test_2610171550/cache_track1_leaf1.pcd"
   else
     RIG_COUNT=3299
-    RIG_PRIOR="$RIG_PROJECT/outputs/runs/track2_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_3299f_7o_atg6_"
-    RIG_MAP="$RIG_PROJECT/outputs/runs/three_camera_dev_2610181055/cache_track2_leaf1.pcd"
+    RIG_PRIOR="$RIG_PROJECT/outputs/run/track02_full_2610172238"
+    RIG_MAP="$RIG_PROJECT/outputs/run/track00_test_2610181055/cache_track2_leaf1.pcd"
   fi
   RIG_ARGS=(--track "$RIG_TRACK" --frames "$RIG_COUNT" --data-root "$RIG_PROJECT/../midterm01/data"
     --checkpoint "$RIG_PROJECT/outputs/ml_runtime/checkpoint" --model-repo "$RIG_PROJECT/outputs/ml_runtime/map-anything"

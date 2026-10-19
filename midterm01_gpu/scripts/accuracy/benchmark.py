@@ -16,63 +16,113 @@ from zoneinfo import ZoneInfo
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from output_layout import loads_saved_json, saved_path
 from three_camera_source import load_index, load_reconstruction, reuse_priors, sha256
 
 if __package__:
     from .geometry_report import summarize_guided_updates, validate_geometry
+    from .surface_cache import prepare_height_map
 else:
     from geometry_report import summarize_guided_updates, validate_geometry
+    from surface_cache import prepare_height_map
 
 
 def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def create_run_directory(directory, prefix):
-    """以台北時間命名；同分鐘重複執行時遞增序號，保留既有結果。"""
-    stamp = datetime.datetime.now(ZoneInfo("Asia/Taipei")).strftime("%y%m%d%H%M")
-    name = f"{prefix}_{stamp}"
+def create_run_directory(directory, prefix, *, track=None, full=False):
+    """單一run入口；名稱只含Track、full/test與日期時間，算法版本放目錄內。"""
+    created = datetime.datetime.now(ZoneInfo("Asia/Taipei"))
+    stamp = created.strftime("%y%m%d%H%M")
+    inferred = re.match(r"track0?([12])(?:_|$)", prefix)
+    track = int(inferred[1]) if track is None and inferred else (0 if track is None else track)
+    if track not in (0,1,2): raise ValueError('Track must be 0 (shared), 1 or 2')
+    name = f"track{track:02d}_{'full' if full else 'test'}_{stamp}"
     directory.mkdir(parents=True, exist_ok=True)
     sequence = 1
     while True:
-        run = directory / (name if sequence == 1 else f"{name}_{sequence}")
+        run = directory / (name if sequence == 1 else f"{name}_{sequence:04d}")
         try:
             run.mkdir()
-            return run
         except FileExistsError:
             sequence += 1
+            continue
+        write_json(run/'test_info.json', {
+            'created_at': created.isoformat(), 'timezone': 'Asia/Taipei',
+            'track': track, 'scope': 'full' if full else 'test', 'test_kind': prefix,
+            'same_minute_sequence': sequence,
+            'version_details': 'params.json, pipeline_source_sha256.json, git_commit.txt and worktree.patch when present',
+        })
+        return run
+
+
+def print_run_outcome(run, summary, *, full_attempt):
+    """Keep integrity success separate from whether refinement changed the CSV."""
+    complete = summary['output_complete_and_finite']
+    if full_attempt:
+        print(f"{'定位完成' if complete else '檢查未通過'}: {run}", flush=True)
+    if not complete:
+        return
+    report = summary.get('horizontal_diagnostics_not_accuracy')
+    csv_changed = True
+    if report:
+        # Compare the serialized submission, rather than treating 'applied' as
+        # proof of changed submission bytes (e.g. a pose-only change).
+        csv_changed = report['csv_sha256'] != report['base_csv_sha256']
+        executed = report.get('joint_estimation_executed', 'solver' in report)
+        print(f"水平 map factors: {report['accepted_map_factors']}；聯合求解: {executed}；實際套用: {report['applied']}", flush=True)
+        if csv_changed:
+            print('本輪 CSV 已改變；精度是否提升仍需另行驗證。', flush=True)
+        else:
+            print('本輪未產生新的提交內容：CSV 與 base/diagnostic.csv 的 SHA256 相同，無須重複提交。', flush=True)
+        print(f"原因: {report['reason']}；詳見 horizontal/report.json", flush=True)
+    if full_attempt:
+        label = '提交檔' if csv_changed else '相同內容的 CSV'
+        print(f'{label}: diagnostic.csv；回放矩陣: result.txt；檢查報告: validation.json', flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--track", type=int, choices=(1, 2), default=1)
-    parser.add_argument("--frames", type=int, default=50)
+    frame_selection = parser.add_mutually_exclusive_group()
+    frame_selection.add_argument("--frames", type=int, default=50)
+    frame_selection.add_argument("--full", action="store_true", help="Process all timestamped frames in the Track; mutually exclusive with --frames, requires --start-frame 0")
     parser.add_argument("--start-frame", type=int, default=0, help="Original 0-based frame index; short-window diagnosis, not a complete submission")
     parser.add_argument("--cloud-source", choices=("front", "mapanything", "reconstruction"), default="front")
     parser.add_argument("--ply-scale", type=float, help="front default=3; experimental sources require explicit scale")
-    parser.add_argument("--source-report", type=Path, help="Required experimental source report with matching Track/frame/hash contract")
-    parser.add_argument("--prior-run", type=Path, help="Reuse exact sensor priors from an existing same-Track/fusion GPU run")
+    parser.add_argument("--source-report", type=saved_path, help="Required experimental source report with matching Track/frame/hash contract")
+    parser.add_argument("--prior-run", type=saved_path, help="Reuse exact sensor priors from an existing same-Track/fusion GPU run")
     parser.add_argument("--backend", choices=("cuda_ndt", "pcl_ndt", "cuda_robust_icp"), help="default legacy=cuda_ndt; sensor_guided=cuda_robust_icp")
     parser.add_argument("--cuda-mode", choices=("P2D", "D2D"), default="D2D")
     parser.add_argument("--profile", choices=("legacy", "sensor_guided"), default="legacy", help="legacy: previous-pose NDT; sensor_guided: GNSS/IMU plus bounded robust map refinement")
-    parser.add_argument("--sensor-fusion", choices=("fixed", "heading_rts", "motion_rts"), default="fixed",
-                        help="fixed: previous fixed heading bias; heading_rts: gated GNSS/IMU bias smoother; motion_rts: also smooth raw GNSS position/velocity")
+    parser.add_argument("--sensor-fusion", choices=("fixed", "heading_rts", "motion_rts", "pose_heading_rts", "independent_heading_rts", "pose_yaw", "turn_heading_rts"), default="fixed",
+                        help="motion_rts: scored prior; turn_heading_rts: integrated IMU direction / GNSS path heading fit; pose_yaw: directly replace yaw by supplied GNSS Pose yaw (unverified source); previous experimental heading modes retained")
+    parser.add_argument("--height-mode", choices=("carry", "anchored", "surface", "surface_tilt"), default="carry",
+                        help="carry: scored incremental Z; anchored: nominal sensor altitude; surface/surface_tilt: paired lower-surface reference (front/ML venv required; height map built in new run). Alternatives are experimental")
+    parser.add_argument("--horizontal-refinement", choices=("none", "surfel_joint"), default="none",
+                        help="Experimental fine-map XY/yaw factors + GNSS/gyro batch graph; requires front/motion_rts/directional/carry; insufficient evidence preserves base bytes")
+    parser.add_argument("--horizontal-map-cache", type=saved_path, help="Optional verified fine horizontal map under outputs for paired short tests; otherwise built in the new run")
     parser.add_argument("--fusion-gnss-std", type=float, default=.3, help="fusion model GNSS std, m; not calibrated accuracy")
     parser.add_argument("--fusion-xy-accel-psd", type=float, default=4., help="motion_rts acceleration PSD, m^2/s^3")
     parser.add_argument("--fusion-bias-rw-deg", type=float, default=.12, help="bias random walk std, deg/sqrt(s)")
     parser.add_argument("--fusion-course-window", type=float, default=2., help="GNSS course block length, s (>=1)")
-    parser.add_argument("--geometry-mode", choices=("off", "diagnostic", "directional"), default="off",
-                        help="off: scored point-to-point; diagnostic: same objective plus geometry CSV; directional: quality-weighted anisotropic map residual")
+    parser.add_argument("--fusion-pose-heading-std-deg", type=float, default=3., help="experimental GNSS orientation block std floor, degrees; uncalibrated")
+    parser.add_argument("--geometry-mode", choices=("off", "diagnostic", "directional", "gicp"), default="off",
+                        help="off: point-to-point; diagnostic: unchanged objective; directional: scored map-normal metric; gicp: experimental symmetric source/map surface covariance")
     parser.add_argument("--geometry-normal-gain", type=float, default=2.)
     parser.add_argument("--geometry-tangent-weight", type=float, default=.05)
     parser.add_argument("--resolution", type=float, help="NDT voxel resolution; default legacy=8 m, sensor_guided=2 m")
-    parser.add_argument("--compare", type=Path, help="Optional reference result.txt; differences are not ground-truth errors.")
-    parser.add_argument("--map-cache", type=Path, help="Explicit derived map cache under GPU outputs; only reuse for the same Track/map/voxel. Disabled by default.")
+    parser.add_argument("--compare", type=saved_path, help="Optional reference result.txt; differences are not ground-truth errors.")
+    parser.add_argument("--map-cache", type=saved_path, help="Explicit derived map cache under GPU outputs; only reuse for the same Track/map/voxel. Disabled by default.")
+    parser.add_argument("--height-map-cache", type=saved_path, help="Surface model only: optionally reuse a verified 0.3 m binary XYZ cache under GPU outputs; otherwise build one in the new run")
     args = parser.parse_args()
     if args.backend is None:
         args.backend = "cuda_robust_icp" if args.profile == "sensor_guided" else "cuda_ndt"
     if args.start_frame < 0:
         parser.error("--start-frame must be nonnegative")
+    if args.full and args.start_frame:
+        parser.error("--full cannot combine with --start-frame")
     if args.ply_scale is None:
         if args.cloud_source != "front":
             parser.error("Experimental clouds require explicit --ply-scale; do not inherit front-camera scale 3")
@@ -93,14 +143,29 @@ def main():
         parser.error("--backend cuda_robust_icp requires --profile sensor_guided")
     if args.sensor_fusion != "fixed" and args.profile != "sensor_guided":
         parser.error("--sensor-fusion requires --profile sensor_guided")
+    if args.height_mode != "carry" and (args.profile != "sensor_guided" or args.backend != "cuda_robust_icp"):
+        parser.error("--height-mode anchored/surface requires sensor_guided/cuda_robust_icp")
+    if args.height_mode.startswith('surface') and args.cloud_source != "front":
+        parser.error("--height-mode surface/surface_tilt requires --cloud-source front")
+    if not args.height_mode.startswith('surface') and args.height_map_cache:
+        parser.error('--height-map-cache requires --height-mode surface')
     if args.geometry_mode != "off" and (args.profile != "sensor_guided" or args.backend != "cuda_robust_icp"):
         parser.error("Geometry requires --profile sensor_guided --backend cuda_robust_icp")
     if (not math.isfinite(args.geometry_normal_gain) or not 0 < args.geometry_normal_gain <= 10
             or not math.isfinite(args.geometry_tangent_weight) or not 0 <= args.geometry_tangent_weight <= 1):
         parser.error("Geometry gain must be in (0,10]; tangent weight in [0,1]")
+    if args.geometry_mode == "gicp" and args.geometry_tangent_weight <= 0:
+        parser.error("GICP requires positive --geometry-tangent-weight for invertible surface covariance")
+    if args.horizontal_refinement != "none" and (args.profile != "sensor_guided" or args.backend != "cuda_robust_icp"
+            or args.sensor_fusion != "motion_rts" or args.geometry_mode != "directional"
+            or args.height_mode != "carry" or args.cloud_source != "front" or args.ply_scale != 3.):
+        parser.error("surfel_joint requires front/scale3/sensor_guided/cuda_robust_icp/motion_rts/directional/carry")
+    if args.horizontal_map_cache and args.horizontal_refinement == "none":
+        parser.error("--horizontal-map-cache requires --horizontal-refinement surfel_joint")
     fusion_settings = {"fusion": args.sensor_fusion, "gnss-std": args.fusion_gnss_std,
                        "xy-accel-psd": args.fusion_xy_accel_psd, "bias-rw-deg": args.fusion_bias_rw_deg,
-                       "course-window": args.fusion_course_window}
+                       "course-window": args.fusion_course_window,
+                       "pose-heading-std-deg": args.fusion_pose_heading_std_deg}
     if (not all(math.isfinite(value) and value > 0 for key, value in fusion_settings.items() if key != "fusion")
             or args.fusion_course_window < 1):
         parser.error("Fusion parameters must be finite and positive; course window >= 1 second")
@@ -111,6 +176,23 @@ def main():
     if args.compare and not args.compare.is_file():
         parser.error("--compare must name an existing result.txt")
     root = Path(__file__).resolve().parents[2]
+    surface_python = root / 'outputs/ml_runtime/venv/bin/python'
+    if (args.height_mode.startswith('surface') or args.horizontal_refinement != 'none') and not surface_python.is_file():
+        parser.error('Surface/horizontal preprocessing requires the existing isolated ML venv; ROS Python is not modified')
+    if args.height_map_cache:
+        try:
+            args.height_map_cache.resolve().relative_to((root/'outputs').resolve())
+        except ValueError:
+            parser.error('--height-map-cache must be inside GPU outputs')
+        if not args.height_map_cache.is_file():
+            parser.error('--height-map-cache must name an existing verified binary XYZ cache')
+    if args.horizontal_map_cache:
+        try:
+            args.horizontal_map_cache.resolve().relative_to((root/'outputs').resolve())
+        except ValueError:
+            parser.error('--horizontal-map-cache must be inside GPU outputs')
+        if not args.horizontal_map_cache.is_file():
+            parser.error('--horizontal-map-cache must name an existing verified fine map')
     cache_file = ""
     if args.map_cache:
         try:
@@ -119,7 +201,7 @@ def main():
             parser.error("--map-cache must be inside this GPU environment's outputs directory")
         args.map_cache.resolve().parent.mkdir(parents=True, exist_ok=True)
         cache_file = "/root/outputs/" + relative_cache.as_posix()
-    compose = json.loads(subprocess.check_output(["bash", str(root / "scripts/dev.sh"), "config", "--format", "json"], text=True))
+    compose = loads_saved_json(subprocess.check_output(["bash", str(root / "scripts/dev.sh"), "config", "--format", "json"], text=True))
     service = compose["services"]["midterm01_gpu"]
     container = service["container_name"]
     if subprocess.run(["docker", "exec", container, "pgrep", "-x", "localization"], capture_output=True).returncode == 0:
@@ -136,7 +218,7 @@ def main():
         identity = {"track": args.track, "source_map": str(source_map.resolve()),
                     "map_sha256": fingerprint.hexdigest(), "map_voxel_leaf_size": 1.0}
         sidecar = args.map_cache.with_suffix(args.map_cache.suffix + ".json")
-        if cache_hit and (not sidecar.exists() or json.loads(sidecar.read_text()) != identity):
+        if cache_hit and (not sidecar.exists() or loads_saved_json(sidecar.read_text()) != identity):
             parser.error("Map cache identity is missing or mismatches the Track/map/leaf; choose a new cache path.")
         if not cache_hit:
             write_json(sidecar, identity)
@@ -146,6 +228,10 @@ def main():
         if path.is_file() and path.suffix.lower() == ".ply" and match and int(match[1]) > 0:
             files.append((int(match[1]), path.name))
     files.sort()
+    if args.full:
+        if not files:
+            parser.error('No timestamped PLY frames available for --full')
+        args.frames = len(files)
     source_relative = Path(f"Track{args.track}/raw_ply")
     source_host = data_root / source_relative
     source_container = "/root/data/" + source_relative.as_posix()
@@ -153,7 +239,7 @@ def main():
                        "reference_time": "front_camera_bag_timestamp", "per_camera_deskew_applied": False}
     if args.cloud_source == "mapanything":
         source_root, index, contract = load_index(data_root, args.track, [s for s, _ in files])
-        source_report = json.loads(args.source_report.read_text())
+        source_report = loads_saved_json(args.source_report.read_text())
         if source_report.get("track") != args.track or source_report.get("source_contract") != contract:
             parser.error("Source calibration report Track/index/frame identity mismatch")
         source_relative = source_root.relative_to(data_root)
@@ -184,11 +270,18 @@ def main():
         profile_prefix += args.sensor_fusion + "_"
     if args.geometry_mode != "off":
         profile_prefix += "geometry_" + args.geometry_mode + "_"
+    if args.height_mode != "carry":
+        profile_prefix += "height_" + args.height_mode + "_"
+    if args.horizontal_refinement != "none":
+        profile_prefix += args.horizontal_refinement + "_"
     if args.cloud_source != "front" or args.start_frame or args.ply_scale != 3.0:
         profile_prefix += f"{args.cloud_source}_s{args.ply_scale:g}_from{args.start_frame}_"
-    run = create_run_directory(root / "outputs/runs", f"track{args.track}_{profile_prefix}{args.backend}_{args.cuda_mode.lower()}")
+    full_attempt = args.start_frame == 0 and args.frames == (3011 if args.track == 1 else 3299)
+    run = create_run_directory(root / "outputs/run", f"track{args.track}_{profile_prefix}{args.backend}_{args.cuda_mode.lower()}",
+                               track=args.track, full=full_attempt)
     print(f"Run: {run}", flush=True)
-    container_run = "/root/outputs/runs/" + run.name
+    container_run = "/root/outputs/run/" + run.name
+    write_json(run/'benchmark_command.json', [sys.executable, str(root/'scripts/benchmark.py'), *sys.argv[1:]])
     source_metadata["selected_frames"] = [
         {"original_idx": args.start_frame + i, "timestamp_ns": stamp, "filename": name,
          "sha256": sha256(source_host / name)} for i, (stamp, name) in enumerate(files)]
@@ -217,6 +310,8 @@ def main():
         "cuda_translation_epsilon": 0.01, "cuda_rotation_epsilon": 0.002,
         "localization_profile": args.profile,
         "sensor_prior_file": container_run + "/sensor_prior.csv" if args.profile == "sensor_guided" else "",
+        "sensor_height_mode": args.height_mode,
+        "sensor_height_reference_file": container_run + '/height_reference.csv' if args.height_mode.startswith('surface') else '',
         "geometry_mode": args.geometry_mode, "geometry_normal_gain": args.geometry_normal_gain,
         "geometry_tangent_weight": args.geometry_tangent_weight,
     }
@@ -228,7 +323,17 @@ def main():
         writer.writerow(["idx", "timestamp_ns", "filename"])
         writer.writerows((i, stamp, Path(name).name) for i, (stamp, name) in enumerate(files))
     sensor_preparation_seconds = 0.0
-    pipeline_sources = (Path(__file__), root / "scripts/prepare_sensor_prior.py", root / "scripts/sensor_fusion.py", Path(__file__).with_name("geometry_report.py"), root / "scripts/three_camera_source.py")
+    pipeline_sources = (Path(__file__), root / "scripts/prepare_sensor_prior.py", root / "scripts/sensor_fusion.py", Path(__file__).with_name("geometry_report.py"), root / "scripts/three_camera_source.py",
+                        root / 'scripts/prepare_surface_height.py', root / 'scripts/analyze_height_modes.py', root / 'scripts/three_camera_calibration.py', Path(__file__).with_name('surface_cache.py'), root/'scripts/output_layout.py')
+    pipeline_sources += tuple(root/'scripts'/name for name in (
+        'refine_horizontal_joint.py', 'horizontal_surfel.py', 'surfel_joint.py', 'kinematic_graph.py',
+        'audit_sensor_contract.py', 'audit_input_heading.py', 'prior_ablation.py', 'accuracy/horizontal_cache.py',
+        'direct_heading.py'))
+    if args.sensor_fusion == 'turn_heading_rts':
+        pipeline_sources += (root/'scripts/turn_heading.py',)
+    write_json(run/'horizontal_settings.json', {'mode':args.horizontal_refinement,
+        'explicit_map_cache':str(args.horizontal_map_cache.resolve()) if args.horizontal_map_cache else None,
+        'experimental':args.horizontal_refinement != 'none'})
     write_json(run / "pipeline_source_sha256.json", {
         str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in pipeline_sources
     })
@@ -254,6 +359,7 @@ def main():
         sensor_preparation_seconds = time.perf_counter() - prep_start
     if args.profile == "sensor_guided" and not args.prior_run:
         prep_start = time.perf_counter()
+        print('Preparing GNSS/IMU priors from the raw bag; see sensor_preparation.log', flush=True)
         prep = ["docker", "exec", container, "bash", "-c",
                 "source /opt/ros/humble/setup.bash && exec python3 /root/scripts/prepare_sensor_prior.py "
                 f"--bag /root/data/Track{args.track}/Track{args.track}.db3 --frames "
@@ -269,6 +375,44 @@ def main():
                        "sensor_preparation_seconds": sensor_preparation_seconds,
                        "output_complete_and_finite": False, "validation_errors": ["Sensor preparation failed; inspect sensor_preparation.log"]})
             return 1
+    height_map_preparation_seconds = 0.
+    height_preparation_seconds = 0.
+    if args.height_mode.startswith('surface'):
+        height_map_source = 'explicit_reuse' if args.height_map_cache else 'built_from_raw_map_in_current_run'
+        if not args.height_map_cache:
+            prep_start = time.perf_counter()
+            print('Building a new 0.3 m height map; see height_map_preparation.log', flush=True)
+            try:
+                args.height_map_cache = prepare_height_map(run, data_root, args.track, container)
+            except (OSError, ValueError, KeyError, RuntimeError) as error:
+                write_json(run/'validation.json', {'track':args.track, 'height_mode':args.height_mode,
+                    'returncode':1, 'output_complete_and_finite':False,
+                    'height_map_preparation_seconds':time.perf_counter()-prep_start,
+                    'validation_errors':[str(error)]})
+                print(f'Height map preparation failed: {error}', flush=True)
+                return 1
+            height_map_preparation_seconds = time.perf_counter()-prep_start
+        try:
+            write_json(run/'height_map_input.json', {'mode':height_map_source,
+                'path':str(args.height_map_cache.resolve()), 'sha256':sha256(args.height_map_cache),
+                'identity_sha256':sha256(args.height_map_cache.with_suffix(args.height_map_cache.suffix+'.json'))})
+        except OSError as error:
+            write_json(run/'validation.json', {'track':args.track, 'height_mode':args.height_mode,
+                'returncode':1, 'output_complete_and_finite':False, 'validation_errors':[str(error)]})
+            return 1
+        prep_start = time.perf_counter()
+        print('Preparing surface references; see height_preparation.log', flush=True)
+        height_command = [str(surface_python), str(root/'scripts/prepare_surface_height.py'),
+                          '--run', str(run), '--data-root', str(data_root), '--map-cache', str(args.height_map_cache.resolve())]
+        write_json(run/'height_command.json', height_command)
+        with (run/'height_preparation.log').open('w') as log:
+            height_result = subprocess.run(height_command, stdout=log, stderr=subprocess.STDOUT)
+        height_preparation_seconds = time.perf_counter()-prep_start
+        if height_result.returncode:
+            write_json(run/'validation.json', {'track':args.track, 'height_mode':args.height_mode,
+                'returncode':height_result.returncode, 'output_complete_and_finite':False,
+                'validation_errors':['Surface preprocessing failed; inspect height_preparation.log. No silent GNSS substitution.']})
+            return 1
     command = ["docker", "exec", container, "bash", "-c",
                "source /opt/ros/humble/setup.bash && source /root/midterm/install/setup.bash && "
                "exec ros2 run localization localization --ros-args --params-file " + shlex.quote(container_run + "/params.yaml")]
@@ -278,7 +422,7 @@ def main():
         for path in (root / "workspace/src").rglob("*") if path.is_file()
     })
     (run / "worktree.patch").write_bytes(subprocess.check_output(["git", "diff"], cwd=root))
-    write_json(run / "container.json", json.loads(subprocess.check_output(["docker", "inspect", container], text=True)))
+    write_json(run / "container.json", loads_saved_json(subprocess.check_output(["docker", "inspect", container], text=True)))
     (run / "git_commit.txt").write_text(subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True))
     (run / "binary_sha256.txt").write_text(subprocess.check_output([
         "docker", "exec", container, "sha256sum",
@@ -340,12 +484,15 @@ def main():
         "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "track": args.track, "backend": args.backend, "cuda_mode": args.cuda_mode,
         "profile": args.profile, "sensor_preparation_seconds": sensor_preparation_seconds,
+        "height_map_preparation_seconds": height_map_preparation_seconds,
+        "height_preparation_seconds": height_preparation_seconds,
         "sensor_fusion": args.sensor_fusion,
         "geometry_mode": args.geometry_mode,
+        "height_mode": args.height_mode,
         "cloud_source": args.cloud_source, "ply_scale": args.ply_scale, "start_frame": args.start_frame,
         "source_input": "source_input.json", "experimental_source": args.cloud_source != "front",
         "submission_frame_set_complete": args.start_frame == 0 and args.frames == (3011 if args.track == 1 else 3299),
-        "pipeline_elapsed_seconds": elapsed + sensor_preparation_seconds,
+        "pipeline_elapsed_seconds": elapsed + sensor_preparation_seconds + height_map_preparation_seconds + height_preparation_seconds,
         "frames": len(poses), "expected_frames": args.frames, "elapsed_seconds": elapsed,
         "time_scope": "Docker exec + ROS startup + map initialization + all frames; no build. See map_cache_file for explicit cache use.",
         "map_cache_file": cache_file,
@@ -369,7 +516,7 @@ def main():
                                                for a, b in zip(poses[1:], poses[:-1])), default=0),
         }
     if args.profile == "sensor_guided":
-        prior_metadata = json.loads((run / "sensor_prior.json").read_text())
+        prior_metadata = loads_saved_json((run / "sensor_prior.json").read_text())
         if args.sensor_fusion != "fixed":
             fusion_meta = prior_metadata.get("sensor_fusion", {})
             summary["sensor_fusion_diagnostics_not_accuracy"] = fusion_meta
@@ -383,6 +530,52 @@ def main():
                 errors.append("Nonfinite sensor fusion diagnostics")
         with (run / "guidance.csv").open() as stream:
             guidance = list(csv.DictReader(stream))
+        try:
+            with (run / "height.csv").open() as stream:
+                heights = list(csv.DictReader(stream))
+            if len(heights) != args.frames or [int(row["timestamp_ns"]) for row in heights] != [s for s, _ in files]:
+                errors.append("Height diagnostics count/timestamp mismatch")
+            if any(row["mode"] != args.height_mode or not all(math.isfinite(float(row[k])) for k in
+                ("nominal_sensor_z", "prior_z", "output_z", "offset_from_nominal_z")) for row in heights):
+                errors.append("Invalid height diagnostics")
+            maximum_offset = max((abs(float(row["offset_from_nominal_z"])) for row in heights), default=0.)
+            summary["height_diagnostics_not_accuracy"] = {"mode": args.height_mode,
+                "max_abs_offset_from_nominal_sensor_z_m": maximum_offset,
+                "nominal_sensor_z_is_ground_truth": False}
+            reference_offset = max((abs(float(row['offset_from_reference_z'])) for row in heights), default=0.)
+            summary['height_diagnostics_not_accuracy']['max_abs_offset_from_reference_z_m'] = reference_offset
+            if args.height_mode != 'carry' and reference_offset > 1.50002:
+                errors.append("Absolute height offset exceeded +/-1.5 m bound")
+            if args.height_mode.startswith('surface'):
+                height_report = loads_saved_json((run/'height_reference.json').read_text())
+                if height_report['reference_sha256'] != sha256(run/'height_reference.csv') or height_report['sensor_prior_sha256'] != sha256(run/'sensor_prior.csv'):
+                    errors.append('Surface reference hash mismatch')
+                with (run/'height_reference.csv').open() as stream:
+                    references = list(csv.DictReader(stream))
+                if len(references) != len(heights) or any(int(a['timestamp_ns']) != int(b['timestamp_ns']) or abs(float(a['z'])-float(b['reference_z'])) > 1e-8 for a,b in zip(references, heights)):
+                    errors.append('Surface reference/solver count, timestamp or altitude mismatch')
+                summary['height_diagnostics_not_accuracy']['surface_support_frames'] = height_report['supported_frames']
+                if args.height_mode == 'surface_tilt':
+                    tilt_angles=[]
+                    with (run/'sensor_prior.csv').open() as stream:
+                        original_priors=list(csv.DictReader(stream))
+                    for ref,observation,pose in zip(references,original_priors,poses):
+                        q=[float(ref[k]) for k in ('qx','qy','qz','qw')]
+                        old=[float(observation[k]) for k in ('qx','qy','qz','qw')]
+                        dot=abs(sum(a*b for a,b in zip(q,old)))
+                        tilt_angles.append(math.degrees(2*math.acos(min(1.,dot))))
+                        x,y,z,w=q
+                        row_z=[2*(x*z-w*y),2*(y*z+w*x),1-2*(x*x+y*y)]
+                        if max(abs(a-b) for a,b in zip(row_z,pose[8:11]))>1e-6:
+                            errors.append('Output tilt differs from geometric reference')
+                    maximum_tilt=max(tilt_angles,default=0.)
+                    summary['height_diagnostics_not_accuracy']['max_geometric_tilt_deg']=maximum_tilt
+                    if maximum_tilt>15.0001:
+                        errors.append('Geometric tilt exceeded 15 degree bound')
+            if any(abs(float(row["output_z"]) - pose[11]) > 1e-5 for row, pose in zip(heights, poses)):
+                errors.append("Height diagnostics differ from result matrices")
+        except (OSError, ValueError, KeyError) as error:
+            errors.append(str(error))
         if len(guidance) != args.frames:
             errors.append(f"Expected {args.frames} guidance rows, got {len(guidance)}")
         summary["guidance_not_accuracy"] = {
@@ -420,7 +613,37 @@ def main():
                 "translation_max_m": max(math.sqrt(sum((p[j] - r[j]) ** 2 for j in (3, 7, 11))) for p, r in zip(poses, reference)),
             }
     write_json(run / "validation.json", summary)
+    if args.horizontal_refinement != 'none' and not errors:
+        print('Fine horizontal map / joint estimation; see horizontal_preparation.log', flush=True)
+        post_start = time.perf_counter()
+        post = [str(surface_python), str(root/'scripts/refine_horizontal_joint.py'), '--run', str(run),
+                '--data-root', str(data_root), '--container', container]
+        if args.horizontal_map_cache:
+            post += ['--fine-map', str(args.horizontal_map_cache.resolve())]
+        write_json(run/'horizontal_command.json', post)
+        with (run/'horizontal_preparation.log').open('w') as log:
+            post_result = subprocess.run(post, stdout=log, stderr=subprocess.STDOUT)
+        summary['horizontal_refinement'] = args.horizontal_refinement
+        summary['horizontal_refinement_seconds'] = time.perf_counter()-post_start
+        summary['pipeline_elapsed_seconds'] += summary['horizontal_refinement_seconds']
+        summary['base_diagnostics_scope'] = 'C++ base stage; final horizontal stage separately validated in horizontal/report.json'
+        if post_result.returncode:
+            errors.append('Horizontal refinement failed; inspect horizontal_preparation.log, preserved base outputs in base/')
+        else:
+            report = loads_saved_json((run/'horizontal/report.json').read_text())
+            summary['horizontal_diagnostics_not_accuracy'] = report
+            if (not report['output_complete_and_finite'] or report['result_sha256'] != sha256(run/'result.txt')
+                    or report['csv_sha256'] != sha256(run/'diagnostic.csv')):
+                errors.append('Final horizontal output validation/hash mismatch')
+            with (run/'diagnostic.csv').open() as stream:
+                final_csv = list(csv.DictReader(stream))
+            if (len(final_csv) != args.frames or [int(row['idx']) for row in final_csv] != list(range(args.frames))
+                    or any(not math.isfinite(float(row[k])) for row in final_csv for k in ('x','y','yaw'))):
+                errors.append('Final horizontal CSV format/count/finite mismatch')
+        summary['output_complete_and_finite'] = not errors
+        write_json(run/'validation.json', summary)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+    print_run_outcome(run, summary, full_attempt=full_attempt)
     return 0 if not errors else 1
 
 

@@ -2,9 +2,12 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <limits>
 
 #include <rclcpp/rclcpp.hpp>
 #include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/crop_box.h>
+#include <pcl/common/common.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -32,7 +35,30 @@ bool DownsampleMap(const rclcpp::Node::SharedPtr& node) {
         return false;
     }
     const auto original_size = cloud->size();
+    const auto crop_min = node->get_parameter("crop_min").as_double_array();
+    const auto crop_max = node->get_parameter("crop_max").as_double_array();
+    if (!crop_min.empty() || !crop_max.empty()) {
+        if (crop_min.size() != 3 || crop_max.size() != 3) return false;
+        for (int axis = 0; axis < 3; ++axis)
+            if (!std::isfinite(crop_min[axis]) || !std::isfinite(crop_max[axis]) || crop_min[axis] >= crop_max[axis]) return false;
+        auto cropped = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
+        pcl::CropBox<pcl::PointXYZ> crop;
+        crop.setInputCloud(cloud);
+        crop.setMin(Eigen::Vector4f(crop_min[0],crop_min[1],crop_min[2],1));
+        crop.setMax(Eigen::Vector4f(crop_max[0],crop_max[1],crop_max[2],1));
+        crop.filter(*cropped);
+        cloud = cropped;
+        RCLCPP_INFO(node->get_logger(), "Explicit crop: %zu -> %zu points.", original_size,cloud->size());
+    }
+    if (cloud->empty()) return false;
     if (leaf_size > 0.0) {
+        pcl::PointXYZ low, high;
+        pcl::getMinMax3D(*cloud,low,high);
+        const Eigen::Array3d cells = ((high.getVector3fMap()-low.getVector3fMap()).cast<double>().array()/leaf_size).ceil()+1;
+        if (!cells.isFinite().all() || cells.prod() > std::numeric_limits<std::int32_t>::max()) {
+            RCLCPP_ERROR(node->get_logger(), "VoxelGrid integer grid would overflow; use explicit crop bounds or a larger leaf. Refusing unfiltered output.");
+            return false;
+        }
         auto filtered = std::make_shared<pcl::PointCloud<pcl::PointXYZ>>();
         pcl::VoxelGrid<pcl::PointXYZ> voxel;
         voxel.setInputCloud(cloud);
@@ -62,6 +88,8 @@ int main(int argc, char** argv) {
     node->declare_parameter<std::string>("input_file", "/root/data/Track1/map.pcd");
     node->declare_parameter<std::string>("output_file", "/root/data/Track1/map_downsampled_1m.pcd");
     node->declare_parameter<double>("map_voxel_leaf_size", 1.0);
+    node->declare_parameter<std::vector<double>>("crop_min", std::vector<double>{});
+    node->declare_parameter<std::vector<double>>("crop_max", std::vector<double>{});
     bool success = false;
     try {
         success = DownsampleMap(node);

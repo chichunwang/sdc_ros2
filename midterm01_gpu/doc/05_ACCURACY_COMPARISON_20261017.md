@@ -19,11 +19,11 @@ CPU／CUDA 同幀 pose 的平移差異 RMS 分別為 Track1 4.803 m、Track2 7.8
 
 完整結果與圖表：
 
-- [詳細報告](../outputs/runs/accuracy_20261017_ft9bpo98/REPORT.md)
-- [軌跡與相鄰 pose 跳動](../outputs/runs/accuracy_20261017_ft9bpo98/trajectory_comparison.png)
-- [共同地圖殘差](../outputs/runs/accuracy_20261017_ft9bpo98/map_residual_comparison.png)
-- [點雲 XY 疊圖](../outputs/runs/accuracy_20261017_ft9bpo98/pointcloud_overlay.png)
-- [來源與參數](../outputs/runs/accuracy_20261017_ft9bpo98/config.json)、[數值結果](../outputs/runs/accuracy_20261017_ft9bpo98/summary.json)、[驗證紀錄](../outputs/runs/accuracy_20261017_ft9bpo98/validation.json)
+- [詳細報告](../outputs/run/track00_test_2610171613/REPORT.md)
+- [軌跡與相鄰 pose 跳動](../outputs/run/track00_test_2610171613/trajectory_comparison.png)
+- [共同地圖殘差](../outputs/run/track00_test_2610171613/map_residual_comparison.png)
+- [點雲 XY 疊圖](../outputs/run/track00_test_2610171613/pointcloud_overlay.png)
+- [來源與參數](../outputs/run/track00_test_2610171613/config.json)、[數值結果](../outputs/run/track00_test_2610171613/summary.json)、[驗證紀錄](../outputs/run/track00_test_2610171613/validation.json)
 
 這些輸出遵守原有 Git 忽略規則，只保存在本機；重現工具為 `scripts/accuracy/alignment_evaluator.cpp`、`scripts/accuracy/CMakeLists.txt` 與 `scripts/accuracy/analyze.py`。各 Track 的 `command.json` 保存實際評估命令，`config.json` 保存所選完成 run 的來源與參數；分析使用凍結副本，沒有改動定位程式或重跑原 CPU 任務。
 

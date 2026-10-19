@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """核對完整 CSV／矩陣，彙整同深度消融及共用 probe；不估真值誤差。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import csv
 import json
@@ -14,10 +15,10 @@ from probe_rig_track1_geometry import read_colored
 
 
 def validate(root,out):
-    full=root/'outputs/runs/three_camera_full_fast_imported_2610181301';results=[]
+    full=root/'outputs/run/track00_full_2610181301';results=[]
     for track,count in [(1,3011),(2,3299)]:
-        base=full/f'track{track}';loc=json.loads((base/'localization.json').read_text());run=Path(loc['run'])
-        validation=json.loads((run/'validation.json').read_text());complete=json.loads((base/'completion.json').read_text());report=json.loads((base/'report.json').read_text())
+        base=full/f'track{track}';loc=loads_saved_json((base/'localization.json').read_text());run=Path(loc['run'])
+        validation=loads_saved_json((run/'validation.json').read_text());complete=loads_saved_json((base/'completion.json').read_text());report=loads_saved_json((base/'report.json').read_text())
         path=base/f'result_{track}.csv'
         with path.open() as f:
             reader=csv.DictReader(f)
@@ -44,14 +45,14 @@ def validate(root,out):
 
 
 def ablations(root,out):
-    runs=json.loads((out/'ablation_runs.json').read_text())
+    runs=loads_saved_json((out/'ablation_runs.json').read_text())
     if len(runs)!=24:raise ValueError('Incomplete ablation experiment')
-    full=root/'outputs/runs/three_camera_full_fast_imported_2610181301/track1';manifest=json.loads((full/'report.json').read_text())
+    full=root/'outputs/run/track00_full_2610181301/track1';manifest=loads_saved_json((full/'report.json').read_text())
     oldpaths={int(p.stem.rsplit('_ts_',1)[1]):p for p in (root.parent/'midterm01/data/Track1/raw_ply').glob('*.ply')}
-    scene=cKDTree(load_binary_map(root/'outputs/runs/cuda_ndt_20261017_nlvdk4j5/cache_track1_leaf1.pcd'))
+    scene=cKDTree(load_binary_map(root/'outputs/run/track00_test_2610171550/cache_track1_leaf1.pcd'))
     probes={};results=[];binaries=set();prior_windows={}
     for r in runs:
-        p=Path(r['run']);v=json.loads((p/'validation.json').read_text());g=rows(p/'guidance.csv');geom=rows(p/'geometry.csv');frames=rows(p/'frames.csv')
+        p=Path(r['run']);v=loads_saved_json((p/'validation.json').read_text());g=rows(p/'guidance.csv');geom=rows(p/'geometry.csv');frames=rows(p/'frames.csv')
         if not v['output_complete_and_finite'] or v['frames']!=12 or len(g)!=12:raise ValueError('Invalid ablation output')
         binary=(p/'binary_sha256.txt').read_text();binaries.add(binary)
         key=r['start'];prior=(p/'sensor_prior.csv').read_bytes()
@@ -87,8 +88,8 @@ def ablations(root,out):
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=Path,required=True);args=p.parse_args()
-    root=Path(__file__).resolve().parents[1];out=args.output.resolve();out.relative_to((root/'outputs/runs').resolve())
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=saved_path,required=True);args=p.parse_args()
+    root=Path(__file__).resolve().parents[1];out=args.output.resolve();out.relative_to((root/'outputs/run').resolve())
     if (out/'ablation_summary.json').exists():raise ValueError('Existing diagnosis cannot be overwritten')
     shutil.copy2(Path(__file__),out/'sources'/Path(__file__).name)
     full=validate(root,out);ablation=ablations(root,out)

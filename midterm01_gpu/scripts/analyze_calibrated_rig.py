@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """同一 probe／map 的三相機對照；資料信息矩陣不當作定位真值或 covariance。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import csv
 import json
@@ -17,27 +18,27 @@ def rows(path):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--comparisons', type=Path, nargs='+', required=True)
-    p.add_argument('--reconstruction', type=Path, required=True)
-    p.add_argument('--anchored', type=Path, required=True)
-    p.add_argument('--data-root', type=Path, required=True)
-    p.add_argument('--map-cache-track1', type=Path, required=True)
-    p.add_argument('--map-cache-track2', type=Path, required=True)
-    p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--comparisons', type=saved_path, nargs='+', required=True)
+    p.add_argument('--reconstruction', type=saved_path, required=True)
+    p.add_argument('--anchored', type=saved_path, required=True)
+    p.add_argument('--data-root', type=saved_path, required=True)
+    p.add_argument('--map-cache-track1', type=saved_path, required=True)
+    p.add_argument('--map-cache-track2', type=saved_path, required=True)
+    p.add_argument('--output', type=saved_path, required=True)
     args = p.parse_args()
-    records = [record for path in args.comparisons for record in json.loads(path.read_text())]
+    records = [record for path in args.comparisons for record in loads_saved_json(path.read_text())]
     scenes = {t: cKDTree(load_binary_map(getattr(args, f'map_cache_track{t}'))) for t in (1, 2)}
     references, binaries, params, probes, results = {}, set(), {}, {}, []
-    depth_scale = json.loads((args.anchored / 'scale_anchor.json').read_text())['depth_scale']
+    depth_scale = loads_saved_json((args.anchored / 'scale_anchor.json').read_text())['depth_scale']
     for r in records:
-        run = Path(r['run']); v = json.loads((run / 'validation.json').read_text())
+        run = Path(r['run']); v = loads_saved_json((run / 'validation.json').read_text())
         if r['returncode'] or not v['output_complete_and_finite'] or v['validation_errors']:
             raise ValueError('Failed/invalid comparison')
         key = r['track'], r['kind']
         pose = np.loadtxt(run / 'result.txt').reshape(-1, 3, 4)
         prior = (run / 'sensor_prior.csv').read_bytes()
         binaries.add((run / 'binary_sha256.txt').read_text())
-        par = json.loads((run / 'params.json').read_text())
+        par = loads_saved_json((run / 'params.json').read_text())
         for field in ('ply_path', 'ply_scale', 'save_path', 'sensor_prior_file'):
             par.pop(field)
         if r['label'] == 'front':

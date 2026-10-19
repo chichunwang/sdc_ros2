@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """將已停止 reference run 的已提交幀複製到新加速 run；不啟動完整重建。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import contextlib
 import csv
@@ -17,7 +18,7 @@ from three_camera_source import sha256
 
 def migrate(source):
     root=Path(__file__).resolve().parents[1]
-    source=source.resolve();source.relative_to((root/'outputs/runs').resolve())
+    source=source.resolve();source.relative_to((root/'outputs/run').resolve())
     active=subprocess.run(['pgrep','-f','[p]ython.*scripts/run_rig_(full|fast)\\.py'],capture_output=True)
     if active.returncode==0:raise RuntimeError('Stop the existing reconstruction before importing frames')
     candidate=source/'candidate.json'
@@ -29,17 +30,17 @@ def migrate(source):
             if not old.exists():continue
             lock=stack.enter_context((old/'.lock').open('a'))
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            identity=json.loads((old/'identity.json').read_text())
+            identity=loads_saved_json((old/'identity.json').read_text())
             if 'execution' in identity:raise ValueError('Import accepts the original reference producer only')
             args=argparse.Namespace(track=track,frames=identity['frames'],start_frame=identity['start_frame'],
                 data_root=Path(identity['data_root']),prior_run=Path(identity['prior_run']),candidate=candidate,
                 checkpoint=root/'outputs/ml_runtime/checkpoint',model_repo=root/'outputs/ml_runtime/map-anything',
-                output=root/'outputs/runs/import_preview',map_cache=Path(identity['map_cache']) if identity['map_cache'] else None,
+                output=root/'outputs/run/import_preview',map_cache=Path(identity['map_cache']) if identity['map_cache'] else None,
                 budget=identity['budget'],save_depth=identity['save_depth'],localize=identity['localize'],
                 resume=False,dry_run=True,geometry_backend='cuda',verify_sampling=False,replay_directory=None)
             captured=io.StringIO()
             with contextlib.redirect_stdout(captured):reference.run(args)
-            if json.loads(captured.getvalue())!=identity:
+            if loads_saved_json(captured.getvalue())!=identity:
                 raise ValueError('Original source/model/scale/prior/calibration/runtime has changed; refuse import')
             index=args.data_root/f'kaggle_track0{track}/Track{track}_Mapanything_ply/index.csv'
             with index.open() as stream:rows=list(csv.DictReader(stream))
@@ -54,7 +55,7 @@ def migrate(source):
             prepared.append((old,identity,args,records))
         if not prepared:raise ValueError('No original Track identity found')
         from accuracy.benchmark import create_run_directory
-        target=create_run_directory(root/'outputs/runs','three_camera_full_fast_imported')
+        target=create_run_directory(root/'outputs/run','three_camera_full_fast_imported',full=True)
         shutil.copy2(candidate,target/'candidate.json')
         for old,identity,args,records in prepared:
             new=target/old.name;new.mkdir();(new/'frames').mkdir()
@@ -84,5 +85,5 @@ def migrate(source):
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('source',type=Path)
+    parser.add_argument('source',type=saved_path)
     migrate(parser.parse_args().source)

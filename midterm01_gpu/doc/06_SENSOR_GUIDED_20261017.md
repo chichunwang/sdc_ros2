@@ -6,13 +6,13 @@
 
 **2026-10-18 排名與算法摘要：** 使用者 Team 3 新截圖為第 4／第 2 名，分數未變；現行流程含時變 heading bias RTS 與方向性地圖殘差。下列固定 bias、等向 point-to-point 描述及早期測試是初版歷史，現行整合說明與候選改進見 [目前算法與精度方向](20_CURRENT_ALGORITHM_AND_ACCURACY_20261018.md)，精確地圖目標見 [directional 設計](15_GEOMETRY_DIRECTIONAL_20261017.md)。
 
-使用者提供的 Kaggle 截圖顯示，舊版完整 Track1 CUDA D2D 提交分數為 **573.36983**，助教 baseline 是 **1.79075**。後續使用者手動提交本次新版 Track1，2026-10-17 截圖回報分數 **1.22369**，已優於同圖 baseline。這是使用者提供的成績證據，未另行查詢排行榜。對應候選 SHA256 與紀錄見 [成績證據](../outputs/submissions/sensor_guided_20261017_pxy83hix/kaggle_track1_score_20261017.json)。
+使用者提供的 Kaggle 截圖顯示，舊版完整 Track1 CUDA D2D 提交分數為 **573.36983**，助教 baseline 是 **1.79075**。後續使用者手動提交本次新版 Track1，2026-10-17 截圖回報分數 **1.22369**，已優於同圖 baseline。這是使用者提供的成績證據，未另行查詢排行榜。對應候選 SHA256 與紀錄見 [成績證據](../outputs/run/track00_test_2610171707/kaggle_track1_score_20261017.json)。
 
 同日後續使用者文字回報目前最佳 Track1 **1.22369**、Track2 **0.56063**；Track2 尚未與特定 CSV／SHA256 核對，不能直接歸到本文 Track2 候選或據此推論 baseline。新增的離線濾波比較與後續改善方向見 [濾波分析](11_FILTER_ANALYSIS_20261017.md)，沒有重跑定位或取得濾波後 Kaggle 分數。
 
 後續已實作可選的 [GNSS／IMU heading Kalman＋RTS 融合](12_SENSOR_FUSION_20261017.md)，另有位置／速度 RTS 對照。heading_rts 完整 3011／3299 幀已由使用者手動完成並回報上述新分數；本文下列原始完整成果仍屬 `fixed` 融合，motion_rts 目前只有短測。
 
-該次 run 為 `outputs/runs/track1_cuda_ndt_d2d_3011f_xvudsutg/`。雖然有 3011 筆有限 pose、只有 8 幀未收斂，但估計 XY 一直留在起點附近約 40 m 的範圍，且 roll／pitch 曾翻轉。同段 GNSS 輸入顯示路線約一公里；舊估計與 GNSS 輸入的 XY 差異 RMS 為 557.895 m。這個差異不是正式定位誤差，卻能揭露長序列追蹤已失效，不能靠「收斂率高」判斷可用。
+該次 run 為 `outputs/run/track01_full_2610171627/`。雖然有 3011 筆有限 pose、只有 8 幀未收斂，但估計 XY 一直留在起點附近約 40 m 的範圍，且 roll／pitch 曾翻轉。同段 GNSS 輸入顯示路線約一公里；舊估計與 GNSS 輸入的 XY 差異 RMS 為 557.895 m。這個差異不是正式定位誤差，卻能揭露長序列追蹤已失效，不能靠「收斂率高」判斷可用。
 
 ## 本次新增的演算法
 
@@ -88,12 +88,12 @@ Track1 的舊 D2D 最大相鄰平移為 10.823 m；新版未再出現起點附�
 
 本機候選檔（沿用已被使用者提交接受的 CSV 欄位／ID／弧度輸出方式）：
 
-- [Track1 result_1.csv](../outputs/submissions/sensor_guided_20261017_pxy83hix/result_1.csv)
-- [Track2 result_2.csv](../outputs/submissions/sensor_guided_20261017_pxy83hix/result_2.csv)
-- [來源與 SHA256](../outputs/submissions/sensor_guided_20261017_pxy83hix/provenance.json)
-- [完整驗證報告](../outputs/runs/sensor_guided_20261017_pxy83hix/REPORT.md)
-- [完整軌跡比較圖](../outputs/runs/sensor_guided_20261017_pxy83hix/full_trajectory_comparison.png)
+- [Track1 result_1.csv](../outputs/run/track00_test_2610171707/result_1.csv)
+- [Track2 result_2.csv](../outputs/run/track00_test_2610171707/result_2.csv)
+- [來源與 SHA256](../outputs/run/track00_test_2610171707/provenance.json)
+- [完整驗證報告](../outputs/run/track00_test_2610171640/REPORT.md)
+- [完整軌跡比較圖](../outputs/run/track00_test_2610171640/full_trajectory_comparison.png)
 
-本次完整驗證、來源快照與失敗實驗紀錄位於 `outputs/latest_improvement_run.txt` 指向的唯一實驗目錄；候選檔目錄另記在 `outputs/latest_improved_submission.txt`。所有資料及輸出遵守原 Git 忽略規則。Codex 未操作 Kaggle 提交；使用者已手動提交 Track1 並回報上述成績。
+本次完整驗證、來源快照與失敗實驗紀錄位於 `outputs/run/track00_test_2610192315/historical_notes/latest_improvement_run.txt` 指向的唯一實驗目錄；候選檔目錄另記在 `outputs/run/track00_test_2610192315/historical_notes/latest_improved_submission.txt`。所有資料及輸出遵守原 Git 忽略規則。Codex 未操作 Kaggle 提交；使用者已手動提交 Track1 並回報上述成績。
 
 使用者已指定本次測完後，後續完整 Track 測試由使用者手動執行並回報結果；本次完成後不再自行啟動下一輪完整序列。演算法的後續取捨依使用者回報的完整測試與 Kaggle 實際分數調整。

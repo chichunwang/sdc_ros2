@@ -89,7 +89,7 @@
 
 ## 證據與環境
 
-本機證據入口：`outputs/runs/calibrated_rig_dev_2610181118/`。
+本機證據入口：`outputs/run/track00_test_2610181118/`。
 
 - `reconstruction_ampfix/`：完成的 raw reconstruction、per-view NPZ、PLY、frame／input hashes、runtime、固定 rig、SIFT 檢查。
 - `anchored/`、`anchored_density600/`：共享深度尺度與兩種點數上限候選。
@@ -141,4 +141,4 @@ ML 使用主機 `outputs/ml_runtime/venv`，ROS 容器 Python 未修改。模型
 4. **確認補償有幾何支持**：看 `image_geometry_validation.json` 的 static／motion Sampson error、不同路段及不同相機是否一致改善，另看相同 depth 的 static／motion 定位對照。本次右相機較一致，左相機尚未充分支持；若要宣稱硬體同步，仍需曝光／硬體時鐘或可靠外部標定。
 5. **最後才確認定位精度**：在更多相互分離的靜態場景檢查 stereo 尺度／極線殘差，排除動態物體並核對 body lever arm；再由使用者手動跑完整 Track、確認 CSV 契約及評分。本次兩份既有最佳 CSV SHA256 已再次核對不變。
 
-結果圖與完整 JSON 位於 [本機圖表](../outputs/runs/calibrated_rig_dev_2610181118/calibrated_rig_summary.png)、[公平對照 JSON](../outputs/runs/calibrated_rig_dev_2610181118/comparison_summary.json)、[尺度錨點](../outputs/runs/calibrated_rig_dev_2610181118/anchored/scale_anchor.json)。outputs 不進 Git，交接時須另行保留。
+結果圖與完整 JSON 位於 [本機圖表](../outputs/run/track00_test_2610181118/calibrated_rig_summary.png)、[公平對照 JSON](../outputs/run/track00_test_2610181118/comparison_summary.json)、[尺度錨點](../outputs/run/track00_test_2610181118/anchored/scale_anchor.json)。outputs 不進 Git，交接時須另行保留。

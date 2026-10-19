@@ -30,8 +30,8 @@
 
 來源均為先前已完成的 `sensor_guided/cuda_robust_icp` run：
 
-- Track1：`outputs/runs/track1_sensor_guided_cuda_robust_icp_d2d_3011f_ji5lls0p/`，3011 幀、108.322 秒。
-- Track2：`outputs/runs/track2_sensor_guided_cuda_robust_icp_d2d_3299f_gg11wbvp/`，3299 幀、118.683 秒；尚未證明它對應使用者回報的 0.56063。
+- Track1：`outputs/run/track01_full_2610171659/`，3011 幀、108.322 秒。
+- Track2：`outputs/run/track02_full_2610171703/`，3299 幀、118.683 秒；尚未證明它對應使用者回報的 0.56063。
 
 下表是**濾波後相對原答案的 RMS 改動，不是定位誤差，也不是分數改善量**。局部多項式使用 0.5 秒視窗、二次擬合及實際非等間距 timestamp；RTS 設定詳見工具／JSON，僅是初始實驗值。
 
@@ -50,8 +50,8 @@
 
 完整資料與圖另存在新的唯一目錄，原始輸出不變：
 
-- [Track1 JSON](../outputs/runs/trajectory_filters_track1_iwx3datu/report.json)、[比較圖](../outputs/runs/trajectory_filters_track1_iwx3datu/comparison.png)。
-- [Track2 JSON](../outputs/runs/trajectory_filters_track2_1j4zdeii/report.json)、[比較圖](../outputs/runs/trajectory_filters_track2_1j4zdeii/comparison.png)。
+- [Track1 JSON](../outputs/run/track01_test_2610172143/report.json)、[比較圖](../outputs/run/track01_test_2610172143/comparison.png)。
+- [Track2 JSON](../outputs/run/track02_test_2610172143/report.json)、[比較圖](../outputs/run/track02_test_2610172143/comparison.png)。
 
 JSON 包含原始檔 SHA256、參數、逐方法改動及低速／轉彎／移動直行分段診斷。這些 outputs 被 Git 忽略；跨 checkout 交接須另備份，不能只依賴 Git。
 
@@ -96,7 +96,7 @@ JSON 包含原始檔 SHA256、參數、逐方法改動及低速／轉彎／移�
 
 ## 獨立比較工具與可重現命令
 
-新增 [`scripts/trajectory_filter_lab.py`](../scripts/trajectory_filter_lab.py)，讀取驗證通過的 GPU run，在 `outputs/runs/trajectory_filters_trackN_<unique>/` 另存：
+新增 [`scripts/trajectory_filter_lab.py`](../scripts/trajectory_filter_lab.py)，讀取驗證通過的 GPU run，在 `outputs/run/trajectory_filters_trackN_<unique>/` 另存：
 
 - `baseline`、`sg_xy`、`sg_yaw`、`sg_xy_yaw`、`rts_xy_yaw`、`ema_lag_control` 各自的 CSV／TXT。
 - `frames.csv`、`report.json`、來源程式快照；加 `--plot` 產生 PNG，加 `--bag` 讀感測器作 heading 分段診斷。
@@ -108,11 +108,11 @@ Ubuntu 主機執行，不需重編 C++，也不啟動定位：
 
 ```bash
 cd /home/ricky/sdc_ros2/midterm01_gpu
-docker exec sdc_midterm01_gpu bash -c 'source /opt/ros/humble/setup.bash && exec python3 /root/scripts/trajectory_filter_lab.py --run /root/outputs/runs/track1_sensor_guided_cuda_robust_icp_d2d_3011f_ji5lls0p --track 1 --window-seconds 0.5 --bag /root/data/Track1/Track1.db3 --plot'
-docker exec sdc_midterm01_gpu bash -c 'source /opt/ros/humble/setup.bash && exec python3 /root/scripts/trajectory_filter_lab.py --run /root/outputs/runs/track2_sensor_guided_cuda_robust_icp_d2d_3299f_gg11wbvp --track 2 --window-seconds 0.5 --bag /root/data/Track2/Track2.db3 --plot'
+docker exec sdc_midterm01_gpu bash -c 'source /opt/ros/humble/setup.bash && exec python3 /root/scripts/trajectory_filter_lab.py --run /root/outputs/run/track01_full_2610171659 --track 1 --window-seconds 0.5 --bag /root/data/Track1/Track1.db3 --plot'
+docker exec sdc_midterm01_gpu bash -c 'source /opt/ros/humble/setup.bash && exec python3 /root/scripts/trajectory_filter_lab.py --run /root/outputs/run/track02_full_2610171703 --track 2 --window-seconds 0.5 --bag /root/data/Track2/Track2.db3 --plot'
 ```
 
-終端印出的 `/root/outputs/runs/...` 對應主機本 GPU 目錄下的 `outputs/runs/...`。主機目前未安裝 NumPy，因此使用既有 GPU 容器的 NumPy 1.21.5／SciPy 1.8.0／Matplotlib 3.5.1。未啟停任何容器，也不必安裝新套件。
+終端印出的 `/root/outputs/run/...` 對應主機本 GPU 目錄下的 `outputs/run/...`。主機目前未安裝 NumPy，因此使用既有 GPU 容器的 NumPy 1.21.5／SciPy 1.8.0／Matplotlib 3.5.1。未啟停任何容器，也不必安裝新套件。
 
 新增數值契約測試涵蓋非等間距與大座標、已知運動／雜訊的延遲與平滑、yaw 跨 ±180°、合法旋轉與 roll/pitch/Z 保留，以及 frame／Track／非法旋轉拒絕。合成測試只證明工具契約；真實輸出比較另存，兩者不混為精度驗證。
 

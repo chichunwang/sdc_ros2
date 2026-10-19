@@ -1,4 +1,5 @@
 """三相機來源與整數時間契約；標準函式庫，可供主機 benchmark 使用。"""
+from output_layout import saved_path, loads_saved_json
 import csv
 import hashlib
 import json
@@ -17,14 +18,14 @@ FRAME_COMMENT = 'comment coordinate_frame=front_camera_FLU_x_front_y_left_z_up'
 
 def sha256(path):
     digest = hashlib.sha256()
-    with Path(path).open('rb') as stream:
+    with saved_path(path).open('rb') as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b''):
             digest.update(block)
     return digest.hexdigest()
 
 
 def ply_header(path):
-    with Path(path).open('rb') as stream:
+    with saved_path(path).open('rb') as stream:
         lines = []
         for _ in range(100):
             line = stream.readline().decode('ascii').strip()
@@ -57,7 +58,7 @@ def load_index(data_root, track, expected_stamps=None):
         lines, _ = ply_header(path)
         if FRAME_COMMENT not in lines:
             raise ValueError('Three-camera source must explicitly declare front-camera FLU')
-    report = json.loads((root / 'report.json').read_text())
+    report = loads_saved_json((root / 'report.json').read_text())
     if report.get('coordinate_frame') != 'model-predicted front-camera frame' or report.get('fusion_uses_calibrated_tf') is not False:
         raise ValueError('Unknown three-camera fusion/frame contract')
     return root, rows, {'index_sha256': sha256(root / 'index.csv'),
@@ -123,7 +124,7 @@ def resolve_camera_timestamps(series, index_stamps):
 def reuse_priors(source_run, output_run, stamps, track, fusion):
     """Reuse exact full-run sensor observations for a fair short-window comparison."""
     source_run, output_run = Path(source_run), Path(output_run)
-    validation = json.loads((source_run / 'validation.json').read_text())
+    validation = loads_saved_json((source_run / 'validation.json').read_text())
     if validation.get('track') != track or validation.get('sensor_fusion') != fusion or validation.get('profile') != 'sensor_guided':
         raise ValueError('Prior source Track/profile/fusion mismatch')
     for name in ('sensor_prior.csv', 'sensor_prior.fusion.csv'):
@@ -140,7 +141,7 @@ def reuse_priors(source_run, output_run, stamps, track, fusion):
             writer = csv.DictWriter(stream, fieldnames=columns)
             writer.writeheader()
             writer.writerows(lookup[s] for s in stamps)
-    metadata = json.loads((source_run / 'sensor_prior.json').read_text())
+    metadata = loads_saved_json((source_run / 'sensor_prior.json').read_text())
     metadata['frames'] = len(stamps)
     metadata['reused_prior'] = {'source_run': str(source_run.resolve()), 'source_sha256': sha256(source_run / 'sensor_prior.csv'),
                                'scope': 'Exact timestamp-selected original sensor prior values; map posterior not reused'}
@@ -151,7 +152,7 @@ def load_reconstruction(report_path, outputs_root, track, front_stamps, start, c
     """Strict small reconstruction manifest; original indices must match front bag times."""
     report_path, outputs_root = Path(report_path).resolve(), Path(outputs_root).resolve()
     report_path.relative_to(outputs_root)
-    report = json.loads(report_path.read_text())
+    report = loads_saved_json(report_path.read_text())
     if (report.get('schema') != 'calibrated_rig_v1' or report.get('track') != track
             or report.get('coordinate_frame') != 'front_camera_FLU'
             or report.get('reference_time') != 'front_camera_bag_timestamp' or report.get('ply_scale') != 1.):

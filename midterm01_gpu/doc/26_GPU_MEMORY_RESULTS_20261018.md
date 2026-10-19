@@ -61,7 +61,7 @@ baseline、batch2、batch3 的實際輸出各使用原 ROS solver、相同 prior
 
 只暫停原 wrapper 在兩條 Track 之間的啟動：Track1 child 繼續重建及定位，完成後才載入 probe 模型；測完在 `finally` 對同一 wrapper `SIGCONT`，沒有重新啟動完整序列。`wrapper_resumed.json` 保存恢復紀錄，Track2 已啟動；原加速版的六個來源檔 SHA256 保持不變。舊最佳 CSV 沒有覆寫。
 
-本次證據在 `outputs/runs/rig_memory_probe_2610181311/`：
+本次證據在 `outputs/run/track00_test_2610181311/`：
 
 - `identity.json`／`sources/`：模型、原始 JPG、prior、校正、程式版本與實際執行的 script snapshot。
 - `model_results.json`、`chunk_results.json`、`summary.json`：完整重複測量、失敗欄位、數值差異與彙整。
@@ -69,7 +69,7 @@ baseline、batch2、batch3 的實際輸出各使用原 ROS solver、相同 prior
 - `localization_runs.json`、`localization_comparison.json`、逐組 command／log／report／PLY／labels：原 solver 的短段對照。
 - `memory_performance.png`／`.svg`：速度／顯存圖。outputs 不由 Git 同步，需另外保存。
 
-圖表：![顯存與效能對照](../outputs/runs/rig_memory_probe_2610181311/memory_performance.png)
+圖表：![顯存與效能對照](../outputs/run/track00_test_2610181311/memory_performance.png)
 
 測試工具為 `scripts/probe_rig_memory.py`、`analyze_rig_memory.py` 與兩 Track 間排程的 `schedule_rig_probe.py`。後續若重測，應等目前完整重建完成、選新的 outputs 目錄，並明確帶與完整入口相同的 allocator：
 
@@ -77,9 +77,9 @@ baseline、batch2、batch3 的實際輸出各使用原 ROS solver、相同 prior
 cd /home/ricky/sdc_ros2/midterm01_gpu
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   outputs/ml_runtime/venv/bin/python scripts/probe_rig_memory.py \
-  --full-run outputs/runs/three_camera_full_fast_imported_2610181301 \
-  --output outputs/runs/rig_memory_probe_manual_YYMMDDHHmm
-python3 scripts/analyze_rig_memory.py outputs/runs/rig_memory_probe_manual_YYMMDDHHmm
+  --full-run outputs/run/track00_full_2610181301 \
+  --output outputs/run/rig_memory_probe_manual_YYMMDDHHmm
+python3 scripts/analyze_rig_memory.py outputs/run/rig_memory_probe_manual_YYMMDDHHmm
 ```
 
 本輪結論：維持當前完整測試；不因 batch／cache 表中的小差異切換模型設定。PCA 1024 有可重現的取樣改善，可作下一個獨立候選，不需要為約 2% 的預估整幀空間再中斷這輪。

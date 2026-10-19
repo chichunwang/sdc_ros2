@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """在已授權完整 run 的兩 Track 之間插入短測，finally 恢復原 wrapper。"""
+from output_layout import saved_path
 import argparse
 import json
 import os
@@ -61,6 +62,6 @@ def schedule(args):
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--wrapper',type=int,required=True);p.add_argument('--child',type=int,required=True)
-    p.add_argument('--run',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
+    p.add_argument('--run',type=saved_path,required=True);p.add_argument('--output',type=saved_path,required=True)
     p.add_argument('--allocator-config',default='expandable_segments:True',help='Match the production full-run wrapper; use expandable_segments:False to reproduce the initial native-allocator probe')
     schedule(p.parse_args())

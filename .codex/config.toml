@@ -1,0 +1,4 @@
+# 僅作用於本專案；主 agent 模型保持使用者目前選擇。
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 2

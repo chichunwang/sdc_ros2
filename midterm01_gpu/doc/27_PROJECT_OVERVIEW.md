@@ -10,7 +10,7 @@
 
 **三相機運算加速已實作**：獨立入口 `scripts/run_three_camera_full_fast.sh` 保留相同模型、解析度、尺度、同步與取樣規則，改為 GPU 整數 voxel 排序、float64 批次 PCA、向量化 spatial round-robin，並快取校正 remap。四個真實場景的取樣階段由 0.43–1.16 s 降至暖機後 0.066–0.153 s；兩條 Track 的各兩幀 PLY／labels／定位 CSV 雜湊相同。這個倍率只代表取樣階段。使用者已中斷原 run，Track1 保存 2487／3011 幀；`migrate_rig_fast.py` 可嚴格核對並複製到新的加速 run 接續，不能直接以新版 `--resume` 舊 identity。實測與切換流程見 [三相機瓶頸與加速](25_RIG_PERFORMANCE_20261018.md)。
 
-停止原程序後，真正模型推論四幀小測的暖機平均為 **0.780 s/frame**（同位置原紀錄 1.990 s），四幀 PLY／labels 仍相同。本次已匯入到 `outputs/runs/three_camera_full_fast_imported_2610181301`，可直接以加速 wrapper `--resume` 接續；指令見上述效能報告。沒有啟動新的完整序列。
+停止原程序後，真正模型推論四幀小測的暖機平均為 **0.780 s/frame**（同位置原紀錄 1.990 s），四幀 PLY／labels 仍相同。本次已匯入到 `outputs/run/track00_full_2610181301`，可直接以加速 wrapper `--resume` 接續；指令見上述效能報告。沒有啟動新的完整序列。
 
 後續 [顯存換速度測試](26_GPU_MEMORY_RESULTS_20261018.md) 共 72 筆模型量測：batch 2／3、保留配置快取在獨立 native-allocator 短測中未有明顯加速；PCA chunk 1024 取樣快約 21%，換算整幀改善空間約 2%，尚未套用。使用者這輪 Track1 已完成重建／定位，短測後同一 wrapper 已恢復 Track2；完整設定保持原樣。
 
@@ -94,7 +94,7 @@ GPU workspace 是獨立程式快照，與 CPU 不自動同步，也不共用 bui
 
 `pipeline_elapsed_seconds` = `sensor_preparation_seconds` + ROS `elapsed_seconds`；不含建置、版本保存、輸入 PLY SHA256 與 map cache 雜湊核對。新版 `timings.csv.ndt_ms` 是沿用欄名，實際為 **CUDA 搜尋＋CPU 正則化細修**；`fitness_ms=0`。`cuda_converged_frames`／`cuda_seed_used_frames` 是舊 D2D 欄位，新版為 0 屬正常。不得把收斂、fitness、GNSS 或地圖殘差當真值精度。
 
-map 快取預設停用。需要時明確加 `--map-cache outputs/runs/<實驗目錄>/cache_track1_leaf1.pcd`，只能在 GPU outputs 下，且核對 Track、原 map SHA256、leaf sidecar。首次建立仍讀原 map；比較速度須使用相同快取策略。Track1 ASCII map 讀取成本大，命中快取的時間不能與未快取結果直接計算 GPU 加速倍率。
+map 快取預設停用。需要時明確加 `--map-cache outputs/run/<實驗目錄>/cache_track1_leaf1.pcd`，只能在 GPU outputs 下，且核對 Track、原 map SHA256、leaf sidecar。首次建立仍讀原 map；比較速度須使用相同快取策略。Track1 ASCII map 讀取成本大，命中快取的時間不能與未快取結果直接計算 GPU 加速倍率。
 
 ## 環境建置與診斷
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """三相機尺度／時間診斷；使用原始感測器與 map，不計算 ATE 或 Kaggle 分數。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import csv
 import json
@@ -76,18 +77,18 @@ def synchronize(data_root, track, rows, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--data-root', type=Path, default=Path('/root/data'))
+    parser.add_argument('--data-root', type=saved_path, default=Path('/root/data'))
     parser.add_argument('--track', type=int, choices=(1, 2), required=True)
-    parser.add_argument('--baseline-run', type=Path, required=True, help='Original full heading_rts run, sensor_prior only')
-    parser.add_argument('--map-cache', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--baseline-run', type=saved_path, required=True, help='Original full heading_rts run, sensor_prior only')
+    parser.add_argument('--map-cache', type=saved_path, required=True)
+    parser.add_argument('--output', type=saved_path, required=True)
     parser.add_argument('--fit-indices', default='500,1000,1600,2200')
     parser.add_argument('--holdout-indices', default='750,1300,1900,2600')
     parser.add_argument('--reference-scale', type=float, help='Additional held-out evaluation of scale fitted on the other Track')
     args = parser.parse_args()
     args.output.resolve().relative_to(Path('/root/outputs').resolve())
     args.output.mkdir(parents=True)
-    metadata = json.loads((args.baseline_run / 'validation.json').read_text())
+    metadata = loads_saved_json((args.baseline_run / 'validation.json').read_text())
     if metadata['track'] != args.track or metadata.get('sensor_fusion') != 'heading_rts':
         parser.error('Wrong baseline Track/fusion')
     frames = list(csv.DictReader((args.baseline_run / 'frames.csv').open()))
@@ -98,7 +99,7 @@ def main():
     root, index, contract = load_index(args.data_root, args.track, stamps)
     synchronization = synchronize(args.data_root, args.track, index, args.output)
     (args.output / 'synchronization.json').write_text(json.dumps(synchronization, indent=2) + '\n')
-    identity = json.loads(args.map_cache.with_suffix('.pcd.json').read_text())
+    identity = loads_saved_json(args.map_cache.with_suffix('.pcd.json').read_text())
     actual_map_hash = sha256(args.data_root / f'Track{args.track}/map.pcd')
     if identity['track'] != args.track or identity['map_voxel_leaf_size'] != 1 or identity['map_sha256'] != actual_map_hash:
         raise ValueError('Map cache identity mismatch')

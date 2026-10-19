@@ -1,4 +1,5 @@
 #include "localization/sensor_guided.h"
+#include "localization/gicp_metric.h"
 #include <cuda_ndt_backend/nearest_neighbor.h>
 
 #include <algorithm>
@@ -48,8 +49,12 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
                         bool cuda_valid, const Eigen::Vector4d& previous_correction,
                         double smoothing_alpha, double max_xy, double max_yaw,
                         Eigen::Matrix4f& output, Eigen::Vector4d& correction,
-                        GuidedMetrics& metrics, bool use_cuda_nn, const GeometryConfig& geometry_config) {
+                        GuidedMetrics& metrics, bool use_cuda_nn, const GeometryConfig& geometry_config,
+                        const HeightConstraint& height_constraint) {
     geometry_config.Validate();
+    if (height_constraint.anchored && (!std::isfinite(height_constraint.anchor_z) ||
+        std::abs(prior(2, 3) - height_constraint.anchor_z) > HeightConstraint::max_offset + 1e-5))
+        throw std::invalid_argument("Anchored height prior must lie inside the absolute altitude bound");
     metrics = GuidedMetrics{};
     const Eigen::Matrix4f saved_seed = cuda_seed;
     correction.setZero();
@@ -65,6 +70,15 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
     const Eigen::Vector3d translation_prior = prior.block<3, 1>(0, 3).cast<double>();
     std::unique_ptr<SurfaceGeometryCache> geometry;
     if (geometry_config.enabled()) geometry = std::make_unique<SurfaceGeometryCache>(target, geometry_config);
+    std::vector<SurfaceGeometry> source_geometry;
+    if (geometry_config.generalized()) {
+        SurfaceGeometryCache cache(source, geometry_config);
+        source_geometry.reserve(source->size());
+        for (std::size_t i = 0; i < source->size(); ++i) {
+            source_geometry.push_back(cache.At(static_cast<int>(i)));
+            metrics.source_reliable_points += source_geometry.back().reliable;
+        }
+    }
     std::unique_ptr<cuda_ndt_backend::NearestNeighbor> gpu_nn;
     std::vector<int> gpu_to_target;
     if (use_cuda_nn) {
@@ -81,7 +95,8 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
         // within this box for every allowed xyz/yaw correction. The angular
         // arc bound radius*angle covers the entire bounded optimization path.
         const Eigen::Vector3d margin(max_xy + radius * max_yaw + 2.01,
-                                      max_xy + radius * max_yaw + 2.01, 3.51);
+                                      max_xy + radius * max_yaw + 2.01,
+                                      (height_constraint.anchored ? 2.0 : 1.0) * HeightConstraint::max_offset + 2.01);
         low -= margin;
         high += margin;
         std::vector<float> local_target;
@@ -98,23 +113,35 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
             // sensor-only result, not a failed CUDA call or CPU fallback.
             metrics.prior_cost = metrics.final_cost = (0.5 * (2.0 - 0.25)) / (0.3 * 0.3) *
                 (geometry_config.directional() ? geometry_config.normal_gain : 1.0);
+            if (height_constraint.anchored) {
+                const double offset = height_constraint.Offset(translation_prior.z(), 0.0);
+                metrics.prior_cost += 0.5 * offset * offset;
+                metrics.final_cost = metrics.prior_cost;
+            }
             metrics.prior_rmse = metrics.final_rmse = 2.0;
             metrics.update_status = GuidedUpdateStatus::NoMapCandidates;
             return false;
         }
         gpu_nn = std::make_unique<cuda_ndt_backend::NearestNeighbor>(local_target, static_cast<int>(source->size()));
     }
-    // Standard deviations: GNSS XY 0.5 m; carried height 1 m; IMU yaw 3 deg.
+    // Standard deviations: GNSS XY 0.5 m; height regularizer 1 m; IMU yaw 3 deg.
+    // Anchored Z penalizes the absolute nominal-altitude offset, not another
+    // increment about the previously refined height. GNSS Z may be constant.
     const V4 precision(4.0, 4.0, 1.0, 1.0 / std::pow(3.0 * M_PI / 180.0, 2));
     constexpr double huber = 0.5, cutoff = 2.0, cloud_precision = 1.0 / (0.3 * 0.3);
     const double normalize = cloud_precision / static_cast<double>(source->size());
     const auto valid = [&](const V4& x) {
-        return x.allFinite() && x.head<2>().norm() <= max_xy && std::abs(x[2]) <= 1.5 && std::abs(x[3]) <= max_yaw;
+        return x.allFinite() && x.head<2>().norm() <= max_xy &&
+            std::abs(height_constraint.Offset(translation_prior.z(), x[2])) <=
+                HeightConstraint::max_offset + (height_constraint.anchored ? 1e-5 : 0.0) &&
+            std::abs(x[3]) <= max_yaw;
     };
     const auto evaluate = [&](const V4& x, bool derivatives, bool collect_geometry = false) {
         Evaluation e;
-        e.cost = 0.5 * x.dot(precision.cwiseProduct(x));
-        e.gradient = precision.cwiseProduct(x);
+        V4 regularized = x;
+        if (height_constraint.anchored) regularized[2] = height_constraint.Offset(translation_prior.z(), x[2]);
+        e.cost = 0.5 * regularized.dot(precision.cwiseProduct(regularized));
+        e.gradient = precision.cwiseProduct(regularized);
         e.hessian = precision.asDiagonal();
         Eigen::Matrix3d normal_information = Eigen::Matrix3d::Zero();
         Eigen::Vector3d low = Eigen::Vector3d::Constant(std::numeric_limits<double>::infinity());
@@ -136,12 +163,13 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
         }
         std::size_t source_index = 0;
         for (const auto& point : *source) {
+            const std::size_t current_source_index = source_index++;
             const Eigen::Vector3d rotated = rotation * point.getVector3fMap().cast<double>();
             const Eigen::Vector3d transformed = rotated + translation_prior + x.head<3>();
             pcl::PointXYZ query;
             query.getVector3fMap() = transformed.cast<float>();
             if (gpu_nn) {
-                const int local_index = gpu_indices[source_index++];
+                const int local_index = gpu_indices[current_source_index];
                 if (local_index < 0 || static_cast<std::size_t>(local_index) >= gpu_to_target.size())
                     throw std::runtime_error("CUDA NN returned an invalid local index");
                 indices[0] = gpu_to_target[local_index];
@@ -160,16 +188,29 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
             const SurfaceGeometry* surface = nullptr;
             if (geometry && length <= cutoff && (geometry_config.directional() || collect_geometry))
                 surface = &geometry->At(indices[0]);
+            Eigen::Matrix3d pair_metric, metric_derivative;
+            double pair_confidence = surface ? surface->confidence : 0.0;
+            if (geometry_config.generalized() && surface && surface->reliable) {
+                const auto& source_surface = source_geometry[current_source_index];
+                if (!source_surface.reliable) surface = nullptr;
+                else {
+                    const auto metric = MakeGicpMetric(surface->normal, source_surface.normal, rotation,
+                                                       geometry_config.tangent_weight);
+                    pair_metric = metric.weight;
+                    metric_derivative = metric.yaw_derivative;
+                    pair_confidence = std::min(surface->confidence, source_surface.confidence);
+                }
+            } else if (surface) pair_metric = surface->metric;
             double metric_length = length;
             if (geometry_config.directional()) {
                 const double unmatched_loss = huber * (cutoff - .5 * huber);
                 double directional_loss = unmatched_loss;
                 if (surface && surface->reliable) {
-                    metric_length = std::sqrt(std::max(0.0, residual.dot(surface->metric * residual)));
+                    metric_length = std::sqrt(std::max(0.0, residual.dot(pair_metric * residual)));
                     const double projected_loss = metric_length <= huber ? .5 * metric_length * metric_length : huber * (metric_length - .5 * huber);
                     // Unreliable/missing matches retain the same constant cost.
                     // Moving to lower confidence cannot lower cost by itself.
-                    directional_loss -= surface->confidence * (unmatched_loss - projected_loss);
+                    directional_loss -= pair_confidence * (unmatched_loss - projected_loss);
                     ++e.reliable_inliers;
                 }
                 e.cost += normalize * geometry_config.normal_gain * directional_loss;
@@ -186,17 +227,17 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
             jacobian.col(3) = Eigen::Vector3d(-rotated.y(), rotated.x(), 0.0);
             if (collect_geometry && surface && surface->reliable) {
                 ++e.geometry.reliable_points;
-                confidence_sum += surface->confidence;
+                confidence_sum += pair_confidence;
                 const double plane_residual = surface->normal.dot(residual);
                 plane_squared_sum += plane_residual * plane_residual;
                 const Eigen::RowVector4d normal_jacobian = surface->normal.transpose() * jacobian;
                 const V4 state_scale(1.0, 1.0, 1.0, 3.0 * M_PI / 180.0);
                 const Eigen::RowVector4d scaled_jacobian = normal_jacobian * state_scale.asDiagonal();
-                const double w = normalize * surface->confidence * std::min(1.0, huber / std::max(std::abs(plane_residual), 1e-12));
+                const double w = normalize * pair_confidence * std::min(1.0, huber / std::max(std::abs(plane_residual), 1e-12));
                 // No prior, tangential floor or normal_gain is included in the
                 // diagnostic information; it must reveal planar degeneracy.
                 e.geometry.scaled_information.noalias() += w * scaled_jacobian.transpose() * scaled_jacobian;
-                normal_information.noalias() += surface->confidence * surface->normal * surface->normal.transpose();
+                normal_information.noalias() += pair_confidence * surface->normal * surface->normal.transpose();
                 if (!seen[indices[0]]) {
                     seen[indices[0]] = true;
                     ++e.geometry.unique_targets;
@@ -208,10 +249,14 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
             if (!derivatives) continue;
             if (geometry_config.directional()) {
                 if (!surface || !surface->reliable) continue;
-                const double weight = normalize * geometry_config.normal_gain * surface->confidence *
+                const double weight = normalize * geometry_config.normal_gain * pair_confidence *
                     std::min(1.0, huber / std::max(metric_length, 1e-12));
-                e.hessian.noalias() += weight * jacobian.transpose() * surface->metric * jacobian;
-                e.gradient.noalias() += weight * jacobian.transpose() * surface->metric * residual;
+                e.hessian.noalias() += weight * jacobian.transpose() * pair_metric * jacobian;
+                e.gradient.noalias() += weight * jacobian.transpose() * pair_metric * residual;
+                // Source covariance rotates with yaw: retain the derivative so
+                // the gradient agrees with the actual line-search objective.
+                if (geometry_config.generalized())
+                    e.gradient[3] += .5 * weight * residual.dot(metric_derivative * residual);
             } else {
                 const double weight = normalize * std::min(1.0, huber / std::max(length, 1e-12));
                 e.hessian.noalias() += weight * jacobian.transpose() * jacobian;
@@ -236,7 +281,11 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
     metrics.prior_cost = baseline.cost;
     metrics.prior_rmse = std::sqrt(baseline.mse);
     V4 x = V4::Zero();
-    const V4 carried = previous_correction * 0.8;
+    V4 previous = previous_correction;
+    // prior.z already contains the last accepted height. Reusing its old dz
+    // as a fresh increment would apply that vertical motion a second time.
+    if (height_constraint.anchored) previous[2] = 0.0;
+    const V4 carried = previous * 0.8;
     if (valid(carried) && evaluate(carried, false).cost < baseline.cost) x = carried;
     if (cuda_valid) {
         V4 proposal;
@@ -270,7 +319,7 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
         metrics.iterations = iteration + 1;
         if (!accepted || (step.head<3>().norm() < 1e-3 && std::abs(step[3]) < 1e-4)) break;
     }
-    V4 smoothed = (1 - smoothing_alpha) * previous_correction + smoothing_alpha * x;
+    V4 smoothed = (1 - smoothing_alpha) * previous + smoothing_alpha * x;
     // An old correction must never bypass the current sensor bound or objective.
     Evaluation final = valid(smoothed) ? evaluate(smoothed, false) : baseline;
     if (!valid(smoothed) || final.cost > baseline.cost) {

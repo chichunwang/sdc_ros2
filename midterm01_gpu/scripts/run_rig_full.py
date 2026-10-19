@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """使用者手動的三相機批次重建／定位入口；逐幀原子保存與嚴格中斷續跑。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import csv
 import fcntl
@@ -27,7 +28,7 @@ def completed_frame(directory, original_idx, stamp):
     directory = Path(directory)
     if not directory.exists():
         return None
-    record = json.loads((directory / 'frame.json').read_text())
+    record = loads_saved_json((directory / 'frame.json').read_text())
     if record['original_idx'] != original_idx or record['timestamp_ns'] != stamp:
         raise ValueError('Resume frame index/time mismatch')
     for name, digest in record['files_sha256'].items():
@@ -41,7 +42,7 @@ def completed_frame(directory, original_idx, stamp):
 def assert_resume_identity(directory, identity, resume):
     path = Path(directory) / 'identity.json'
     if path.exists():
-        if not resume or json.loads(path.read_text()) != identity:
+        if not resume or loads_saved_json(path.read_text()) != identity:
             raise ValueError('Existing run requires --resume and identical inputs/model/scale/code/configuration')
     else:
         if resume:
@@ -62,10 +63,10 @@ def run(args):
     output = args.output.resolve()
     output.relative_to((root / 'outputs').resolve())
     prior = args.prior_run.resolve()
-    validation = json.loads((prior / 'validation.json').read_text())
+    validation = loads_saved_json((prior / 'validation.json').read_text())
     if validation['track'] != args.track or validation['sensor_fusion'] != 'heading_rts':
         raise ValueError('Prior Track/fusion mismatch')
-    candidate = json.loads(args.candidate.read_text())
+    candidate = loads_saved_json(args.candidate.read_text())
     scale = float(candidate['depth_scale'])
     if not .25 <= scale <= 4.:
         raise ValueError('Candidate scale must be finite within [0.25,4]')
@@ -208,7 +209,7 @@ def run(args):
         if args.localize:
             previous = output/'localization.json'
             if previous.exists():
-                done = json.loads(previous.read_text())
+                done = loads_saved_json(previous.read_text())
                 if done['source_report_sha256'] != sha256(output/'report.json') or done['csv_sha256'] != sha256(done['csv']):
                     raise ValueError('Existing localization result identity mismatch')
                 print(json.dumps(done,indent=2));return
@@ -219,7 +220,7 @@ def run(args):
             with (output/'localization.log').open('a') as log:code=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT).returncode
             if code:raise RuntimeError('Localization failed; inspect localization.log. Reconstruction can be resumed.')
             runs=[line[5:] for line in (output/'localization.log').read_text().splitlines() if line.startswith('Run: ')]
-            loc=Path(runs[-1]);check=json.loads((loc/'validation.json').read_text())
+            loc=Path(runs[-1]);check=loads_saved_json((loc/'validation.json').read_text())
             if not check['output_complete_and_finite']:raise ValueError('Invalid localization output')
             csv_path = output/(f'result_{args.track}.csv' if check['submission_frame_set_complete'] else 'diagnostic_subset.csv')
             shutil.copy2(loc/'diagnostic.csv',csv_path)
@@ -234,8 +235,8 @@ if __name__ == '__main__':
     p.add_argument('--frames',type=int,required=True)
     p.add_argument('--start-frame',type=int,default=0)
     for name in ('data-root','checkpoint','model-repo','prior-run','candidate','output'):
-        p.add_argument('--'+name,type=Path,required=True)
-    p.add_argument('--map-cache',type=Path)
+        p.add_argument('--'+name,type=saved_path,required=True)
+    p.add_argument('--map-cache',type=saved_path)
     p.add_argument('--budget',type=int,default=6000)
     p.add_argument('--resume',action='store_true')
     p.add_argument('--localize',action='store_true')

@@ -2,11 +2,27 @@
 
 #include "localization/geometry_weighting.h"
 
+#include <algorithm>
 #include <Eigen/Core>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
 namespace localization {
+// Legacy bounds each incremental dz. Anchored bounds the final offset from a
+// nominal sensor altitude; this is a model constraint, not measured accuracy.
+struct HeightConstraint {
+    bool anchored = false;
+    double anchor_z = 0.0;
+    static constexpr double max_offset = 1.5;
+    double Offset(double prior_z, double dz) const {
+        return anchored ? prior_z + dz - anchor_z : dz;
+    }
+    double Predict(double sensor_z, double previous_z, double previous_sensor_z) const {
+        if (!anchored) return previous_z;
+        return sensor_z + std::max(-max_offset, std::min(max_offset, previous_z - previous_sensor_z));
+    }
+};
+
 enum class GuidedUpdateStatus {
     NotEvaluated, Accepted, InsufficientInputPoints, NoMapCandidates,
     NonfiniteObjective, InsufficientMatches, InsufficientReliableGeometry,
@@ -27,6 +43,7 @@ struct GuidedMetrics {
     // Candidate support BEFORE rejection. geometry below describes the returned
     // pose (the current sensor prior on rejection), which can have other matches.
     int candidate_inliers = 0, candidate_reliable_points = 0, candidate_unique_targets = 0;
+    int source_reliable_points = 0;  // GICP only; not calibrated confidence
     GeometryMetrics geometry;
 };
 
@@ -39,5 +56,6 @@ bool RefineSensorGuided(const pcl::PointCloud<pcl::PointXYZ>::ConstPtr& source,
                         double smoothing_alpha, double max_xy, double max_yaw,
                         Eigen::Matrix4f& output, Eigen::Vector4d& correction,
                         GuidedMetrics& metrics, bool use_cuda_nn = false,
-                        const GeometryConfig& geometry_config = GeometryConfig());
+                        const GeometryConfig& geometry_config = GeometryConfig(),
+                        const HeightConstraint& height_constraint = HeightConstraint());
 }  // namespace localization

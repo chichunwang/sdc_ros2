@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """真實短段：dense head batch／allocator cache／PCA chunk 的速度與輸出對照。"""
+from output_layout import loads_saved_json, saved_path
 import argparse
 import csv
 import gc
@@ -37,7 +38,7 @@ def probe(args):
     from rig_geometry_accel import CachedRectifier,GeometryAccelerator
     from three_camera_source import camera_headers,resolve_camera_timestamps,sha256
     root=Path(__file__).resolve().parents[1];out=args.output.resolve()
-    out.relative_to((root/'outputs/runs').resolve())
+    out.relative_to((root/'outputs/run').resolve())
     if (out/'identity.json').exists():raise ValueError('Existing probe evidence cannot be overwritten; choose a fresh output directory')
     out.mkdir(exist_ok=True)
     # A complete model cannot be loaded alongside another reconstruction.
@@ -45,7 +46,7 @@ def probe(args):
     if active.returncode==0:raise RuntimeError('Another full reconstruction is active; no competing model loaded')
     checkpoint=root/'outputs/ml_runtime/checkpoint'
     data=root.parent/'midterm01/data';candidate=args.full_run/'candidate.json'
-    scale=json.loads(candidate.read_text())['depth_scale']
+    scale=loads_saved_json(candidate.read_text())['depth_scale']
     paths=[Path(__file__),root/'scripts/rig_geometry_accel.py',root/'scripts/calibrated_rig_geometry.py',root/'scripts/run_rig_fast.py']
     snapshots=out/'sources';snapshots.mkdir(exist_ok=True)
     for p in paths:shutil.copy2(p,snapshots/p.name)
@@ -57,8 +58,8 @@ def probe(args):
         'allocator_environment':{name:os.environ.get(name) for name in ('PYTORCH_CUDA_ALLOC_CONF','PYTORCH_ALLOC_CONF')},
         'allocator_backend':torch.cuda.get_allocator_backend(),
         'prior_sha256':{},'calibration_sha256':{},'inputs':[]}
-    priors={1:root/'outputs/runs/track1_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_3011f_70rv9cj4',
-            2:root/'outputs/runs/track2_sensor_guided_heading_rts_geometry_directional_cuda_robust_icp_d2d_3299f_7o_atg6_'}
+    priors={1:root/'outputs/run/track01_full_2610172233',
+            2:root/'outputs/run/track02_full_2610172238'}
     samples=[]
     for track,indices in [(1,[1505,1506]),(2,[1661,1662])]:
         with (data/f'kaggle_track0{track}/Track{track}_Mapanything_ply/index.csv').open() as f:rows=list(csv.DictReader(f))
@@ -209,5 +210,5 @@ def probe(args):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--output',type=Path,required=True);p.add_argument('--full-run',type=Path,required=True)
+    p.add_argument('--output',type=saved_path,required=True);p.add_argument('--full-run',type=saved_path,required=True)
     probe(p.parse_args())
