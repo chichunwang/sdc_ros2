@@ -1,5 +1,7 @@
 # 01｜程式架構圖與完整演算法流程
 
+2026-10-20 新研究入口：[`run_map_smoother.py`](../scripts/run_map_smoother.py) 由 raw bag／map → 本輪 motion_rts 初始化 → 每幀獨立分層 Sim(3)（6-DOF＋尺度）→ 幾何及相鄰位移檢查 → 12 秒穩健慢修正 → raw GNSS／gyro／NHC／GNSS 慢 bias 批次圖 → CSV。兩 Track 共用模型與參數，本輪先測 Track2；新分支使用 CPU SciPy／KD-tree，與下述已評分 CUDA 主線分開。方法、限制及手動 full 命令見 [42](42_LAYERED_SCALE_SLOW_MAP_20261020.md)，尚無新 Kaggle 分數。
+
 核對日期：2026-10-18（Asia/Taipei）。本文直接對照目前 checkout 的 Python、C++、CUDA、Compose 與既有輸出，從「輸入命令」一路解釋到「產生 CSV」。只整理與讀取證據，沒有重新執行定位。
 
 **先抓住主線：平常從 Ubuntu 主機執行 `scripts/benchmark.py`，Python 先準備每幀 GNSS／IMU 先驗，再透過 `docker exec` 執行容器裡的 C++ `localization`。C++ 逐幀把影像點雲放到 LiDAR 地圖中，寫出矩陣；Python 最後檢查矩陣並產生 CSV。**
@@ -37,7 +39,7 @@ flowchart TD
     H["Ubuntu 主機：scripts/dev.sh up"] --> D["啟動 GPU container 與資料掛載"]
     D --> B["主機：scripts/benchmark.py"]
     B --> I["accuracy/benchmark.py：解析參數、選 Track／幀、建立 run"]
-    PLY["TrackN/raw_ply：已重建的前相機點雲"] --> I
+    PLY["TrackN/raw_ply：老師以 LoGeR 預先重建的前相機點雲"] --> I
     I --> F["frames.csv、params.json／yaml、來源 hash"]
     F --> S["docker exec：prepare_sensor_prior.py"]
     BAG["TrackN.db3：GNSS position、IMU orientation"] --> S

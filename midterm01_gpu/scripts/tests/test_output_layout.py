@@ -56,5 +56,14 @@ class OutputLayoutTests(unittest.TestCase):
         (self.run/'validation.json').write_text(json.dumps(validation))
         self.assertEqual(latest_full_run(self.outputs.parent,1),self.run)
 
+    def test_default_replay_skips_per_frame_scale_method(self):
+        validation={'output_complete_and_finite':True,'returncode':0,'validation_errors':[],'frames':3011}
+        (self.run/'result.txt').write_text('fixture')
+        (self.run/'validation.json').write_text(json.dumps(validation))
+        variable=self.outputs/'run/track01_full_2610200300';variable.mkdir()
+        (variable/'result.txt').write_text('fixture')
+        (variable/'validation.json').write_text(json.dumps(dict(validation,replay_supported=False)))
+        self.assertEqual(latest_full_run(self.outputs.parent,1),self.run)
+
 
 if __name__=='__main__':unittest.main()

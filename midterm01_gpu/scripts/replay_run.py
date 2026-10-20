@@ -94,6 +94,8 @@ def load_run(root, data_root, run=None, track=1, start=0, count=0):
     root, data_root = Path(root).resolve(), Path(data_root).resolve()
     run = resolve_run(root, run, track)
     params = read_json(run / 'params.json')
+    if params.get('replay_supported') is False or params.get('method') == 'map_scale_slow_v1':
+        raise ValueError('此 run 使用逐幀尺度；目前 RViz 回放只支援固定 ply_scale，請選擇固定尺度的既有 run。')
     match = re.fullmatch(r'/root/data/Track([12])', params['map_path'])
     if not match or int(match[1]) != track:
         raise ValueError('run 的 Track 與 --track 不一致。')

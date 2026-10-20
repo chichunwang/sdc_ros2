@@ -2,11 +2,13 @@
 
 更新：2026-10-20。以下 Docker／benchmark／檔案指令都在 **Ubuntu 主機** 執行。後續使用 `midterm01_gpu`，CPU 程式／結果保留；完整 Track 測試由使用者手動執行，不因整理文件而重跑。
 
-本輪以 Track1 0.6 為目標，新增 `--sensor-fusion turn_heading_rts`／`pose_yaw` 及原前相機 stereo 尺度實驗。新 full 命令位於 [16檔案最上方](16_run_geometry_directional.txt)，方法與實測見 [39](39_HEADING_AND_STEREO_SCALE_20261020.md)；目前可用 `turn_heading_rts --cloud-source front --ply-scale 7.404260939740923 --geometry-mode directional --height-mode carry` 進行完整評分。本次只改 Python，不需重編。本輪尚無新分數，不把0.6目標寫成已達成；原最佳仍是 motion_rts／scale3。
+最新實驗入口見 [42｜分層尺度與慢變 map 修正](42_LAYERED_SCALE_SLOW_MAP_20261020.md)，完整 Track2 命令在 [16](16_run_geometry_directional.txt) 最上方。兩 Track 共用同一算法及參數，本輪以 Track2 評分；44 項檢查與三段 160 幀完整性通過，尚無新 Kaggle 分數。新分支明確使用 CPU SciPy／KD-tree，讀取老師以 LoGeR 重建的前相機 `raw_ply`，沒有重跑 LoGeR。逐幀尺度目前不支援原 RViz 固定尺度介面，回放會跳過或明確拒絕此方法。
+
+最新回報：[40｜尺度與航向完整評分](40_SCORED_SCALE_FAILURE_AND_POSE_YAW_20261020.md)記錄 `turn_heading_rts＋scale7.40426` 得1.15167，以及 `pose_yaw＋scale3` 得1.30507；兩者皆未超過最佳1.15008，pose_yaw 已停止推薦且不重跑。[16｜命令紀錄](16_run_geometry_directional.txt)將該 full 命令保留為歷史。請先讀[41｜外部方法分析](41_EXTERNAL_REFERENCE_ANALYSIS_20261020.md)；外部 score 0.65479 的 CSV 已保存，但來源算法與實作證據不足，不能稱為本專案已重現或新最佳。
 
 2026-10-20 使用者最新決定：Kaggle 只取最佳成績，後續不另設「完整候選」資格。有可解釋的算法改動並完成必要程式、來源契約及輸出檢查後，即提供對應 full 命令由使用者實際評分；本地尚未證明精度提升不作為阻擋 full 的理由。短段與消融用於檢查機制及理解差異，實際分數與來源 SHA 保存於各次 run，較差結果也保留。[常用指令檔](16_run_geometry_directional.txt) 同步此約定。
 
-[38｜來源剛體與尺度研究](38_SOURCE_RIGIDITY_AND_SCALE_20261020.md) 的最新工具目前僅做來源診斷，沒有改變定位主流程；scale=6.06515 尚非已校準設定，surfel_joint 仍無可靠 factor。這些是已知證據及限制，不是新建一個需批准才能完整測試的流程。本次 Python 研究更新不需重編 C++；相同 CSV bytes 的既有版本無須為同一結果重算。
+[38｜來源剛體與尺度研究](38_SOURCE_RIGIDITY_AND_SCALE_20261020.md) 的來源工具僅做診斷，沒有改變定位主流程；scale=6.06515 尚非已校準設定，surfel_joint 仍無可靠 factor。這些是已知證據及限制，不是新建一個需批准才能完整測試的流程。本次 Python 研究更新不需重編 C++；相同 CSV bytes 的既有版本無須為同一結果重算。
 
 第一次理解程式請先讀 [01｜架構圖與逐步流程](01_PROGRAM_FLOW.md)；歷史、日期與舊名對照見 [28｜文件目錄](28_DOCUMENTATION_INDEX.md)。
 

@@ -59,6 +59,11 @@ class ReplayRunTests(unittest.TestCase):
         rotated_x = [1 - 2 * (y*y + z*z), 2 * (x*y + z*w), 2 * (x*z - y*w)]
         for a, b in zip(rotated_x, [0., 1., 0.]): self.assertAlmostEqual(a, b)
 
+    def test_rejects_variable_scale_run_before_fixed_scale_fields(self):
+        self.params={'method':'map_scale_slow_v1','replay_supported':False}
+        self.save_params()
+        with self.assertRaisesRegex(ValueError,'逐幀尺度'):self.load()
+
     def test_full_3d_rotation_and_near_pi_quaternion(self):
         roll, pitch, yaw = .3, -.4, 2.9
         cr, sr, cp, sp, cy, sy = math.cos(roll), math.sin(roll), math.cos(pitch), math.sin(pitch), math.cos(yaw), math.sin(yaw)

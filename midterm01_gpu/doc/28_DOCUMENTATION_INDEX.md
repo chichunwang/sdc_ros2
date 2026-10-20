@@ -61,7 +61,10 @@
 | 36／2026-10-19 | [配準與融合升級](36_REGISTRATION_AND_FUSION_UPGRADE_20261019.md)：最佳完整輸出的方向／界線診斷、有界 GICP 864 筆短段、最小 GNSS／gyro 聯合原型與 24 留段，未升為最佳 | 使用者要求分析後即測試 |
 | 37／2026-10-19 | [細 map 水平觀測與跨幀聯合估計](37_HORIZONTAL_SURFEL_JOINT_20261019.md)：0.3 m surfel、frame／lag audit、可靠 map factors 接入 planar graph、拒絕保留與通用完整命令；尚無真實精度提升 | 使用者指定下一階段實作與驗證 |
 | 38／2026-10-20 | [來源剛體一致性與尺度](38_SOURCE_RIGIDITY_AND_SCALE_20261020.md)：最新 Track1 第 6 名快照、96 對 RGB／3D 跨幀檢查、共用尺度與 16 場景 map 消融；候選未通過，不替換最佳 | 使用者要求持續優化 Track1 |
-| 39／2026-10-20 | [向Track1 0.6推進：航向與原前相機stereo尺度](39_HEADING_AND_STEREO_SCALE_20261020.md)：turn_heading_rts／pose_yaw接入通用定位、原PLY的stereo固定尺度7.40426、分散短段與full指令；尚無本輪正式分數 | 使用者指定0.6目標，完整評分仍由使用者執行 |
+| 39／2026-10-20 | [向Track1 0.6推進：航向與原前相機stereo尺度](39_HEADING_AND_STEREO_SCALE_20261020.md)：turn_heading_rts／pose_yaw接入通用定位、原PLY的stereo固定尺度7.40426、分散短段與full指令；後續完整評分 Track1 1.15167，較最佳1.15008退步約0.138%，未升為最佳 | 已評分歷史結果，完整數據見40 |
+| 40／2026-10-20 | [尺度與航向完整評分失敗](40_SCORED_SCALE_FAILURE_AND_POSE_YAW_20261020.md)：scale7.40426得1.15167、pose_yaw＋scale3得1.30507；兩者未勝最佳，pose_yaw停止推薦 | 使用者回報完整評分後更新 |
+| 41／2026-10-20 | [外部方法分析](41_EXTERNAL_REFERENCE_ANALYSIS_20261020.md)：外部 score 0.65479 CSV、方法口述與目前缺少的重現證據 | 外部參考 CSV 與方法說明 |
+| 42／2026-10-20 | [分層尺度配準與慢變 map 修正](42_LAYERED_SCALE_SLOW_MAP_20261020.md)：兩 Track 共用逐幀尺度／6-DOF／12 s anchor／GNSS 慢 bias 與 gyro／NHC graph；本輪 Track2 短測與手動 full 命令 | 依學長文字方法建立的新研究分支，尚無新分數 |
 
 ## 開發脈絡
 
@@ -99,7 +102,7 @@
 | 為什麼有 WARN／INFO，還是有完整 pose？ | 01 第 8–9 節 → 18 |
 | 三相機怎麼走到我開的 result_2.csv？ | 01 第 10 節 → 23 → 24 → 25 |
 | 為什麼顯存增加卻沒變快？ | 25 → 26 |
-| 只要可貼上的最新前相機命令？ | 08 → 16；10／13 是較早消融版本 |
+| 最新外部方法與本地版本差異？ | 41；full 命令記錄見16，已失敗的pose_yaw命令僅供歷史參照 |
 
 ## 官方、CPU 與其他必要參考的中央索引
 

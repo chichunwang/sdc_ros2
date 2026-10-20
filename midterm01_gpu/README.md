@@ -2,9 +2,11 @@
 
 文件已集中到 **[doc/](doc/28_DOCUMENTATION_INDEX.md)**，以兩位數編號排列。
 
-2026-10-20 本輪定位更新：[39｜向Track1 0.6推進：航向與原前相機stereo尺度](doc/39_HEADING_AND_STEREO_SCALE_20261020.md)。新增 `turn_heading_rts` 與 `pose_yaw`，並把原前相機 stereo 推導的固定尺度 `7.404260939740923` 接入定位短測；新 full 命令已放在 [16｜常用指令](doc/16_run_geometry_directional.txt) 最上方，使用者可直接執行評分。0.6為目標，尚無本輪分數；已評分最佳保持1.15008／0.30488。
+2026-10-20 新實驗：[42｜逐幀尺度、分層 6-DOF 與慢變 map 修正](doc/42_LAYERED_SCALE_SLOW_MAP_20261020.md)。Track1／Track2 共用同一算法與參數；本輪用 Track2 驗證及提供手動 full 命令，因 Track1 上傳額度已用完。新入口為 `scripts/run_map_smoother.py`，由原始 bag／map 與老師提供的前相機 LoGeR `raw_ply` 開始，未重新執行 LoGeR。44 項測試與首／中／尾共 160 幀完整性通過，其中兩段實際求解 graph；這是明確的 SciPy／KD-tree CPU 研究分支，尚無新 Kaggle 分數，原 CUDA 流程與已評分最佳保持。
 
-2026-10-20 最新研究：[38｜來源剛體一致性與尺度](doc/38_SOURCE_RIGIDITY_AND_SCALE_20261020.md)。新截圖 Track1 第 6 名／1.15008；已完成 96 對來源跨幀檢查與 16 場景尺度／map 對照。共用尺度候選改善部分時間殘差，但跨場景不一致、可靠 map factors 仍為 0，不替換最佳或推薦完整重跑。12 項新機制＋9 項 surfel 回歸通過。
+2026-10-20 航向／尺度評分更新：[40｜尺度退步與 pose_yaw 完整評分](doc/40_SCORED_SCALE_FAILURE_AND_POSE_YAW_20261020.md)。`turn_heading_rts`＋尺度7.40426得1.15167；`pose_yaw`＋尺度3得1.30507，兩者都差於最佳1.15008，pose_yaw 已停止推薦且不重跑。先看[41｜外部方法分析](doc/41_EXTERNAL_REFERENCE_ANALYSIS_20261020.md)；[16｜命令紀錄](doc/16_run_geometry_directional.txt)開頭為本輪新分支命令，後面保留已失敗命令作歷史。最新外部方法 score 0.65479 的 CSV 已保存，但原始算法／ICP／尺度與真值證據不足，不能稱為本專案已重現或新最佳。
+
+2026-10-20 來源尺度研究：[38｜來源剛體一致性與尺度](doc/38_SOURCE_RIGIDITY_AND_SCALE_20261020.md)。新截圖 Track1 第 6 名／1.15008；已完成 96 對來源跨幀檢查與 16 場景尺度／map 對照。共用尺度候選改善部分時間殘差，但跨場景不一致、可靠 map factors 仍為 0，不替換最佳或推薦完整重跑。12 項新機制＋9 項 surfel 回歸通過。
 
 所有完整與短段測試統一放 `outputs/run/`，例如 `track01_full_2610192232`、`track02_full_2610192240`、`track01_test_YYMMDDHHmm`。算法／版本／分數記在各次目錄內 `test_info.json`／`params.json`，不另分最近／最佳目錄，不新增測試索引。
 
@@ -20,7 +22,7 @@
 
 水平 map／joint 分支見 [37｜細 map 水平觀測與跨幀聯合估計](doc/37_HORIZONTAL_SURFEL_JOINT_20261019.md)。`--horizontal-refinement surfel_joint` 已實作，但短段及使用者兩條完整測試都沒有可靠 map factor，聯合求解跳過，CSV 與原 motion_rts 最佳逐 byte 相同。2026-10-20 使用者回報 Track1 仍 1.15008；這輪未提升精度，不建議重跑／重複提交相同候選。benchmark 現在明確提示未產生新提交內容；詳細拒絕原因與未確認外參見 37。
 
-**目前最佳：Track1 1.15008、Track2 0.30488，motion_rts＋directional＋carry。** 已評分來源在 `outputs/run/track01_full_2610191750`／`track02_full_2610191757`，分數記於各自test_info.json；GNSS pose orientation 的替代／獨立融合實驗見 [35](doc/35_MOTION_RTS_AND_GNSS_HEADING_20261019.md)，尚無新分數。
+**目前自行重現最佳：Track1 1.15008、Track2 0.30488，motion_rts＋directional＋carry。** 已評分來源在 `outputs/run/track01_full_2610191750`／`track02_full_2610191757`，分數記於各自test_info.json；[35](doc/35_MOTION_RTS_AND_GNSS_HEADING_20261019.md) 的 pose_heading_rts／independent_heading_rts 消融分支尚無回報分數，不含已評分退步的 pose_yaw（見40）。外部參考0.65479與欄位對照見41，尚未重現其定位算法。
 
 三相機完整成績：Track1 **1.15346**、Track2 **0.31064**，均未超過原前相機最佳 1.15275／0.30576。兩條輸出與 24 組消融已核對，原因與改進順序見 [29｜三相機完整成績分析](doc/29_THREE_CAMERA_SCORED_ANALYSIS_20261018.md)。
 

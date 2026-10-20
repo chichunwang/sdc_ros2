@@ -1,4 +1,30 @@
-# 2026-10-20 本輪更新：以Track1 0.6為目標；以下是新版本full命令，尚無本輪Kaggle分數。
+# 2026-10-20 最新新算法：兩 Track 共用逐幀尺度＋分層 6-DOF＋12 s 慢修正＋GNSS bias/gyro/NHC graph。
+# 本輪先跑 Track2，因 Track1 上傳額度用完；沒有 Track 專屬調參。方法／檢查見 doc/42。
+# 新分支明確使用主機 ML venv 的 CPU SciPy/KD-tree；不需重編 C++，尚無新分數。
+# 從原 bag/map 開始，不綁定歷史 run/cache；由使用者手動執行完整 Track 與提交。
+cd /home/ricky/sdc_ros2/midterm01_gpu
+bash scripts/dev.sh up
+PYTHONDONTWRITEBYTECODE=1 OPENBLAS_NUM_THREADS=1 outputs/ml_runtime/venv/bin/python scripts/run_map_smoother.py --track 2 --full
+# 終端會印出新 outputs/run/track02_full_YYMMDDHHmm；通過 validation.json 後提交該目錄 diagnostic.csv。
+# 須 returncode=0、output_complete_and_finite=true、validation_errors=[]、3299列且 submission_frame_set_complete=true。
+# 之後 Track1 只改 --track 1；算法／參數相同。請只貼上需要的一組命令，別執行整份歷史紀錄。
+
+# 以下為歷史：pose_yaw＋front scale3 完整評分為 Track1 1.30507，較最佳1.15008高13.47645%。
+# 此版本已失敗，停止推薦且不要重跑；上一輪turn_heading_rts＋scale7.40426為1.15167，也未勝最佳。
+# 先讀 doc/41_EXTERNAL_REFERENCE_ANALYSIS_20261020.md 的外部方法分析，再決定研究方向。
+# 以下只保留歷史命令作為紀錄，不是新 full 推薦；請勿整份txt當shell腳本執行。
+
+# 歷史失敗命令（Track1已評分1.30507，不要重跑）：
+# cd /home/ricky/sdc_ros2/midterm01_gpu
+# bash scripts/dev.sh up
+# python3 scripts/benchmark.py --track 1 --full \
+#   --profile sensor_guided --sensor-fusion pose_yaw \
+#   --cloud-source front --ply-scale 3 \
+#   --geometry-mode directional --height-mode carry
+# 使用者回報分數1.30507；該run為outputs/run/track01_full_2610200155。
+
+# 上一輪歷史版本（Track1已評分1.15167，非本輪建議重跑）：
+# 2026-10-20：以Track1 0.6為目標，但該輪尚未達成。
 # 原前相機PLY以已知stereo baseline估共用尺度7.404260939740923，直接取代3，不是3再乘此值。
 # turn_heading_rts：原GNSS路徑對齊沿IMU方向積分的線性車速，保留motion XY與IMU roll/pitch。
 # 新尺度仍有跨場景／距離形變與motion prior依賴，實際效果以你的Kaggle評分確認。

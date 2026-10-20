@@ -59,6 +59,10 @@ def latest_full_run(root,track):
         try:
             v=json.loads((run/'validation.json').read_text())
         except (OSError,ValueError):continue
+        # The existing RViz publisher consumes one scalar source scale. Runs
+        # with per-frame map scales remain valid submissions, but cannot be
+        # selected for that publisher until its manifest supports those scales.
+        if v.get('replay_supported') is False:continue
         settings_file=run/'horizontal_settings.json'
         try:settings=json.loads(settings_file.read_text()) if settings_file.is_file() else {}
         except (OSError,ValueError):continue
