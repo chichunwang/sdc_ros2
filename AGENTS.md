@@ -65,6 +65,7 @@
 | `midterm01/` | CPU 參考版本、共用 data／config、官方題目與交付文件 |
 | `hw2/` | 原有 ROS 2 Humble Docker、感測器分析工具，保留既有用途 |
 | `hw3/` | Markov chain、模擬與穩態分布練習 |
+| `hw4/` | Radar odometry／GPS EKF；沿用 HW2 Humble 容器，資料與執行由使用者在 Ubuntu 手動處理 |
 | `docs/` | 通用作業／工具說明 |
 | `tmp/` | 忽略的暫存／擷取／預覽，不作為交接依賴 |
 
