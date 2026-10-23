@@ -1,0 +1,12 @@
+{
+  "origin": "track01_full_2610191750/localization_sources",
+  "source_date": "2026-10-19",
+  "unchanged_core": true,
+  "source_sha256": {
+    "src/sensor_guided.cpp": "4d8afe736b56c1564c1e1c835abcbac321895e6ad8fe2302b7e91cc74ecab879",
+    "src/geometry_weighting.cpp": "4c61d72dc1046fb0d741585e78b006948d5697c87b66d42fa20703ba59c65c14",
+    "include/localization/sensor_guided.h": "363ad8363d37b5200f98affc8bb02afc92c3058d735375a3ebcde723c0981a8e",
+    "include/localization/geometry_weighting.h": "94fbece61102e82eb742d6b2c751ce47572aff5309780c37a7cd943447662f04"
+  },
+  "scope": "historical scored four-DOF ICP core only; GNSS/RTS prior generator not included; scores not transferred to Track3"
+}

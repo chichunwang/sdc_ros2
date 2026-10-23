@@ -14,6 +14,8 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 METHOD = 'map_scale_slow_v1'
+TIMING_HEADER = ['idx', 'original_idx', 'timestamp_ns', 'backend', 'load_ms',
+                 'registration_ms', 'total_ms', 'map_accepted', 'scale']
 
 
 def digest(path):
@@ -115,7 +117,15 @@ def main():
             'start_frame': args.start_frame, 'data_root': str(args.data_root), 'container': args.container,
             'prior': 'raw bag motion_rts, independent registration initialization only',
             'map_leaf_m': .3, 'output_parent': str(ROOT/'outputs/run'),
-            'scale_mode': 'per_frame_map_observation', 'replay_supported': False}
+            'scale_mode': 'per_frame_map_observation', 'replay_supported': False,
+            'progress_format': 'frame_timing_v1', 'timings_header': TIMING_HEADER,
+            'timing_scope': {
+                'load_ms': 'load_ply only',
+                'registration_ms': 'register_frame only',
+                'total_ms': 'load start through registration completion; excludes serialization, graph and preprocessing',
+                'graph_elapsed_seconds': 'smooth_trajectory only',
+                'map_frame_seconds': 'sum of per-frame total_ms / 1000',
+                'pipeline_elapsed_seconds': 'entire run after directory creation through validation'}}
     if args.dry_run:
         print(json.dumps(plan, ensure_ascii=False, indent=2))
         return 0
@@ -125,8 +135,9 @@ def main():
     summary = {'track': args.track, 'frames': len(selected), 'returncode': 1,
                'output_complete_and_finite': False, 'submission_frame_set_complete': False,
                'replay_supported': False,
-               'validation_errors': [], 'map_accepted_frames': 0, 'graph_report': None}
-    print(f'本輪輸出: {run}', flush=True)
+               'validation_errors': [], 'map_accepted_frames': 0, 'graph_report': None,
+               'graph_elapsed_seconds': 0., 'map_frame_seconds': 0.}
+    print(f'Run: {run.resolve()}', flush=True)
     try:
         import numpy as np
         import scipy
@@ -152,7 +163,8 @@ def main():
         sources.extend(ROOT/path for path in ('workspace/src/localization/src/map_modified.cpp',
                                                'workspace/src/localization/CMakeLists.txt'))
         required_sources = ('run_map_smoother.py', 'map_scale_icp.py', 'slow_map_graph.py',
-                            'kinematic_graph.py', 'horizontal_surfel.py')
+                            'kinematic_graph.py', 'horizontal_surfel.py', 'run_analysis.py',
+                            'plot_run_analysis.py')
         if any(not (ROOT/'scripts'/name).is_file() for name in required_sources):
             raise ValueError('Required execution source missing from snapshot')
         hashes = {}
@@ -225,24 +237,47 @@ def main():
         fine = prepare_fine_map(run/'fine_map', args.data_root, args.track, args.container, bounds, leaf=.3)
         scene = LayeredScaleMap(load_binary_map(fine), config)
         observations = []
-        with (run/'observations.jsonl').open('x') as stream:
+        with (run/'observations.jsonl').open('x') as stream, (run/'timings.csv').open('x', newline='') as timing_stream:
+            timing_writer = csv.writer(timing_stream)
+            timing_writer.writerow(TIMING_HEADER)
+            timing_stream.flush()
             for i, (_, path) in enumerate(selected):
                 frame_started = time.perf_counter()
-                observation = register_frame(scene, load_ply(path, max_points=12000, leaf=.03), priors[i], config)
+                points = load_ply(path, max_points=12000, leaf=.03)
+                load_finished = time.perf_counter()
+                registration_started = time.perf_counter()
+                observation = register_frame(scene, points, priors[i], config)
+                frame_finished = time.perf_counter()
+                load_ms = (load_finished-frame_started)*1000
+                registration_ms = (frame_finished-registration_started)*1000
+                total_ms = (frame_finished-frame_started)*1000
                 observation.update(idx=i, original_idx=args.start_frame+i, timestamp_ns=selected[i][0],
-                                   elapsed_seconds=time.perf_counter()-frame_started)
+                                   elapsed_seconds=frame_finished-frame_started,
+                                   load_ms=load_ms, registration_ms=registration_ms, total_ms=total_ms)
                 observations.append(observation)
+                summary['map_frame_seconds'] += total_ms/1000
+                timing_writer.writerow([i, args.start_frame+i, selected[i][0], 'scipy_cpu_kdtree',
+                                        load_ms, registration_ms, total_ms,
+                                        bool(observation['accepted']), observation['scale']])
+                timing_stream.flush()
                 stream.write(json.dumps(observation, allow_nan=False)+'\n')
                 stream.flush()
-                print(f'map {i+1}/{len(stamps)} accepted={observation["accepted"]}', flush=True)
+                status = 'accepted' if observation['accepted'] else 'rejected'
+                print(f'Frame {i+1}/{len(stamps)}: idx={args.start_frame+i}, map={status}, '
+                      f'scale={observation["scale"]:.6f}, load={load_ms:.2f} ms, '
+                      f'registration={registration_ms:.2f} ms, frame={total_ms:.2f} ms', flush=True)
         with np.load(run/'raw_sensors.npz', allow_pickle=False) as raw:
             raw_dict = {key: raw[key] for key in raw.files}
-        poses, report, states = smooth_trajectory(raw_dict, np.asarray(stamps, dtype=np.int64), priors, observations, config=graph_config)
+        graph_stamps = np.asarray(stamps, dtype=np.int64)
+        graph_started = time.perf_counter()
+        poses, report, states = smooth_trajectory(raw_dict, graph_stamps, priors, observations, config=graph_config)
+        summary['graph_elapsed_seconds'] = time.perf_counter()-graph_started
         write_json(run/'graph_report.json', report)
         executed = bool(report['joint_estimation_executed'])
         summary['joint_estimation_executed'] = executed
         summary['initialization_source'] = 'current run raw-bag motion_rts sensor_prior.csv'
-        print(f'聯合 graph 求解: {executed}；套用修正: {bool(report["applied"])}', flush=True)
+        print(f'Graph: executed={str(executed).lower()}, applied={str(bool(report["applied"])).lower()}, '
+              f'time={summary["graph_elapsed_seconds"]*1000:.2f} ms', flush=True)
         if not executed:
             print('無受支持慢變 map anchors：保留本輪 motion_rts 感測初始化；'
                   '此輸出未與已評分 C++ 定位結果作 bytes 比較。', flush=True)
@@ -282,7 +317,13 @@ def main():
     finally:
         summary['pipeline_elapsed_seconds'] = time.perf_counter()-started
         write_json(run/'validation.json', summary)
-    print(f'完整性檢查通過: {run}/diagnostic.csv', flush=True)
+    from run_analysis import generate_after_full
+    generate_after_full(run, summary, full=args.full)
+    accepted = summary['map_accepted_frames']
+    print(f'Finished: frames={len(selected)}, accepted_map={accepted}, '
+          f'rejected_map={len(selected)-accepted}, total={summary["pipeline_elapsed_seconds"]:.3f} s', flush=True)
+    print(f'CSV: {run}/diagnostic.csv', flush=True)
+    print(f'Validation: {run}/validation.json', flush=True)
     return 0
 
 

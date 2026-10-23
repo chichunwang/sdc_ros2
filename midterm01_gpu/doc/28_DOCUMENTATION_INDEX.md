@@ -1,10 +1,15 @@
 # 28｜文件目錄、開發時間序與舊名對照
 
-整理日期：2026-10-18；回放索引更新：2026-10-19（Asia/Taipei）。Midterm01 GPU 的說明正文集中在 `/home/ricky/sdc_ros2/midterm01_gpu/doc/`；文件名使用兩位數前綴。**先讀 [01｜程式架構與完整流程](01_PROGRAM_FLOW.md)**，再依問題選讀下面的文件。
+整理日期：2026-10-18；規則索引更新：2026-10-23（Asia/Taipei）。Midterm01 GPU 的說明正文集中在 `/home/ricky/sdc_ros2/midterm01_gpu/doc/`；一般文件使用兩位數前綴。現行官方規則與歷史原件集中於 `Competition Regulations/`；核心入口及因果規則程式盤點見 [48](48_RULES_AND_CODE_AUDIT_20261023.md)。**先讀 [01｜程式架構與完整流程](01_PROGRAM_FLOW.md)**，再依問題選讀下面的文件。
 
 ## 編號與保存規則
 
+**現行規則：**[00 整合新版（31 頁）](<Competition Regulations/00_SDC_2026_Midterm01_Localization_整合新版_20261022.pdf>)、[01 因果定位細則（4 頁）](<Competition Regulations/01_Mid01_Updates_Rules.pdf>)；[90](<Competition Regulations/90_舊版_已取代_可刪除_SDC_2026_Midterm01_Localization_24頁.pdf>)／[91](<Competition Regulations/91_舊版_已取代_可刪除_Mid01_Updates_Adjustments_20261021.pdf>)為保留歷史。因果規則禁止未來資訊回修、RTS／backward smoothing 及定位後離線軌跡修正，所有 Track 適用；程式盤點見 [48](48_RULES_AND_CODE_AUDIT_20261023.md)。
+
+- 2026-10-23 起，每次成功 full run 的事後唯讀圖表放在該 run 的 `analysis/`；舊教學程式、素材與 MATLAB 證據仍保留於 [analysis/README.md](analysis/README.md)，作歷史教學內容，不補畫舊 run。輸出契約與限制見 [08](08_MANUAL_WORKFLOW.md#full-run-事後圖表)；學習原則見 [19](19_DEVELOPMENT_PRINCIPLES.md)。
+
 - `01` 是使用者指定的總架構入口，優先於歷史時間序。
+- `000` 與 `001` 是官方原始 PDF 的固定置頂例外：`000` 為原競賽說明，`001` 為 2026-10-21 補充規則；其他一般文件仍用兩位數編號。規則解讀與專案影響以 [45｜競賽補充規則](45_COMPETITION_UPDATES_20261021.md) 為入口。
 - `02–19` 對應 2026-10-17 的環境、NDT、sensor_guided、濾波／融合、方向性配準及後續開發原則；`20–26` 對應 2026-10-18 的分析、三相機與效能實驗。
 - 日期以文件與既有實驗紀錄為準。同日沒有可核對的精確建立時刻時，依已知開發先後與依賴排列，操作／命令／後端說明附在相關階段；不把檔案 mtime 當成事件時間。
 - `08` 操作手冊、`09` 輸出指南、`19` 開發原則與 `27` 專案總覽會持續更新，編號不是它們最後更新時間。`27` 保存整理當時原 GPU README 的完整內容；`28` 是本次新增目錄。
@@ -13,7 +18,7 @@
 - 歷史文件的「目前／尚未」保留當時語境。判斷現在實際流程先讀 `01`；判斷舊結果看該輪日期、run、參數與 SHA256。
 - `00_Personal_Record.txt` 是你的個人紀錄，保留原名、原內容，不加入歷史報告排序。原 `command_paste.txt` 在本次整理之前已被刪除；此次保留刪除狀態，沒有用 Git 舊內容復原。
 - 根目錄、CUDA package、outputs 的 `README.md` 保留短入口；`AGENTS.md` 保留工具辨識所需的位置與名稱。它們連到這個集中目錄。`CMakeLists.txt` 是建置程式，不是應改名的 documentation。
-- CPU／官方原始文件仍保留在原位置，下面提供中央索引。HW2、HW3 與通用 CLI 文件有各自用途，不併入 Midterm01 GPU 的開發歷史。
+- CPU 參考文件保留在原位置；官方原始 PDF 集中於本目錄的 `000`／`001`，下面提供中央索引。HW2、HW3 與通用 CLI 文件有各自用途，不併入 Midterm01 GPU 的開發歷史。
 
 ## 全部編號文件
 
@@ -65,6 +70,17 @@
 | 40／2026-10-20 | [尺度與航向完整評分失敗](40_SCORED_SCALE_FAILURE_AND_POSE_YAW_20261020.md)：scale7.40426得1.15167、pose_yaw＋scale3得1.30507；兩者未勝最佳，pose_yaw停止推薦 | 使用者回報完整評分後更新 |
 | 41／2026-10-20 | [外部方法分析](41_EXTERNAL_REFERENCE_ANALYSIS_20261020.md)：外部 score 0.65479 CSV、方法口述與目前缺少的重現證據 | 外部參考 CSV 與方法說明 |
 | 42／2026-10-20 | [分層尺度配準與慢變 map 修正](42_LAYERED_SCALE_SLOW_MAP_20261020.md)：兩 Track 共用逐幀尺度／6-DOF／12 s anchor／GNSS 慢 bias 與 gyro／NHC graph；本輪 Track2 短測與手動 full 命令 | 依學長文字方法建立的新研究分支，尚無新分數 |
+| 43／2026-10-20 | [開發進度、座標契約與研究路線](43_PROGRESS_FRAME_AND_ROADMAP_20261020.md)：目前已評分最佳、研究分支狀態、GNSS／IMU／LiDAR／相機點雲的座標關係，以及通往可驗證最佳算法的步驟 | 本專案進度與座標問題入口 |
+| 44／2026-10-20 | [CUDA 尺度配準加速](44_CUDA_SCALE_ACCELERATION_20261020.md)：CUDA／CPU 工作邊界、配對數值與 registration 計時、接受率限制及端到端待辦 | GPU 加速分支；完整輸入路徑尚待驗證 |
+| 45／2026-10-21 | [競賽補充規則與專案影響](45_COMPETITION_UPDATES_20261021.md)：Track3、排名計分、隱藏真值使用限制、期限及資料格式待確認項 | 依補充公告整理；按原件與公告分清已知／未知 |
+| 46／2026-10-21 | [CUDA PCA 記憶體界限與分批修正](46_CUDA_PCA_MEMORY_BOUND_20261021.md)：full idx 653 OOM、256 矩陣批次、工作區峰值與同輸入回歸；固定輸出不變 | 原失敗 run 保留，修正後 full 尚待使用者執行 |
+| 47／2026-10-21 | [目前實作盤點與 Track2 最新回報](47_IMPLEMENTATION_STATUS_AND_TRACK2_SCORE_20261021.md)：說明原最佳與新 full 的方法差異、Kalman／RTS 與 ICP／batch graph 邊界、已做實驗及未完成契約 | Track2 新 full 完整性通過；使用者回報顯示 0.77，未勝 0.30488 歷史最佳 |
+| 48／2026-10-23 | [規則與程式稽核](48_RULES_AND_CODE_AUDIT_20261023.md)：現行因果條款、Track3 公告已知／未知項目及本機入口盤點 | 依 10/22 現行 PDF 與本機靜態審查 |
+| 49／2026-10-23 | [Track3 因果 baseline 與手動短段入口](49_TRACK3_CAUSAL_BASELINE_20261023.md)：分清靜態因果路徑、尚待使用者執行的 50 幀短段與未確認的正式提交契約 | 資料／CLI／乾跑及靜態審查；沒有執行定位 |
+| 50／2026-10-23，持續更新 | [指令表](50_COMMAND_REFERENCE.md)：Track3 因果 v2 full 手動命令、可選短段、dry-run／audit-only、歷史 legacy 命令、輸出檢查與事後圖表重試 | 手動命令速查；真實 v2 效果未驗證 |
+| 51／2026-10-23 | [Track3 異常跳動診斷](51_TRACK3_FAILURE_DIAGNOSIS_20261023.md)：legacy run 的收斂跳點、IMU 證據界限與因果驗證建議 | 唯讀診斷；未修改 solver 或 CSV |
+| 52／2026-10-23 | [Track3 因果 Kalman 與逐幀尺度配準](52_TRACK3_CAUSAL_KALMAN_SCALE_20261023.md)：11-state 前向模型、尺度／幾何檢查、v1 full 失敗及現行 v2 full 命令 | v2 通過合成／機制測試，尚無真實定位或新分數 |
+| 53／2026-10-23 | [Track3 初始化修正與驗證](53_TRACK3_INITIALIZATION_REPAIR_20261023.md)：v1 啟動失敗幾何線索、v2 初始化與拒絕條件、59 項檢查及其合成證據界限 | 合成／機制檢查通過；真實 v2 定位未驗證 |
 
 ## 開發脈絡
 
@@ -94,6 +110,9 @@
 | 想回答的問題 | 閱讀路線 |
 | --- | --- |
 | 從哪支程式開始？每一步讀什麼、輸出什麼？ | 01 → 08 |
+| 如何查看新 full run 的 Python 診斷圖？ | 成功 run 目錄下的 `analysis/` → [輸出契約](08_MANUAL_WORKFLOW.md#full-run-事後圖表) |
+| 如何讀取舊 Python／Matplotlib 教學素材？ | [歷史教學入口](analysis/README.md) → 01 → 12 |
+| 目前開發到哪裡、GNSS／IMU／LiDAR／相機點雲各在哪個座標，哪個座標準？ | [43｜進度與座標契約](43_PROGRESS_FRAME_AND_ROADMAP_20261020.md) |
 | 跑完後怎麼看 RViz、座標與朝向？ | [30｜回放操作與座標契約](30_RVIZ_REPLAY_20261019.md) |
 | 模板、舊 GPU 與現在方法差在哪？ | 07 → 03／05 → 06 → 12 → 15 |
 | Kalman filter 在哪？為什麼估 heading bias？ | 01 第 5 節 → 11 → 12 |
@@ -103,14 +122,21 @@
 | 三相機怎麼走到我開的 result_2.csv？ | 01 第 10 節 → 23 → 24 → 25 |
 | 為什麼顯存增加卻沒變快？ | 25 → 26 |
 | 最新外部方法與本地版本差異？ | 41；full 命令記錄見16，已失敗的pose_yaw命令僅供歷史參照 |
+| Track3 因果 Kalman／尺度方法採用哪些狀態、假設與驗證順序？ | [52｜因果 Kalman 與逐幀尺度配準](52_TRACK3_CAUSAL_KALMAN_SCALE_20261023.md)；v2 初始化修正與合成檢查見 [53](53_TRACK3_INITIALIZATION_REPAIR_20261023.md) |
+| Track3 如何檢視因果 baseline、手動跑新分支短段並判讀限制？ | [49｜因果 baseline](49_TRACK3_CAUSAL_BASELINE_20261023.md) → [52｜新方法與驗證順序](52_TRACK3_CAUSAL_KALMAN_SCALE_20261023.md)；現行規則與程式盤點見48 |
+| 常用指令、Track3 因果短段／歷史 legacy 命令、輸出檢查與 full 圖表重試？ | [50｜指令表](50_COMMAND_REFERENCE.md)；新方法限制見52 |
 
 ## 官方、CPU 與其他必要參考的中央索引
 
-這些檔案保留原位置，避免改動官方原件、CPU 參考環境與共用資料說明；從這裡即可集中找到它們。
+CPU 參考文件與共用資料說明保留原位置；原規則 PDF 已移入本 GPU 文件目錄，補充 PDF 也放在此處。從這裡可集中找到它們。
 
 | 文件 | 用途 |
 | --- | --- |
-| [官方題目 PDF](<../../midterm01/docs/SDC 2026 Midterm01 Competition -  Localization.pdf>) | 正式任務、評分、格式、簡報與交付要求；檔名中 `-` 後是兩個空白 |
+| [00｜整合新版規則（31 頁）](<Competition Regulations/00_SDC_2026_Midterm01_Localization_整合新版_20261022.pdf>) | 現行整合規則，包含 10/22 因果定位條文 |
+| [01｜因果定位細則（4 頁）](<Competition Regulations/01_Mid01_Updates_Rules.pdf>) | 所有 Track 適用；禁止未來資訊回修、RTS／backward smoothing、定位後離線軌跡修正 |
+| [48｜規則與程式稽核](48_RULES_AND_CODE_AUDIT_20261023.md) | 現行限制及本機非因果入口盤點；舊算法與分數不代表合規最佳 |
+| [90｜已取代的原競賽規則（24 頁）](<Competition Regulations/90_舊版_已取代_可刪除_SDC_2026_Midterm01_Localization_24頁.pdf>) | 歷史原件保留；不作現行規則入口 |
+| [91｜已取代的 10/21 補充公告（10 頁）](<Competition Regulations/91_舊版_已取代_可刪除_Mid01_Updates_Adjustments_20261021.pdf>) | 歷史原件保留；現行解讀以 00／01 為準 |
 | [官方要求分析](../../midterm01/docs/README.md) | 題目頁次、交付與算法建議的區別 |
 | [Kaggle 資料規格](../../midterm01/docs/KAGGLE_DATASET_SPEC.md) | Track、輸入與 submission 契約的已知／待核對事項 |
 | [共用資料 README](../../midterm01/data/README.md) | 唯一 data 目錄、資料結構與來源 |
@@ -122,4 +148,4 @@
 | [歷史實驗索引](../../midterm01/experiments/README.md)、[報告交付說明](../../midterm01/reports/README.md)、[CPU 輸出說明](../../midterm01/outputs/README.md) | CPU／早期交付與結果保存，成績文字按原時點解讀 |
 | [repo 協作約定](../../AGENTS.md)、[GPU 協作約定](../AGENTS.md) | 開工入口、手動完整測試、資料與環境隔離 |
 
-本次只更新上述文件中指向搬移文件的連結，沒有搬走 CPU／官方原件。大型 outputs、模型與既有 CSV 不由 Git 同步；文件裡能點到的本機證據，移機時仍須另外備份。
+原競賽 PDF 已由 `midterm01/docs/` 搬至本目錄，連結指向同一原件；補充 PDF 亦保存在本目錄。CPU 參考文件仍保留原位置。大型 outputs、模型與既有 CSV 不由 Git 同步；文件裡能點到的本機證據，移機時仍須另外備份。

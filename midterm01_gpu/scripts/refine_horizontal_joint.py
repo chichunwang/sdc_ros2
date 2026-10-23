@@ -138,7 +138,8 @@ def refine(run, data_root, container, fine_map=None):
     dump(output/'raw_export_command.json', command)
     with (output/'raw_export.log').open('x') as log:
         subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True)
-    pdf = data_root.parent/'docs/SDC 2026 Midterm01 Competition -  Localization.pdf'
+    from competition_rules import official_pdf_path
+    pdf = official_pdf_path()
     dump(output/'sensor_contract.json', audit(raw_path, data_root, track, pdf))
     groups = select_groups(stamps)
     report['temporal_groups'] = len(groups)

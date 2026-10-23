@@ -35,9 +35,9 @@ def create_run_directory(directory, prefix, *, track=None, full=False):
     """單一run入口；名稱只含Track、full/test與日期時間，算法版本放目錄內。"""
     created = datetime.datetime.now(ZoneInfo("Asia/Taipei"))
     stamp = created.strftime("%y%m%d%H%M")
-    inferred = re.match(r"track0?([12])(?:_|$)", prefix)
+    inferred = re.match(r"track0?([123])(?:_|$)", prefix)
     track = int(inferred[1]) if track is None and inferred else (0 if track is None else track)
-    if track not in (0,1,2): raise ValueError('Track must be 0 (shared), 1 or 2')
+    if track not in (0,1,2,3): raise ValueError('Track must be 0 (shared), 1, 2 or 3')
     name = f"track{track:02d}_{'full' if full else 'test'}_{stamp}"
     directory.mkdir(parents=True, exist_ok=True)
     sequence = 1
@@ -84,13 +84,13 @@ def print_run_outcome(run, summary, *, full_attempt):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--track", type=int, choices=(1, 2), default=1)
+    parser.add_argument("--track", type=int, choices=(1, 2, 3), default=1)
     frame_selection = parser.add_mutually_exclusive_group()
     frame_selection.add_argument("--frames", type=int, default=50)
     frame_selection.add_argument("--full", action="store_true", help="Process all timestamped frames in the Track; mutually exclusive with --frames, requires --start-frame 0")
     parser.add_argument("--start-frame", type=int, default=0, help="Original 0-based frame index; short-window diagnosis, not a complete submission")
     parser.add_argument("--cloud-source", choices=("front", "mapanything", "reconstruction"), default="front")
-    parser.add_argument("--ply-scale", type=float, help="front default=3; experimental sources require explicit scale")
+    parser.add_argument("--ply-scale", type=float, help="Track1/2 front default=3; Track3 and experimental sources require explicit scale")
     parser.add_argument("--source-report", type=saved_path, help="Required experimental source report with matching Track/frame/hash contract")
     parser.add_argument("--prior-run", type=saved_path, help="Reuse exact sensor priors from an existing same-Track/fusion GPU run")
     parser.add_argument("--backend", choices=("cuda_ndt", "pcl_ndt", "cuda_robust_icp"), help="default legacy=cuda_ndt; sensor_guided=cuda_robust_icp")
@@ -116,9 +116,23 @@ def main():
     parser.add_argument("--compare", type=saved_path, help="Optional reference result.txt; differences are not ground-truth errors.")
     parser.add_argument("--map-cache", type=saved_path, help="Explicit derived map cache under GPU outputs; only reuse for the same Track/map/voxel. Disabled by default.")
     parser.add_argument("--height-map-cache", type=saved_path, help="Surface model only: optionally reuse a verified 0.3 m binary XYZ cache under GPU outputs; otherwise build one in the new run")
+    parser.add_argument("--dry-run", action="store_true", help="Track3 only: validate inputs and print a JSON plan without Docker exec, localization or a new run")
     args = parser.parse_args()
+    if args.dry_run and args.track != 3:
+        parser.error("--dry-run is currently limited to Track3")
+    if args.dry_run and (args.map_cache or args.height_map_cache or args.horizontal_map_cache):
+        parser.error("--dry-run cannot combine with map/height/horizontal cache options")
     if args.backend is None:
         args.backend = "cuda_robust_icp" if args.profile == "sensor_guided" else "cuda_ndt"
+    expected_full_frames = {1: 3011, 2: 3299, 3: 3142}[args.track]
+    if args.track == 3:
+        if (args.profile != "legacy" or args.cloud_source != "front"
+                or args.height_mode != "carry" or args.geometry_mode != "off"
+                or args.horizontal_refinement != "none" or args.prior_run
+                or args.sensor_fusion != "fixed" or args.backend not in ("cuda_ndt", "pcl_ndt")):
+            parser.error("Track3 only supports legacy/front/carry/geometry off/horizontal none/fixed with no prior-run; GNSS/IMU preprocessing and RTS/graph paths are unavailable")
+        if args.ply_scale is None:
+            parser.error("Track3 requires explicit --ply-scale; its raw PLY scale is uncalibrated")
     if args.start_frame < 0:
         parser.error("--start-frame must be nonnegative")
     if args.full and args.start_frame:
@@ -204,7 +218,7 @@ def main():
     compose = loads_saved_json(subprocess.check_output(["bash", str(root / "scripts/dev.sh"), "config", "--format", "json"], text=True))
     service = compose["services"]["midterm01_gpu"]
     container = service["container_name"]
-    if subprocess.run(["docker", "exec", container, "pgrep", "-x", "localization"], capture_output=True).returncode == 0:
+    if not args.dry_run and subprocess.run(["docker", "exec", container, "pgrep", "-x", "localization"], capture_output=True).returncode == 0:
         parser.error("This GPU environment already has a localization process; wait for it to finish.")
     data_mount = next(m for m in service["volumes"] if m["target"] == "/root/data")
     data_root = Path(data_mount["source"])
@@ -223,11 +237,21 @@ def main():
         if not cache_hit:
             write_json(sidecar, identity)
     files = []
+    track3_ply_count = 0
     for path in (data_root / f"Track{args.track}/raw_ply").iterdir():
+        if args.track == 3 and path.is_file() and path.suffix.lower() == ".ply":
+            track3_ply_count += 1
         match = re.search(r"_ts_(\d+)", path.stem)
         if path.is_file() and path.suffix.lower() == ".ply" and match and int(match[1]) > 0:
             files.append((int(match[1]), path.name))
     files.sort()
+    if args.track == 3:
+        original_indices = [re.match(r"^(\d+)_ts_\d+\.ply$", name) for _, name in files]
+        if (track3_ply_count != expected_full_frames or len(files) != expected_full_frames
+                or any(b[0] <= a[0] for a, b in zip(files, files[1:]))
+                or any(match is None for match in original_indices)
+                or [int(match[1]) for match in original_indices if match] != list(range(expected_full_frames))):
+            parser.error("Track3 requires all 3142 PLY files with strictly increasing unique timestamps and original filename indices 0..3141 before selecting a prefix")
     if args.full:
         if not files:
             parser.error('No timestamped PLY frames available for --full')
@@ -265,6 +289,28 @@ def main():
             parser.error(f"Only {len(files)} timestamped PLY files available")
         files = files[args.start_frame:args.start_frame + args.frames]
 
+    if args.dry_run:
+        track_root = data_root / "Track3"
+        for name in ("map.pcd", "init_guess.txt"):
+            path = track_root / name
+            if not path.is_file() or path.stat().st_size == 0:
+                parser.error(f"Track3 dry-run requires an existing nonempty {path}")
+        plan = {
+            "track": args.track, "dry_run": True, "expected_full_frames": expected_full_frames,
+            "requested_frames": args.frames, "selected_frames": len(files),
+            "source_root": str(source_host.resolve()),
+            "first_file": {"timestamp_ns": files[0][0], "filename": files[0][1]},
+            "last_file": {"timestamp_ns": files[-1][0], "filename": files[-1][1]},
+            "map_path": str((track_root / "map.pcd").resolve()),
+            "init_guess_path": str((track_root / "init_guess.txt").resolve()),
+            "profile": args.profile, "backend": args.backend, "cuda_mode": args.cuda_mode,
+            "ply_scale": args.ply_scale, "scale_status": "uncalibrated",
+            "bag_path": "", "sensor_preprocessing_called": False,
+            "localization_executed": False, "docker_exec_called": False, "run_created": False,
+        }
+        print(json.dumps(plan, ensure_ascii=False, indent=2))
+        return 0
+
     profile_prefix = "sensor_guided_" if args.profile == "sensor_guided" else ""
     if args.sensor_fusion != "fixed":
         profile_prefix += args.sensor_fusion + "_"
@@ -276,10 +322,22 @@ def main():
         profile_prefix += args.horizontal_refinement + "_"
     if args.cloud_source != "front" or args.start_frame or args.ply_scale != 3.0:
         profile_prefix += f"{args.cloud_source}_s{args.ply_scale:g}_from{args.start_frame}_"
-    full_attempt = args.start_frame == 0 and args.frames == (3011 if args.track == 1 else 3299)
+    full_attempt = args.start_frame == 0 and args.frames == expected_full_frames
     run = create_run_directory(root / "outputs/run", f"track{args.track}_{profile_prefix}{args.backend}_{args.cuda_mode.lower()}",
                                track=args.track, full=full_attempt)
     print(f"Run: {run}", flush=True)
+    if args.track == 3:
+        # Source provenance preparation only; outside localization/frame timing.
+        static_inputs = {}
+        for name in ("map.pcd", "init_guess.txt"):
+            path = data_root / "Track3" / name
+            static_inputs[name] = {"path": str(path.resolve()), "size_bytes": path.stat().st_size,
+                                   "sha256": sha256(path)}
+        write_json(run / "static_input_sha256.json", {
+            "scope": "map_only_legacy", "bag_used": False, "bag_path": "",
+            "timing_scope": "source provenance preparation; excluded from per-frame localization timing",
+            "inputs": static_inputs,
+        })
     container_run = "/root/outputs/run/" + run.name
     write_json(run/'benchmark_command.json', [sys.executable, str(root/'scripts/benchmark.py'), *sys.argv[1:]])
     source_metadata["selected_frames"] = [
@@ -328,7 +386,7 @@ def main():
     pipeline_sources += tuple(root/'scripts'/name for name in (
         'refine_horizontal_joint.py', 'horizontal_surfel.py', 'surfel_joint.py', 'kinematic_graph.py',
         'audit_sensor_contract.py', 'audit_input_heading.py', 'prior_ablation.py', 'accuracy/horizontal_cache.py',
-        'direct_heading.py'))
+        'direct_heading.py', 'run_analysis.py', 'plot_run_analysis.py'))
     if args.sensor_fusion == 'turn_heading_rts':
         pipeline_sources += (root/'scripts/turn_heading.py',)
     write_json(run/'horizontal_settings.json', {'mode':args.horizontal_refinement,
@@ -491,7 +549,7 @@ def main():
         "height_mode": args.height_mode,
         "cloud_source": args.cloud_source, "ply_scale": args.ply_scale, "start_frame": args.start_frame,
         "source_input": "source_input.json", "experimental_source": args.cloud_source != "front",
-        "submission_frame_set_complete": args.start_frame == 0 and args.frames == (3011 if args.track == 1 else 3299),
+        "submission_frame_set_complete": args.start_frame == 0 and args.frames == expected_full_frames,
         "pipeline_elapsed_seconds": elapsed + sensor_preparation_seconds + height_map_preparation_seconds + height_preparation_seconds,
         "frames": len(poses), "expected_frames": args.frames, "elapsed_seconds": elapsed,
         "time_scope": "Docker exec + ROS startup + map initialization + all frames; no build. See map_cache_file for explicit cache use.",
@@ -502,6 +560,16 @@ def main():
         "timing_sums": timing_sums, "validation_errors": errors, "output_complete_and_finite": not errors,
         "accuracy": "Not evaluated against ground truth or Kaggle; convergence is not an accuracy guarantee.",
     }
+    if args.track == 3:
+        summary["track3_execution_scope"] = {
+            "path": "map-only forward legacy: current PLY, static map, initial/previous accepted pose",
+            "gnss_used": False, "imu_used": False,
+            "sensor_preprocessing_called": False, "rts_called": False, "batch_graph_called": False,
+            "causality_evidence": "static review only; runtime prefix consistency pending",
+            "scale_status": "uncalibrated; explicit user-supplied ply_scale",
+            "format_limitations": "local 0-based idx and existing yaw export; official sample idx/yaw units/frame not verified",
+            "submission_compliance_certified": False,
+        }
     if poses:
         rotations = [[[pose[i * 4 + j] for j in range(3)] for i in range(3)] for pose in poses]
         orth_error = max(abs(sum(r[k][i] * r[k][j] for k in range(3)) - int(i == j))
@@ -643,6 +711,8 @@ def main():
         summary['output_complete_and_finite'] = not errors
         write_json(run/'validation.json', summary)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+    from run_analysis import generate_after_full
+    generate_after_full(run, summary, full=full_attempt)
     print_run_outcome(run, summary, full_attempt=full_attempt)
     return 0 if not errors else 1
 

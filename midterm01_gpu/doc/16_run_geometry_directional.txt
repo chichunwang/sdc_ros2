@@ -1,13 +1,20 @@
-# 2026-10-20 最新新算法：兩 Track 共用逐幀尺度＋分層 6-DOF＋12 s 慢修正＋GNSS bias/gyro/NHC graph。
-# 本輪先跑 Track2，因 Track1 上傳額度用完；沒有 Track 專屬調參。方法／檢查見 doc/42。
-# 新分支明確使用主機 ML venv 的 CPU SciPy/KD-tree；不需重編 C++，尚無新分數。
-# 從原 bag/map 開始，不綁定歷史 run/cache；由使用者手動執行完整 Track 與提交。
-cd /home/ricky/sdc_ros2/midterm01_gpu
-bash scripts/dev.sh up
-PYTHONDONTWRITEBYTECODE=1 OPENBLAS_NUM_THREADS=1 outputs/ml_runtime/venv/bin/python scripts/run_map_smoother.py --track 2 --full
-# 終端會印出新 outputs/run/track02_full_YYMMDDHHmm；通過 validation.json 後提交該目錄 diagnostic.csv。
-# 須 returncode=0、output_complete_and_finite=true、validation_errors=[]、3299列且 submission_frame_set_complete=true。
-# 之後 Track1 只改 --track 1；算法／參數相同。請只貼上需要的一組命令，別執行整份歷史紀錄。
+# 歷史命令檔：不可整份執行，也不可作現行命令推薦。以下命令參數僅作歷史記錄；所有 Track 禁用非因果平滑與定位後離線修正。詳見 [48](48_RULES_AND_CODE_AUDIT_20261023.md)。
+# 2026-10-21 補充規則見 doc/45_COMPETITION_UPDATES_20261021.md：以下 GNSS 命令限 Track1/2，仍合法；不適用無 GNSS pose 的 Track3。禁止以榜分反推誤差，舊交叉 XY/yaw 提交建議已撤回。
+# 命令交付順序與逐幀輸出格式遵守 doc/08_MANUAL_WORKFLOW.md；本段是目前 GPU 尺度配準加速 runner 的單組手動命令。
+# 方法、配對結果與限制見 doc/44_CUDA_SCALE_ACCELERATION_20261020.md。51項檢查與96幀GPU端到端短測通過，沒有新full或Kaggle分數。
+# 當前 track02_full_2610201936（PID 17440）執行期間，不停止／重啟或替換其來源；此命令供該程序結束後由使用者手動執行。
+# 命令從原始 bag/map 建立新 run；完整流程與外部提交由使用者手動執行。
+# cd /home/ricky/sdc_ros2/midterm01_gpu
+# bash scripts/dev.sh up
+# PYTHONDONTWRITEBYTECODE=1 OPENBLAS_NUM_THREADS=1 outputs/ml_runtime/venv/bin/python scripts/run_map_smoother_gpu.py --track 2 --full
+# Track1 使用相同算法／參數，只將 --track 2 改為 --track 1。
+# frame_timing_v1、逐幀進度、Graph 獨立計時與 timings.csv 欄序依 doc/08 固定。
+
+# 歷史 CPU SciPy/KD-tree runner 命令（保留原參數供歷史 run 重現，不是本段 GPU 命令的一部分）：
+# cd /home/ricky/sdc_ros2/midterm01_gpu
+# bash scripts/dev.sh up
+# PYTHONDONTWRITEBYTECODE=1 OPENBLAS_NUM_THREADS=1 outputs/ml_runtime/venv/bin/python scripts/run_map_smoother.py --track 2 --full
+# Track1 當時只改 --track 1；當時狀態與證據見 doc/42_LAYERED_SCALE_SLOW_MAP_20261020.md。
 
 # 以下為歷史：pose_yaw＋front scale3 完整評分為 Track1 1.30507，較最佳1.15008高13.47645%。
 # 此版本已失敗，停止推薦且不要重跑；上一輪turn_heading_rts＋scale7.40426為1.15167，也未勝最佳。
@@ -29,19 +36,19 @@ PYTHONDONTWRITEBYTECODE=1 OPENBLAS_NUM_THREADS=1 outputs/ml_runtime/venv/bin/pyt
 # turn_heading_rts：原GNSS路徑對齊沿IMU方向積分的線性車速，保留motion XY與IMU roll/pitch。
 # 新尺度仍有跨場景／距離形變與motion prior依賴，實際效果以你的Kaggle評分確認。
 # 只改Python；本機現有C++／CUDA執行檔可直接用，不需重編。細節見doc/39_HEADING_AND_STEREO_SCALE_20261020.md。
-cd /home/ricky/sdc_ros2/midterm01_gpu
-bash scripts/dev.sh up
+# cd /home/ricky/sdc_ros2/midterm01_gpu
+# bash scripts/dev.sh up
 
-python3 scripts/benchmark.py --track 1 --full \
-  --profile sensor_guided --sensor-fusion turn_heading_rts \
-  --cloud-source front --ply-scale 7.404260939740923 \
-  --geometry-mode directional --height-mode carry
+# python3 scripts/benchmark.py --track 1 --full \
+  # --profile sensor_guided --sensor-fusion turn_heading_rts \
+  # --cloud-source front --ply-scale 7.404260939740923 \
+  # --geometry-mode directional --height-mode carry
 
 # Track1完成並核對validation後再執行Track2。
-python3 scripts/benchmark.py --track 2 --full \
-  --profile sensor_guided --sensor-fusion turn_heading_rts \
-  --cloud-source front --ply-scale 7.404260939740923 \
-  --geometry-mode directional --height-mode carry
+# python3 scripts/benchmark.py --track 2 --full \
+  # --profile sensor_guided --sensor-fusion turn_heading_rts \
+  # --cloud-source front --ply-scale 7.404260939740923 \
+  # --geometry-mode directional --height-mode carry
 
 # 各自新建outputs/run/track01_full_YYMMDDHHmm／track02_full_YYMMDDHHmm，提交該run的diagnostic.csv。
 # validation.json須returncode=0、output_complete_and_finite=true、validation_errors=[]，Track1／2為3011／3299筆。
@@ -60,15 +67,15 @@ python3 scripts/benchmark.py --track 2 --full \
 # 目前最佳 motion_rts＋directional＋carry：1.15008／0.30488。
 # 以下 full 用於重現目前最佳；不是新的精度改善版本，現在無須重跑。
 # 完整測試由使用者手動執行；兩條依序執行，完成後先核對 validation。
-cd /home/ricky/sdc_ros2/midterm01_gpu
-bash scripts/dev.sh up
-python3 scripts/benchmark.py --track 1 --full --profile sensor_guided --sensor-fusion motion_rts --geometry-mode directional --height-mode carry
-python3 scripts/benchmark.py --track 2 --full --profile sensor_guided --sensor-fusion motion_rts --geometry-mode directional --height-mode carry
+# cd /home/ricky/sdc_ros2/midterm01_gpu
+# bash scripts/dev.sh up
+# python3 scripts/benchmark.py --track 1 --full --profile sensor_guided --sensor-fusion motion_rts --geometry-mode directional --height-mode carry
+# python3 scripts/benchmark.py --track 2 --full --profile sensor_guided --sensor-fusion motion_rts --geometry-mode directional --height-mode carry
 # 已評分 CSV：outputs/run/track01_full_2610191750/diagnostic.csv、outputs/run/track02_full_2610191757/diagnostic.csv；新航向實驗見 doc/35_MOTION_RTS_AND_GNSS_HEADING_20261019.md。
 
 # 短段定位範例：原始 0-based idx 905 起算，共 48 幀，同目前最佳設定。
 # 這是主流程操作範例；單次短段完整不等於候選精度通過。
-python3 scripts/benchmark.py --track 1 --start-frame 905 --frames 48 --profile sensor_guided --sensor-fusion motion_rts --geometry-mode directional --height-mode carry
+# python3 scripts/benchmark.py --track 1 --start-frame 905 --frames 48 --profile sensor_guided --sensor-fusion motion_rts --geometry-mode directional --height-mode carry
 # --full 與 --frames 互斥，full 不可搭配非零 --start-frame。
 # 省略 --full／--frames 只跑預設 50 幀；勿省略 profile／fusion／geometry 設定。
 # 每次新建 outputs/run/track01_full_YYMMDDHHmm 或 track01_test_YYMMDDHHmm，Track2用track02。
@@ -77,7 +84,7 @@ python3 scripts/benchmark.py --track 1 --start-frame 905 --frames 48 --profile s
 
 # 最新來源研究工具：重現兩條 Track 的小型跨幀檢查，不產生提交 CSV。
 # 本輪已執行，現在也不需重複跑；--stride 2 為短間隔，14 為較長間隔。
-outputs/ml_runtime/venv/bin/python scripts/audit_source_rigidity.py --stride 2
+# outputs/ml_runtime/venv/bin/python scripts/audit_source_rigidity.py --stride 2
 # 研究輸出為 outputs/run/track00_test_YYMMDDHHmm/rigidity/report.json。
 # 尺度／map 研究的完整用法、證據與限制見 doc/38_SOURCE_RIGIDITY_AND_SCALE_20261020.md。
 # 本檔同時保存多種用途與歷史命令，請選取需要的一條貼上，不要整檔當 shell 腳本執行。
@@ -86,10 +93,10 @@ outputs/ml_runtime/venv/bin/python scripts/audit_source_rigidity.py --stride 2
 # 幾何可信度／方向性權重候選：完整測試與 Kaggle 上傳由使用者執行。
 # Ubuntu 主機執行，每條完成後再執行下一條。
 # 本機已完成 GPU workspace Release 建置；移機或再改 C++ 才需先重編。
-cd /home/ricky/sdc_ros2/midterm01_gpu
+# cd /home/ricky/sdc_ros2/midterm01_gpu
 
-python3 scripts/benchmark.py --track 1 --frames 3011 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
-python3 scripts/benchmark.py --track 2 --frames 3299 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
+# python3 scripts/benchmark.py --track 1 --frames 3011 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
+# python3 scripts/benchmark.py --track 2 --frames 3299 --profile sensor_guided --sensor-fusion heading_rts --geometry-mode directional
 
 # 現行 Run: 路徑統一為 outputs/run/trackNN_full/test_YYMMDDHHmm；算法記在 params／test_info。
 # 先看 validation.json：returncode=0、output_complete_and_finite=true、validation_errors=[]。

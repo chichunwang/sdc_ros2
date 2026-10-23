@@ -1,4 +1,8 @@
+**2026-10-23 現行規則提示：**因果定位適用所有 Track；不得以未來資訊回修 pose、使用 RTS／backward smoothing，或在定位後離線修正軌跡。Track1／2 GNSS 仍可作輸入，但 RTS 不因此合規。本文相關算法、命令與成績均為歷史紀錄，不作現行正式提交推薦；規則與程式影響見 [48](48_RULES_AND_CODE_AUDIT_20261023.md)。
+
 # 41｜0.65479 外部軌跡與目前定位瓶頸
+
+2026-10-21 規則更新：依[補充公告 p.4／9](<Competition Regulations/91_舊版_已取代_可刪除_Mid01_Updates_Adjustments_20261021.pdf>)，撤回本文原有交叉提交分解隱藏誤差的建議，生成及榜分分項推算入口已停用。第 2 節的榜分界限僅保留歷史推導，不作校準、solver 選擇或正式提交依據；離線預測差異仍是差異，不是真值。詳細區分官方文字與專案政策見 [45](45_COMPETITION_UPDATES_20261021.md)。
 
 2026-10-20（Asia/Taipei）。使用者提供 `outputs/track1_test.csv`，回報 Track1 **0.65479**；隨後提供學長方法的文字說明。原始程式、逐幀尺度、ICP 輸出／接受遮罩及真值未提供。本文分開記錄 CSV 可以驗證的現象、使用者提供的算法說明與後續設計，沒有將外部 CSV 當真值或宣稱已重現其算法。
 
@@ -96,24 +100,16 @@
 
 這些是下一階段設計，**本輪尚未新增上述定位 solver**。不以外部 CSV 的位置／航向當訓練目標或校準值。新主流程完成機制及必要短測後，直接提供 full 指令由使用者評分，不另設本地精度勝出的資格門檻。
 
-## 6. 不用重算 full 的分項評分對照
+## 6. 歷史交叉 CSV（提交建議已撤回）
 
-已另存兩份 CSV，原欄位字串保持、3011 筆有限及 idx 完整；只交換欄位，沒有重新定位或重現學長算法：
+2026-10-20 曾另存兩份 CSV，原欄位字串、3011 筆有限值及 idx 完整；只交換欄位，沒有重新定位或重現學長算法：
 
-| 目錄 | XY | yaw | 用途 |
+| 目錄 | XY | yaw | 現行用途 |
 | --- | --- | --- | --- |
-| `track01_test_2610200214` | 本機最佳 | 外部 | 分解兩項分數 |
-| `track01_test_2610200214_0002` | 外部 | 本機最佳 | 分解兩項分數；保留高分位置作一項消融 |
+| `track01_test_2610200214` | 本機最佳 | 外部 | 保留歷史證據，不推薦正式提交 |
+| `track01_test_2610200214_0002` | 外部 | 本機最佳 | 保留歷史證據，不推薦正式提交 |
 
-只需任選一份提交即可進一步拆開兩項；**建議先提交第二份** `outputs/run/track01_test_2610200214_0002/diagnostic.csv`，回報分數 H。依同一可分離公式：
-
-```text
-位置 RMSE 改善量（m） = 1.15008 − H
-航向項改善量          = H − 0.65479
-兩者相加              = 0.49529
-```
-
-H>0.65479 表示外部 yaw 較本機 yaw 好；H<0.65479 表示本機 yaw 較好。若兩份都評，分數和應約為 **1.80487**（留意排行榜小數四捨五入）；不符合時應先核對上傳檔與評分契約。兩份尚無分數，不據此宣稱新最佳或自己的新算法成果。提交由使用者執行。
+原本建議用額外提交分數拆開隱藏位置／航向誤差；2026-10-21 已依補充公告撤回。公告明文針對 leaderboard-based fitting；將這類分項 probing 一併停用是本專案的保守政策，不表示官方逐字禁止所有欄位融合。原始 CSV、test_info、計算報告及 SHA 不改寫，不從這些資料產生新的校準目標。
 
 ## 7. 重現與證據
 
@@ -126,7 +122,7 @@ outputs/ml_runtime/venv/bin/python scripts/analyze_external_reference.py \
   --baseline-run outputs/run/track01_full_2610191750 --baseline-score 1.15008
 ```
 
-可選 `--write-crossovers` 另存兩份欄位對照，現在已有檔案不必重做；`--reported-reference-yaw-rmse 0.63` 只增加有條件的推算，不將口述分項視為真值。已有 `comparison.json` 時拒絕覆寫。
+`--write-crossovers` 與 `--reported-reference-yaw-rmse` 已停用；舊參數會在讀取來源或建立 run 前報錯。新分析只記錄回報分數的來源 metadata，不再計算未知誤差分項或 score bounds；離線版本／運動診斷保留並標記 analysis-only、non-submission。已有 `comparison.json` 時仍拒絕覆寫。
 
 本次 `comparison.json`／`per_frame_difference.csv`／完整範圍圖／來源快照與 `evidence_sha256_unchanged.json` 保存數值、來源及限制。分析前後原外部 CSV、最佳 CSV／矩陣／prior／frame 的 SHA 完全不變。初版圖有固定顯示範圍，正文採用後續完整範圍且只顯示合格移動樣本的 `comparison_full_range.png`，原初版亦保留。
 

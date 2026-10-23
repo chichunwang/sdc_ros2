@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Compare a scored CSV with a validated run; external predictions are never truth.
+"""Compare existing trajectories offline; external predictions are never truth.
 
-This reads existing results only. Optional column crossovers isolate the two
-additive score terms and preserve the original CSV field strings.
+Analysis-only, non-submission diagnostics. Reported scores are source metadata
+only. The 2026-10-22 updates prohibit probing hidden truth through leaderboard
+scores; legacy crossover and unknown score-component inference options fail.
 """
 import argparse
 import csv
@@ -70,45 +71,30 @@ def motion_diagnostic(times, values, window_seconds):
                 lateral_velocity_mps=statistics(lateral[eligible])), (grid, np.where(eligible,angle,np.nan), np.where(eligible,lateral,np.nan))
 
 
-def crossover(output_root, base_rows, reference_rows, base_path, ref_path, xy_source):
-    run = create_run_directory(output_root, 'external_reference_column_crossover', track=1)
-    out_rows = [dict(idx=a['idx'], x=(a if xy_source == 'ours' else b)['x'],
-                     y=(a if xy_source == 'ours' else b)['y'],
-                     yaw=(b if xy_source == 'ours' else a)['yaw'])
-                for a, b in zip(base_rows, reference_rows)]
-    with (run/'diagnostic.csv').open('x', newline='') as stream:
-        writer = csv.DictWriter(stream, fieldnames=['idx','x','y','yaw'])
-        writer.writeheader(); writer.writerows(out_rows)
-    loaded, _ = read_prediction(run/'diagnostic.csv', len(base_rows))
-    if loaded != out_rows:
-        raise ValueError('Crossover failed exact source field preservation')
-    info = json.loads((run/'test_info.json').read_text())
-    info.update(analysis_only=True, localization_executed=False, source_algorithm_reproduced=False,
-        test_kind=f'column_crossover_{xy_source}_xy', submission_rows=len(out_rows),
-        sources={'ours':dict(path=str(base_path),sha256=sha256(base_path)),
-                 'external':dict(path=str(ref_path),sha256=sha256(ref_path))},
-        xy_source=xy_source, yaw_source='external' if xy_source == 'ours' else 'ours',
-        fields_preserved_exactly=True, csv_sha256=sha256(run/'diagnostic.csv'),
-        reported_score=None, uploaded=False,
-        purpose='Optional one-score decomposition of additive position/yaw score; not a new localization algorithm')
-    dump(run/'test_info.json', info)
-    (run/'README.md').write_text(
-        f'# 欄位對照\n\nXY 來源：{xy_source}；yaw 來源：{info["yaw_source"]}。'
-        '原始欄位字串保留，3011筆。這是既有預測的交叉組合，沒有重新定位，沒有重現外部算法。'
-        '只供使用者選擇提交以分解分數；尚未評分。來源及SHA見test_info.json。\n')
-    return dict(run=str(run), **{k:info[k] for k in ('xy_source','yaw_source','csv_sha256')})
+RULES_REFERENCE = 'doc/Competition Regulations/01_Mid01_Updates_Rules.pdf (2026-10-22), pp. 1, 3'
+DISABLED_SCORE_PROBING = (
+    '依 2026-10-22 因果定位公告（01_Mid01_Updates_Rules.pdf，第 1、3 頁），'
+    '本工具已停用交叉提交與由榜分推算未知誤差分項；僅保留歷史檔，不再生成。'
+)
+
+
+def reject_score_probing(args):
+    """Reject legacy probing options before reading inputs or creating a run."""
+    if (getattr(args, 'write_crossovers', False)
+            or getattr(args, 'reported_reference_yaw_rmse', None) is not None):
+        raise ValueError(DISABLED_SCORE_PROBING)
 
 
 def analyze(args):
-    root = Path(__file__).resolve().parents[1]
+    reject_score_probing(args)
     data = checked_run(args.baseline_run)
     run, _, poses, frames, prior = data
     count = len(poses)
     if data[1]['track'] != 1:
-        raise ValueError('This analysis/crossover entry currently supports Track1 only')
+        raise ValueError('This offline analysis entry currently supports Track1 only')
     baseline_file = run/'diagnostic.csv'
-    base_rows, base = read_prediction(baseline_file, count)
-    external_rows, external = read_prediction(args.reference, count)
+    _, base = read_prediction(baseline_file, count)
+    _, external = read_prediction(args.reference, count)
     info_file = args.experiment/'test_info.json'
     if not info_file.is_file() or (args.experiment/'comparison.json').exists():
         raise ValueError('Use a unique analysis run; preserve previous report')
@@ -129,22 +115,6 @@ def analyze(args):
     pq = np.array([[float(r[k]) for k in ('qx','qy','qz','qw')] for r in prior])
     pyaw = Rotation.from_quat(pq).as_euler('xyz')[:, 2]
     slow = time_median(times, delta, 12.)
-    score_gain = args.baseline_score-args.reference_score
-    yaw_bound = .2*rms(dyaw)
-    xy_bound = rms(np.linalg.norm(delta, axis=1))
-    bounds = dict(reported_score_gain=score_gain, gain_percent=100*score_gain/args.baseline_score,
-        yaw_score_gain_absolute_bound=yaw_bound,
-        position_rmse_improvement_lower_bound_m=score_gain-yaw_bound,
-        position_rmse_improvement_upper_bound_m=min(score_gain+yaw_bound,xy_bound),
-        scope='Conditional on the documented separable XY RMSE + 0.2*yaw RMSE(degrees) metric, same truth and row correspondence; not per-frame truth.')
-    if args.reported_reference_yaw_rmse is not None:
-        reported = args.reported_reference_yaw_rmse
-        ours_lo = abs(reported-rms(dyaw)); ours_hi = reported+rms(dyaw)
-        bounds['conditional_on_unverified_reference_yaw_rmse'] = dict(
-            reference_yaw_rmse_deg=reported, reference_position_rmse_m=args.reference_score-.2*reported,
-            ours_yaw_rmse_deg_interval=[ours_lo,ours_hi],
-            ours_position_rmse_m_interval=[max(0.,args.baseline_score-.2*ours_hi),args.baseline_score-.2*ours_lo],
-            source='User method explanation; no truth or metric component report available')
     # A best-fitting global SE(2) is descriptive only, never applied to submissions.
     x, y = base[:,:2]-base[:,:2].mean(0), external[:,:2]-external[:,:2].mean(0)
     u, _, vt = np.linalg.svd(x.T@y)
@@ -161,12 +131,13 @@ def analyze(args):
             record, values_derived = motion_diagnostic(times,values,seconds)
             motions.append(dict(source=label,**record))
             if seconds == 2.: curves[label] = values_derived
-    report = dict(sources=dict(ours=str(baseline_file), external=str(args.reference), sha256=before),
+    report = dict(analysis_only=True, non_submission=True, rules_reference=RULES_REFERENCE,
+        sources=dict(ours=str(baseline_file), external=str(args.reference), sha256=before),
         rows=count, idx_exact_match=True, csv_finite=True, reference_algorithm_reproduced=False,
         time_basis='Assumes external idx maps to our validated same Track1 frame sequence; external CSV has no timestamps',
         time_span_s=float(times[-1]), input_yaw_unit='radians; comparisons converted to degrees',
         reported_scores=dict(ours=args.baseline_score,external=args.reference_score,uploaded_bytes_independently_verified=False),
-        score_bounds=bounds, baseline=run_diagnostics(data),
+        baseline=run_diagnostics(data),
         external_minus_ours=dict(xy_vector_m=statistics(np.linalg.norm(delta,axis=1)),
             dx_m=statistics(delta[:,0]),dy_m=statistics(delta[:,1]),yaw_deg=statistics(dyaw)),
         prior_comparison=dict(ours_minus_motion_prior_xy_m=statistics(np.linalg.norm(base[:,:2]-pxyz[:,:2],axis=1)),
@@ -183,18 +154,10 @@ def analyze(args):
             interpretation='Descriptive external-minus-ours correction, not an identified GNSS bias, source filter recovery or calibration'),
         segments=segments, motion_consistency=motions,
         motion_consistency_limits='Yaw versus own velocity uses only output trajectories; physical forward-axis/sideslip/lever-arm assumptions apply. It is not yaw truth. SG derivative windows 1/2/4s are fixed diagnostic sensitivities, not algorithm tuning.',
-        crossovers=[], limits=['No external scales, map correspondences, ICP success masks or factor graph states were supplied.',
-            'User method narrative and reported yaw RMSE are unverified source descriptions, not values recoverable from CSV.',
+        limits=['No external scales, map correspondences, ICP success masks or factor graph states were supplied.',
+            'User method narrative is an unverified source description, not recoverable from CSV.',
+            'Reported scores are metadata only; no hidden error component is inferred.',
             'External predictions are not used to calibrate our production trajectory, fit targets or select solver parameters.'])
-    if args.write_crossovers:
-        report['crossovers'] = [crossover(root/'outputs/run',base_rows,external_rows,baseline_file,args.reference,source)
-                                for source in ('ours','external')]
-        report['crossover_score_identities'] = dict(
-            recommended='ours XY + external yaw',
-            yaw_score_improvement='baseline_score - crossover_score',
-            position_rmse_improvement_m='crossover_score - external_score',
-            complementary_sum=args.baseline_score+args.reference_score,
-            scope='Requires the same separable metric; optional external scoring, not performed by assistant')
     with (args.experiment/'per_frame_difference.csv').open('x',newline='') as stream:
         writer=csv.writer(stream); writer.writerow(['idx','timestamp_ns','relative_time_s','delta_x_m','delta_y_m','delta_xy_m','delta_yaw_deg','median12_delta_x_m','median12_delta_y_m'])
         writer.writerows((i,int(stamp),t,*d,float(np.linalg.norm(d)),float(h),*s)
@@ -226,29 +189,31 @@ def analyze(args):
     snapshot=args.experiment/'sources';snapshot.mkdir()
     for source in (Path(__file__),Path(__file__).with_name('analyze_height_score.py')):shutil.copy2(source,snapshot/source.name)
     dump(snapshot/'sha256.json',{p.name:sha256(p) for p in snapshot.glob('*.py')})
-    info=json.loads(info_file.read_text());info.update(status='complete',analysis_only=True,localization_executed=False,
+    info=json.loads(info_file.read_text());info.update(status='complete',analysis_only=True,non_submission=True,rules_reference=RULES_REFERENCE,localization_executed=False,
         external_method_description='User supplied narrative; original implementation, per-frame scales, ICP and truth unavailable',
         production_algorithm_changed=False,reference_predictions_used_as_training_truth=False,
         comparison_report='comparison.json',versions=dict(python=sys.version,numpy=np.__version__),
         command=sys.argv)
     dump(info_file,info)
-    print(json.dumps(dict(score_bounds=bounds,delta=report['external_minus_ours'],slow=report['slow_correction_diagnostic'],crossovers=report['crossovers']),indent=2))
+    print(json.dumps(dict(analysis_only=True,non_submission=True,delta=report['external_minus_ours'],slow=report['slow_correction_diagnostic']),indent=2))
 
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--reference',type=saved_path,required=True)
-    parser.add_argument('--reference-score',type=float,required=True)
+    parser.add_argument('--reference-score',type=float,required=True,help='Reported source score; metadata only')
     parser.add_argument('--baseline-run',type=saved_path,required=True)
-    parser.add_argument('--baseline-score',type=float,required=True)
+    parser.add_argument('--baseline-score',type=float,required=True,help='Reported source score; metadata only')
     parser.add_argument('--experiment',type=saved_path)
-    parser.add_argument('--reported-reference-yaw-rmse',type=float)
-    parser.add_argument('--write-crossovers',action='store_true')
+    parser.add_argument('--reported-reference-yaw-rmse',type=float,help='Disabled legacy option: unknown score-component inference is prohibited')
+    parser.add_argument('--write-crossovers',action='store_true',help='Disabled legacy option: historical files only; generates no submission CSV')
     args=parser.parse_args()
-    for value in (args.reference_score,args.baseline_score,args.reported_reference_yaw_rmse):
+    try:
+        reject_score_probing(args)
+    except ValueError as exc:
+        parser.error(str(exc))
+    for value in (args.reference_score,args.baseline_score):
         if value is not None and (not np.isfinite(value) or value<0):parser.error('Scores/RMSE must be finite and nonnegative')
-    if args.reported_reference_yaw_rmse is not None and .2*args.reported_reference_yaw_rmse>args.reference_score:
-        parser.error('Reported yaw term exceeds the total reference score under the assumed metric')
     root=Path(__file__).resolve().parents[1]
     args.reference=args.reference.resolve();args.baseline_run=args.baseline_run.resolve()
     if args.experiment is None:args.experiment=create_run_directory(root/'outputs/run','external_scored_csv_analysis',track=1)

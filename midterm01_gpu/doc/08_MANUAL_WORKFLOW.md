@@ -1,4 +1,59 @@
+**2026-10-23 現行規則提示：**因果定位適用所有 Track；不得以未來資訊回修 pose、使用 RTS／backward smoothing，或在定位後離線修正軌跡。Track1／2 GNSS 仍可作輸入，但 RTS 不因此合規。本文相關算法、命令與成績均為歷史紀錄，不作現行正式提交推薦；規則與程式影響見 [48](48_RULES_AND_CODE_AUDIT_20261023.md)。
+
 # 08｜Midterm01 GPU 日常操作與結果讀取
+
+## 2026-10-23 現行 Track 資訊與非因果工具
+
+**Track3 本機資料與手動短段入口已接續準備：**3142 個 PLY 索引／bag 前相機時間逐筆相符；既有 `legacy` map-only 路徑已開放 Track3，50 幀乾跑通過，尚未實際定位。這條入口不呼叫 GNSS／IMU 前處理、RTS 或 graph；命令、尺度限制及靜態審查範圍見 [49](49_TRACK3_CAUSAL_BASELINE_20261023.md)。`check_competition_rules.py --track 3 --inventory-only` exit 0 只代表資料盤點，不代表正式提交合規；不加此選項仍 exit 2。下列歷史 GNSS 命令不能換 Track3 直接沿用。
+
+使用者後續轉貼的 Track3 Kaggle 文字已確認前／左前／右前相機 H265、`/imu/data`（orientation／acceleration），以及 CSV 欄序 `idx,x,y,yaw`、3142 筆資料（不含表頭；含表頭共 3143 筆紀錄）。原文與已知／待核對項目見 [資料規格](../../midterm01/docs/KAGGLE_DATASET_SPEC.md)；不把公告 topic 視為已讀取本機 bag 或已驗證 gyro／時間／frame 契約。
+
+Track3 為 3142 幀、沒有 GNSS pose；public 取前 5–40%，private 為其餘資料，private baseline <=1.40 才有基本分。`scripts/check_competition_rules.py` 分別以 `--track 1`、`--track 2` 或 `--track 3` 執行時，目前都因尚無驗證合規 runner 而以 exit 2 結束；`inventory_checks_passed` 只代表資料／原件盤點通過，不代表定位 runner 或規則合規已驗證。
+
+`trajectory_filter_lab.py` 產生的位置 SG／RTS／EMA 濾波 CSV 是定位後軌跡處理，不可作正式提交。`prepare_surface_height.py` 的 centered median／fill 使用非因果鄰域，也不符合現行規則。下列舊命令與流程只保留歷史紀錄。
+
+## 2026-10-21 規則與 Track 範圍（歷史，已由 10/23 公告取代）
+
+先讀 [45｜補充公告解讀與專案調整](45_COMPETITION_UPDATES_20261021.md)，原件集中在 [000 原規則](<Competition Regulations/90_舊版_已取代_可刪除_SDC_2026_Midterm01_Localization_24頁.pdf>)／[001 補充規則](<Competition Regulations/91_舊版_已取代_可刪除_Mid01_Updates_Adjustments_20261021.pdf>)。本手冊現有定位命令限 Track1／2，GNSS 方法仍合法；新增 Track3 不提供 GNSS pose，預定 10/22 發布，不能只換 `--track 3` 就沿用 GNSS smoother。`python3 scripts/check_competition_rules.py --track 3` 是唯讀規則／候選資料盤點，未就緒時退出碼 2；它不跑定位。Track3 幀數及 sample 未知，現階段不交付猜測的完整命令。所有測試仍放單一 `outputs/run/`，Track3 命名延用 `track03_test_YYMMDDHHmm`／`track03_full_YYMMDDHHmm`。
+
+正常算法／參數比較與使用者手動 full 偏好延續，但不以多次榜分推算隱藏誤差後改軌跡；先前交叉 XY／yaw 分項提交建議已撤回，生成參數停用，舊 CSV／證據保留。本專案地圖定位只用 XYZ，不利用 Track2 `tl/th` 還原建圖軌跡。新排名權重為 0.3／0.3／0.4，Track3 public 前10–30%、private其餘；這不改既有逐幀時間、CSV 欄位或命令交付順序。
+
+## 固定輸出格式（使用者指定 2026-10-20）
+
+本節是持續有效的協作規則。提供給使用者的定位命令，順序固定為：GPU 專案絕對路徑 `cd`、`bash scripts/dev.sh up`、一條可直接貼上執行的定位命令。完整計算仍由使用者手動啟動；不得把不同歷史算法的命令夾進同一組交付命令。保留任務指定參數及既有命令入口；其他命令／算法的歷史說明放在命令區之外。
+
+新 `run_map_smoother.py` 與 GPU 入口 `run_map_smoother_gpu.py` 共用以下固定即時輸出格式。以下數值只示範格式，並非實際量測：
+
+```text
+Run: <absolute run>
+Frame 1/3299: idx=0, map=accepted, scale=8.700000, load=12.34 ms, registration=789.01 ms, frame=801.35 ms
+Graph: executed=true, applied=true, time=123.45 ms
+Finished: frames=3299, accepted_map=K, rejected_map=M, total=... s
+CSV: <absolute path>
+Validation: <absolute path>
+```
+
+`Frame i/N` 的 `i` 是本次執行已完成幀數、從 1 起算；console 的 `idx` 是原始影格 0-based index（短段也保留原索引），對應 CSV 的 `original_idx`。`map=accepted` 只表示幾何／可觀測性檢查接受該 map 配準，不代表定位準確。`load` 計讀取 PLY；`registration` 計單幀 map 配準計算；`frame` 計上述兩者加該幀 Python 呼叫開銷。這些單幀欄位不含 raw 感測資料與 map 準備、graph 或寫檔時間。graph 時間獨立列出；資料準備到完成的全流程耗時記為 pipeline total，不攤入單幀時間。
+
+新 runner 的 `timings.csv` 欄名與順序固定為 `idx,original_idx,timestamp_ns,backend,load_ms,registration_ms,total_ms,map_accepted,scale`。`idx` 為 local 0-based index，`original_idx` 保留原始幀索引，`timestamp_ns` 為整數奈秒。`observations.jsonl` 的既有 `elapsed_seconds` 保留，且沿用相同單幀計時範圍。歷史 CUDA C++ `timings.csv` 欄位、`ndt_ms` 的歷史含義與舊檔原樣保留，不改名、不回填。CUDA console 原本只在首幀及每 25 幀摘要；如需逐幀時間，讀取其 `timings.csv`。本規則只要求新 runner 即時逐幀輸出，不表示 C++ 已修改。
+
+後續算法更新不得自行更改欄名、順序、單位、console 格式或命令交付順序，除非使用者明確更新指示。新診斷另行記錄；不得為了套用歷史格式而將其他 backend／計算稱為 NDT。
+
+## Full run 事後圖表
+
+自 2026-10-23 起，每次成功完成的 full track 會在該 run 目錄下建立 `analysis/`，由主流程讀取該 run 已保存的 `result.txt`、`diagnostic.csv`、`frames.csv`、`timings.csv`，以及存在時的 `sensor_prior`／guidance／observations，產生唯讀診斷圖。三相機流程沿用 benchmark 子 run 的 hook，圖表仍放在各 Track 定位 run 的 `analysis/`。短段、失敗或未完成 run 預設不產生完整比較圖；歷史 run 不搬移、不補圖。
+
+標準圖檔為 `01_trajectory.png`／`.pdf`、`02_pose_changes.png`／`.pdf`、`03_registration_timing.png`／`.pdf`，並附 `manifest.json` 與說明來源及限制的 `README.md`。manifest 記錄輸入來源及 SHA。沒有真值時不宣稱精度；不把接受率或殘差當作精度指標；不存在的感測器／診斷欄位不補造。圖表不修改 pose、CSV、參數或定位結果，不進行離線軌跡修正。繪圖耗時獨立保存，不加入定位 `timings.csv`。
+
+若分析階段失敗，獨立寫入 `analysis_status.json`／`analysis.log`，保留定位成功狀態及原始輸出，並明確標示圖表未完成。新 run 可透過 `PYTHONDONTWRITEBYTECODE=1 OPENBLAS_NUM_THREADS=1 outputs/ml_runtime/venv/bin/python scripts/plot_run_analysis.py --run <new_full_run>` 重試；此命令讀取當次 run，不執行定位，並更新分析狀態。既有完整圖及來源相同時重用，來源或程式不同則保留舊圖並拒絕覆寫。定位入口的 hook、檔案狀態與是否成功，以實際程式及該 run 記錄為準。
+
+本次驗證記錄：[`outputs/run/track00_test_2610231420/`](../outputs/run/track00_test_2610231420/) 保存 12 項通過的回歸檢查、兩種既有輸出格式的獨立診斷副本與無感測器合成 Track3 的試畫。三組各產生 3 PNG＋3 PDF，已核對渲染及重試重用，來源 SHA 不變。測試圖只在研究目錄；沒有替原歷史 run 補圖、沒有執行定位或 GPU 工作。
+
+## GPU 加速與逐幀輸出補充（歷史）
+
+使用者後續指定可並行的主要耗時優先搬 GPU，以加快迭代。新 GPU 入口／同模型配對與實測見 [44](44_CUDA_SCALE_ACCELERATION_20261020.md)，手動命令仍在 [16](16_run_geometry_directional.txt) 最上方。`load` 包括原 PLY 載入函式內的體素選點；GPU 版將選點放 GPU，仍保留原 XYZ 與相同選點規則，不更改計時欄名與 console。ASCII 解析、小型 solver 與稀疏 graph 的 CPU 部分明列於 runtime／params，不稱全 GPU。
+
+本次變更時使用者的 `track02_full_2610201936` 正在執行，為保護其最後來源 SHA 核對，原 runner 保持不變。新版本暫存在 `outputs/run/track00_test_2610201947`；自動套用程序等待 full 退出，核對原 SHA 與暫存 SHA 後才安裝。查該目錄 `activation.json`／`activation.log` 確認狀態；不會停止或重啟目前 full。
 
 更新：2026-10-20。以下 Docker／benchmark／檔案指令都在 **Ubuntu 主機** 執行。後續使用 `midterm01_gpu`，CPU 程式／結果保留；完整 Track 測試由使用者手動執行，不因整理文件而重跑。
 

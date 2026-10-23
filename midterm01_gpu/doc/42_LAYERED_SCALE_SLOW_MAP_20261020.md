@@ -1,10 +1,12 @@
+**2026-10-23 現行規則提示：**因果定位適用所有 Track；不得以未來資訊回修 pose、使用 RTS／backward smoothing，或在定位後離線修正軌跡。Track1／2 GNSS 仍可作輸入，但 RTS 不因此合規。本文相關算法、命令與成績均為歷史紀錄，不作現行正式提交推薦；規則與程式影響見 [48](48_RULES_AND_CODE_AUDIT_20261023.md)。
+
 # 42｜分層 map 尺度估計與慢變 map 修正（2026-10-20）
 
 ## 目的與目前狀態
 
 本研究把使用者提供的學長方法描述轉成一個可檢查的實驗流程：每幀以獨立 map-only Sim(3) 配準估計來源點雲尺度與 6-DOF 位姿；只有通過幾何留出與可觀測性檢查的幀，才可能形成低頻 map 修正錨點，交由 GNSS／IMU 批次圖估計慢變偏差與航向。學長沒有提供原始程式、逐幀尺度、ICP 對應或真值，因此這是依文字線索實作的研究版本，不能稱為精確重現。
 
-本分支與原最佳都直接使用老師提供的 `raw_ply`，沒有自行重新執行或修改 LoGeR；官方題目第 8 頁指出前相機影像使用 LoGeR。先前三相機重建分支使用 MapAnything，兩者來源不同，本文件的尺度估計針對既有前相機 `raw_ply`。見[官方題目 PDF，第 8 頁](<../../midterm01/docs/SDC 2026 Midterm01 Competition -  Localization.pdf>)。
+本分支與原最佳都直接使用老師提供的 `raw_ply`，沒有自行重新執行或修改 LoGeR；原競賽 PDF 第 8 頁指出前相機影像使用 LoGeR。先前三相機重建分支使用 MapAnything，兩者來源不同，本文件的尺度估計針對既有前相機 `raw_ply`。見[原競賽規則 PDF（000），第 8 頁](<Competition Regulations/90_舊版_已取代_可刪除_SDC_2026_Midterm01_Localization_24頁.pdf>)；現行規則補充見[45](45_COMPETITION_UPDATES_20261021.md)。
 
 兩條 Track 共用相同算法與參數。這一輪以 Track2 測試，是因 Track1 上傳額度已用完；這不構成 Track 專屬模型設定。當前研究實作為 Python SciPy／`cKDTree` CPU 分支，獨立於原 CUDA `sensor_guided` 定位流程；不稱 GPU ICP，也不是完整 IMU preintegration。已評分最佳仍是 `motion_rts＋directional＋carry`：Track1 1.15008、Track2 0.30488。新分支尚無完整結果或 Kaggle 分數，最佳紀錄不變。
 
@@ -76,13 +78,13 @@ bash scripts/dev.sh up
 PYTHONDONTWRITEBYTECODE=1 OPENBLAS_NUM_THREADS=1 outputs/ml_runtime/venv/bin/python scripts/run_map_smoother.py --track 2 --full
 ```
 
-Track1 使用同一套算法時將 `--track 2` 換成 `--track 1`。腳本由原始 bag 產生本輪 `motion_rts` prior，重新匯出 raw sensors，從原始 map 建本輪細 map；不依賴歷史 run 或 map cache。每個 run 放在 `outputs/run/`，保存來源、bag/map/prior/map SHA、程式快照與 SHA、參數、逐幀 `observations.jsonl`、`graph_report.json`、輸出矩陣 `result.txt`、`diagnostic.csv`、frame manifest 與 `validation.json`。Track2 完整輸出列數為 3299，Track1 為 3011；提交欄位為 `idx,x,y,yaw`。本文件沒有執行上述命令。
+Track1 使用同一套算法時將 `--track 2` 換成 `--track 1`。腳本由原始 bag 產生本輪 `motion_rts` prior，重新匯出 raw sensors，從原始 map 建本輪細 map；不依賴歷史 run 或 map cache。每個 run 放在 `outputs/run/`，保存來源、bag/map/prior/map SHA、程式快照與 SHA、參數、逐幀 `observations.jsonl`、`timings.csv`、`graph_report.json`、輸出矩陣 `result.txt`、`diagnostic.csv`、frame manifest 與 `validation.json`。新 runner 的即時 console 對每幀輸出 `Frame i/N`，其中 i 為 local 1-based 完成數，`idx` 為 local 0-based index；顯示 map 接受狀態、尺度、PLY load、單幀 registration 及其含 Python 呼叫開銷的 frame 時間。`map=accepted` 是幾何檢查結果，不代表定位準確。`timings.csv` 固定欄位順序為 `idx,original_idx,timestamp_ns,backend,load_ms,registration_ms,total_ms,map_accepted,scale`，`timestamp_ns` 保持整數奈秒；`observations.jsonl` 的 `elapsed_seconds` 沿用相同的單幀計時範圍。讀 PLY 與單幀 map 計算以外的 raw 感測／map 準備、graph、寫檔時間不計入單幀欄位；graph 另列實際執行／套用狀態及耗時，全流程準備到結束時間單獨記 pipeline total。固定 console 格式、欄名、順序、單位及命令交付方式見 [08｜日常操作](08_MANUAL_WORKFLOW.md) 開頭。這項說明針對新 Python runner；舊 CUDA C++ timing 欄位與 `ndt_ms` 歷史含義不變，也不宣稱 C++ 已改為逐幀即時輸出。本文件沒有執行上述命令。Track2 完整輸出列數為 3299，Track1 為 3011；提交欄位為 `idx,x,y,yaw`。
 
 ## 已知驗證與未解問題
 
-`track00_test_2610200240/verification.json` 記錄 44 項機制／回歸檢查全數通過，涵蓋 map smoother、kinematic graph、surfel joint、full CLI、輸出 layout 與 replay。兩條 Track 的 full dry-run 正常回報各自 3011／3299 幀；`--full` 與 `--frames 48`、非零 `--start-frame` 的互斥檢查都正確拒絕。機制測試包含 Sim(3) 與 8-state sparse Jacobian（含 GNSS Huber／map 有界損失）、bias 正負號、地面退化拒絕、無 map 時保留 sensor 初始化，以及有 map anchor 時實際求解並發布 proper rotation；graph Jacobian 數值微分最大差約 `8.43e-9`，這是導數檢查，不是定位誤差。
+先前證據 `track00_test_2610200240/verification.json` 記錄 44 項機制／回歸檢查全數通過，涵蓋 map smoother、kinematic graph、surfel joint、full CLI、輸出 layout 與 replay。兩條 Track 的 full dry-run 正常回報各自 3011／3299 幀；`--full` 與 `--frames 48`、非零 `--start-frame` 的互斥檢查都正確拒絕。機制測試包含 Sim(3) 與 8-state sparse Jacobian（含 GNSS Huber／map 有界損失）、bias 正負號、地面退化拒絕、無 map 時保留 sensor 初始化，以及有 map anchor 時實際求解並發布 proper rotation；graph Jacobian 數值微分最大差約 `8.43e-9`，這是導數檢查，不是定位誤差。
 
-修正首輪 `track02_test_2610200231` 的 SciPy Euler batch 輸入形狀錯誤後，從原 bag／map 完成三段共 160 幀真實短測；逐段 validation 均完整、有限且通過：
+修正首輪 `track02_test_2610200231` 的 SciPy Euler batch 輸入形狀錯誤後，先前曾從原 bag／map 完成三段共 160 幀真實短測；逐段 validation 均完整、有限且通過。這些是既有實測證據，不是本次文件更新執行的定位：
 
 | run／Track2 原始幀範圍 | 幀數／時間 | 幾何接受 | 時間 gate 通過 | Anchor | Graph 求解／套用 |
 | --- | ---: | ---: | ---: | ---: | --- |

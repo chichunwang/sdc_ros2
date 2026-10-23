@@ -1,6 +1,18 @@
+**2026-10-23 現行規則提示：**因果定位適用所有 Track；不得以未來資訊回修 pose、使用 RTS／backward smoothing，或在定位後離線修正軌跡。Track1／2 GNSS 仍可作輸入，但 RTS 不因此合規。本文相關算法、命令與成績均為歷史紀錄，不作現行正式提交推薦；規則與程式影響見 [48](48_RULES_AND_CODE_AUDIT_20261023.md)。
+
 # 01｜程式架構圖與完整演算法流程
 
+2026-10-23 起的主要 Python／Matplotlib 診斷圖入口，是每次成功 full run 完成後自動寫入該 run 的 `analysis/`。圖表只讀取已保存結果，不改 pose／CSV／參數，也不作離線軌跡修正；短段、失敗或未完成 run 預設不產生完整比較圖。輸出、來源 SHA、狀態與限制見 [08｜操作手冊](08_MANUAL_WORKFLOW.md#full-run-事後圖表)。舊教學圖程式與素材仍在 [doc/analysis/README.md](analysis/README.md)，作為歷史教學內容，不補畫歷史 run。
+
+2026-10-21 實作與最新結果入口：[47｜實作盤點與 Track2 成績](47_IMPLEMENTATION_STATUS_AND_TRACK2_SCORE_20261021.md)。新 GPU 6-DOF＋逐幀尺度＋slow-map graph 已完成 Track2 full，使用者回報顯示分數 0.77，未勝原最佳約 0.30。本文後續 2026-10-20 的「尚無新分數」保留當時狀態；目前最佳仍為原 motion_rts＋directional＋carry。
+
+2026-10-21 規則補充與適用範圍見 [45](45_COMPETITION_UPDATES_20261021.md)：以下 GNSS／IMU prior 與慢 bias graph 描述適用 Track1／2，仍符合原規則。新增 Track3 不提供 GNSS pose，不能直接沿用這條初始化／fallback／GNSS gate；其資料契約及無 GNSS solver 尚未就緒。官方原件現集中在 doc 的 [000](<Competition Regulations/90_舊版_已取代_可刪除_SDC_2026_Midterm01_Localization_24頁.pdf>)／[001](<Competition Regulations/91_舊版_已取代_可刪除_Mid01_Updates_Adjustments_20261021.pdf>)。
+
+2026-10-20 GPU 加速入口：`scripts/run_map_smoother_gpu.py` 保留 [42](42_LAYERED_SCALE_SLOW_MAP_20261020.md) 的 estimator／接受條件，將主要密集幾何與 voxel 移到 GPU；同時保留已固定的每幀計時格式。已完成 51 項機制／回歸與 96 幀 GPU 端到端短測，實測及 CPU 邊界見 [44](44_CUDA_SCALE_ACCELERATION_20261020.md)。原 CPU／CUDA 主線及執行中的 full 來源保留；尚無本輪新 Kaggle 分數。
+
 2026-10-20 新研究入口：[`run_map_smoother.py`](../scripts/run_map_smoother.py) 由 raw bag／map → 本輪 motion_rts 初始化 → 每幀獨立分層 Sim(3)（6-DOF＋尺度）→ 幾何及相鄰位移檢查 → 12 秒穩健慢修正 → raw GNSS／gyro／NHC／GNSS 慢 bias 批次圖 → CSV。兩 Track 共用模型與參數，本輪先測 Track2；新分支使用 CPU SciPy／KD-tree，與下述已評分 CUDA 主線分開。方法、限制及手動 full 命令見 [42](42_LAYERED_SCALE_SLOW_MAP_20261020.md)，尚無新 Kaggle 分數。
+
+想先確認目前進度、各感測器座標代表什麼，以及下一步如何驗證最佳算法，請讀 [43｜開發進度、座標契約與研究路線](43_PROGRESS_FRAME_AND_ROADMAP_20261020.md)。
 
 核對日期：2026-10-18（Asia/Taipei）。本文直接對照目前 checkout 的 Python、C++、CUDA、Compose 與既有輸出，從「輸入命令」一路解釋到「產生 CSV」。只整理與讀取證據，沒有重新執行定位。
 
@@ -24,7 +36,7 @@
 
 ## 1. 先看整張架構圖
 
-2026-10-20 本輪 [39｜航向與stereo尺度](39_HEADING_AND_STEREO_SCALE_20261020.md) 新增 `turn_heading_rts`：raw GNSS block 對齊積分 IMU 方向的線性車速，取代原 course factors 再進 bias RTS；`pose_yaw` 直接換用 GNSS Pose yaw，保留同 motion XY／IMU tilt。原前相機 stereo 推導的 scale=7.404260939740923 已透過原 `--ply-scale` 實際進入 C++ 配準短測；full 通用命令見16。下圖仍描述已評分 scale3／motion_rts 主線，新版本沒有新 Kaggle 分數，程式預設保留。
+2026-10-20 本輪 [39｜航向與stereo尺度](39_HEADING_AND_STEREO_SCALE_20261020.md) 新增 `turn_heading_rts`：raw GNSS block 對齊積分 IMU 方向的線性車速，取代原 course factors 再進 bias RTS；`pose_yaw` 直接換用 GNSS Pose yaw，保留同 motion XY／IMU tilt。原前相機 stereo 推導的 scale=7.404260939740923 已透過原 `--ply-scale` 實際進入 C++ 配準短測；完整評分分別為 `turn_heading_rts`＋scale7.40426 **1.15167**、`pose_yaw`＋scale3 **1.30507**，都未勝最佳，細節見 [40](40_SCORED_SCALE_FAILURE_AND_POSE_YAW_20261020.md)。下圖仍描述已評分 scale3／motion_rts 主線，程式預設保留。
 
 2026-10-20 的來源層研究見 [38｜跨幀剛體一致性與尺度](38_SOURCE_RIGIDITY_AND_SCALE_20261020.md)：新增獨立於定位主流程的 RGB vertex 對應、剛體／相似模型與共用尺度診斷。已完成 96 對真實來源檢查與 16 場景 map 對照；沒有新 pose／可靠 factor 或精度改善證據，下面已評分主流程的 source scale=3／solver 不變。
 
@@ -661,7 +673,7 @@ outputs/run/track00_full_2610181301/
 
 `cuda_ndt_backend` 的 package 名、run 名中的 `_d2d_`、`timings.csv.ndt_ms` 和部分 TODO／log 仍保留歷史名稱。**判斷實際運算要看 profile／registration_backend／geometry 與程式分支，不能只看資料夾名稱。**
 
-獨立 `trajectory_filter_lab.py` 是讀既有結果做後處理消融，不是每次 benchmark 都會串接的一步。三相機尺度驗證、stereo anchors 與效能 probe 也不是每幀定位都重新跑；完整 wrapper 使用凍結的 candidate。
+獨立 `trajectory_filter_lab.py` 是歷史上的定位後軌跡處理研究工具，不可作正式提交路徑。現行 full run 圖表 hook 是唯讀診斷，不改軌跡；三相機尺度驗證、stereo anchors 與效能 probe 也不是每幀定位都重新跑，完整 wrapper 使用凍結的 candidate。
 
 ## 13. 建議你現在怎麼讀程式
 

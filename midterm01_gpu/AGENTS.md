@@ -1,5 +1,50 @@
 # Midterm01 GPU 工作約定
 
+## 2026-10-23 Track3 初始化 v2（最新）
+
+- 同入口 `scripts/run_track3_causal.py` 已改為 `track3_causal_vertical_imu_kalman_sim3_v2`；[53](doc/53_TRACK3_INITIALIZATION_REPAIR_20261023.md) 記錄靜態地面差18.54–18.89°超舊15°、候選尺度改變有效法向及v2修正。尺度9僅靜態比較，非校準／推薦值；CLI仍從未校準3啟動。初始化training地面seed／24°工程域、每候選metric PCA、完整metadata cache identities、首次anchor與後續運動gate分開、固定source覆蓋代價、實際步長／cost收斂及bounds檢查已實作，後續運動gate保留。0筆map更新不再宣告定位成功。
+- 59項不同合成CPU/CUDA/runner檢查與3142幀full乾跑通過，合成3/5幀前綴一致；證據 `outputs/run/track03_test_2610231550/`、`track00_test_2610231601/`。尚無真實v2定位或新分數；<1.29為使用者目標，不是保證。由使用者手動啟動下一個full，不把短段當資格門檻。原v1的82.17與來源快照保留，相同CLI現在不會重現舊v1。
+
+## 2026-10-23 Track3 前向 Kalman／尺度分支接續
+
+- 新入口 `scripts/run_track3_causal.py` 實作 IMU 前向 Kalman、因果運動預測／配準拒絕與受約束逐幀尺度；模型及現況見 [52](doc/52_TRACK3_CAUSAL_KALMAN_SCALE_20261023.md)／[50](doc/50_COMMAND_REFERENCE.md)。39 項合成機制／CUDA／I/O 及真實輸入 CPU audit 通過，但使用者後續 full `track03_full_2610231521` 回報 **82.17**：3142 筆完整，最終 map 採用 0 筆，速度為零、XYZ 固定初值、尺度始終約 3，屬啟動／平移追蹤失敗，不推薦原樣重跑。唯讀證據在 `outputs/run/track03_test_2610231541/diagnosis.json`；分數記來源 `test_info.json`，未驗上傳 bytes。舊 legacy 106.72 保留歷史。
+- 本機沒有已確認的相機→IMU 外參；初始化保留 `T_map_source` 慣例，gyro 用 orientation 世界 +Z 投影並假設平行 map +Z，屬平面近似。不得宣稱已完成物理座標標定或正式提交認證。噪聲／安全域是待驗工程假設，並非實測 covariance。
+- GPU 沿用 kNN／PCA／配對及每批 256 個 `eigh`；CPU 保留 I/O、小 solver／Kalman 與精確邊界裁決。map 準備與暖機另計，固定輸出格式保持。完整與短段定位仍全由使用者手動執行，不因程式完成而自動啟動。
+- 使用者最新確認只有 full 提交能得正式分數；短段只查機制與故障，不設額外 full 資格門檻。配準由程式自動估 `R,s,t`，不要求使用者手動對齊每幀或量逐幀真值；scale 3 是影像重建 PLY XYZ 的未校準啟動倍率。原始資料／CSV／矩陣／validation／manifest 保留，禁止依排行榜反推尺度或離線修軌跡。
+
+## 2026-10-23 full run 事後圖表規則（最新）
+
+- Python／Matplotlib 圖表自本更新起，在每次成功完成的 full track 後產生，放在該次 run 的 `analysis/` 子目錄；`doc/analysis/` 的集中輸出方式屬舊規／歷史，不適用新 run。短段、失敗或未完成 run 預設不產生完整比較圖；歷史 run 不搬移、不補圖，教學素材與個人紀錄保留。
+- 圖表是定位完成後對已保存輸出的唯讀診斷；不改 pose、CSV、參數或定位結果，不作離線軌跡修正，也不把接受率、殘差或圖表解讀當成精度／真值證明。缺少感測器或診斷資料時不得捏造。
+- 標準輸出：`01_trajectory.png`／`.pdf`、`02_pose_changes.png`／`.pdf`、`03_registration_timing.png`／`.pdf`、`manifest.json` 與 `README.md`。manifest 記錄來源檔案與 SHA；畫圖時間另計，不混入定位 `timings.csv`。圖表失敗用獨立 `analysis_status.json`／log 記錄，保留定位成功狀態及原輸出，不宣稱圖表已完成。
+- 完成 full 後由定位入口自動呼叫分析 hook；失敗、短段及未完成 run 預設略過。新 run 可用 `python scripts/plot_run_analysis.py --run <new_full_run>` 獨立重試。以上為輸出約定，程式與實際完成狀態以實作及該 run 記錄為準。完整定位／提交仍由使用者手動啟動。
+
+## 2026-10-23 因果定位規則（優先於 2026-10-21 規則解讀）
+
+- **同日 Track3 本機準備接續：**已唯讀確認 3142 個 PLY 檔名 idx 0–3141 及時間戳與 bag 前相機逐項相符，三相機各 3142 筆、IMU 11307 筆、無 GNSS；map／init 矩陣已盤點。既有 `benchmark.py` 已限 `legacy/front` 開放 Track3，明示尺度並拒絕 GNSS／RTS／graph 路徑，50 幀乾跑通過但未實際定位。命令與證據見 [49](doc/49_TRACK3_CAUSAL_BASELINE_20261023.md)。scale 3 是未校準基線；官方 sample／frame／yaw 與實際前綴一致性未驗證。使用者要求所有定位仍交由他手動執行；不將靜態因果審查稱為完整提交認證。
+
+- **Track3 資料說明接續更新（使用者 2026-10-23 轉貼）**：三個相機 H265 topic 與 `/imu/data`（orientation、acceleration）已公告，CSV 欄序 `idx,x,y,yaw`，3142 筆不含表頭、含表頭共 3143 筆紀錄；原文見 [Kaggle 規格](../midterm01/docs/KAGGLE_DATASET_SPEC.md)。公告文字不等於本機 bag/schema、idx／yaw／frame／尺度或因果 runner 已驗證；不改現有 GNSS 入口的 Track 支援範圍。
+
+- 現行官方入口：[整合新版（31 頁）](<doc/Competition Regulations/00_SDC_2026_Midterm01_Localization_整合新版_20261022.pdf>)、[因果定位細則（4 頁）](<doc/Competition Regulations/01_Mid01_Updates_Rules.pdf>)；舊件歷史保留於 [90](<doc/Competition Regulations/90_舊版_已取代_可刪除_SDC_2026_Midterm01_Localization_24頁.pdf>)／[91](<doc/Competition Regulations/91_舊版_已取代_可刪除_Mid01_Updates_Adjustments_20261021.pdf>)。程式盤點見 [48](doc/48_RULES_AND_CODE_AUDIT_20261023.md)。
+- 所有 Track 遵守因果定位：不可用未來資訊回修舊 pose、RTS／backward／non-causal smoothing，或在定位完成後離線修正軌跡。Track1／2 GNSS 輸入合法不等於 RTS 合法。現有 `*_rts`（含 `pose_yaw` 位置 RTS）、CPU／GPU map smoother 的 motion_rts／batch graph、`refine_horizontal_joint` 離線回寫，不可作現行正式提交。保留歷史方法、結果及分數，但不得稱為新規合規最佳。
+- 公告時程與計分：10/29 09:00 選合規 Kaggle 提交；TA 重跑允許合理浮點差，違規或無法重現的 Track 得 0 分。Track3 3142 幀、無 GNSS pose、public 前 5–40%、private 其餘，private baseline <=1.40 才有基本分；權重 0.3／0.3／0.4。E3 截止 11/05 23:59，檔案為 `result_1.csv`、`result_2.csv`、`result_3.csv`。
+- 此規則更新不改 solver／參數，也不授權新的 full；完整定位／提交仍由使用者手動執行。歷史命令只作紀錄，不得作現行推薦。
+
+## 2026-10-21 學習優先約定（歷史；圖表輸出位置以 2026-10-23 更新為準）
+
+- 後續工作的首要目的，是讓使用者能推導、解釋及判斷算法。先說明問題、模型與變數、觀測／殘差／約束、可檢驗預測及消融，再依已授權範圍實作；實作完成不等於精度改善。
+- 延續非必要不調參；不為榜分盲目掃描參數或反覆試分。必要調整需有物理、統計、實測標定或數值穩定性依據，並附可重現驗證方法。歷史 0.6 等目標及先前偏向直接提供 full 命令的偏好保留為當時紀錄，不再主導後續方法選擇；0.77、0.30488 等分數忠實保留來源與顯示精度，不反推隱藏小數或真值。
+- Python／Matplotlib 是教學圖解的主要工具；程式、入口、小型固定教學圖及其資料集中於 `doc/analysis/`。圖解以實際 Python 產圖與資料核對為準；舊 `.m` 與 MATLAB 證據保留作歷史，不刪除、不作主要路徑，只靜態檢視，不宣稱已執行。此為使用者指定子目錄例外，不搬動其他文件。合成展示條件要標清楚，不能改成生產參數或實測結果。
+- 預定主機教學命令為：`cd /home/ricky/sdc_ros2/midterm01_gpu`，再執行 `PYTHONDONTWRITEBYTECODE=1 OPENBLAS_NUM_THREADS=1 outputs/ml_runtime/venv/bin/python doc/analysis/plot_learning.py`。這是讀檔教學圖，不是定位，不需 Docker；未核實執行前不宣稱圖或程式已驗證。定位／研究測試仍只放 `outputs/run/` 並遵守既有命名；不得為畫圖重跑定位／GPU 或修改最佳 CSV。完整 Track 與外部提交仍由使用者手動執行；完成已授權工作時不新增確認關卡。
+
+- **2026-10-21 補充規則（歷史，現行見 2026-10-23）**：原件集中 [90](<doc/Competition Regulations/90_舊版_已取代_可刪除_SDC_2026_Midterm01_Localization_24頁.pdf>)／[91](<doc/Competition Regulations/91_舊版_已取代_可刪除_Mid01_Updates_Adjustments_20261021.pdf>)，歷史解讀見 [45](doc/45_COMPETITION_UPDATES_20261021.md)。本段 Track3 日期、幀數、比例與契約均已由後續公告取代；以本檔 2026-10-23 因果定位規則為準。
+
+- **GPU 優先（使用者指定 2026-10-20）**：大量並行計算優先 CUDA，以加快迭代；最新入口 `scripts/run_map_smoother_gpu.py`，方法／效能見 [44](doc/44_CUDA_SCALE_ACCELERATION_20261020.md)。目前 GPU 負責 float64 空間 grid kNN、PCA／法向、分層對應、patch 均衡及 deterministic voxel；CPU 保留讀檔、小型 solver、稀疏 graph 與少量精度邊界裁決。加速前後同算法／同參數／同門檻，兩 Track 一致，不以減點／少迭代／改門檻冒充加速；CUDA 錯誤不得靜默 fallback。保護執行中 full 來源與 CPU 最佳。逐幀時間／CSV／console 固定格式保持，並分開記暖機、準備、配準與 graph。accepted=false 不丟 pose，長時間缺少可靠 anchor 才會削弱 map 校正；接受率不等於準確率。
+
+- **CUDA PCA OOM 修正（2026-10-21）**：[46](doc/46_CUDA_PCA_MEMORY_BOUND_20261021.md) 記錄 GPU full `track02_full_2610212056` 在 idx 653 的 OOM。source／map normals 的 `eigh` 現每批最多 256 個 3×3 float64 矩陣，全部點與原模型／門檻保留；勿移除批次界限或以 CPU fallback 掩蓋 CUDA 失敗。18 項回歸、24 幀跨失敗位置端到端、同 full map／prior 四幀配對與 80 次 PCA 變長批次已通過；使用者後續已完成 `track02_full_2610212125` 3299 幀且 graph 套用，回報顯示分數 **0.77**，未勝原最佳約 **0.30**；不推算未顯示小數。實作盤點與本輪證據見 [47](doc/47_IMPLEMENTATION_STATUS_AND_TRACK2_SCORE_20261021.md)。原失敗 run 及最佳不改；validation 額外保存 processed_frames、失敗 original idx、PyTorch peak allocated／reserved，console／timings.csv 不變。
+
+- **固定輸出協作規則（2026-10-20）**：遵守根 AGENTS「固定命令與逐幀進度格式」及 [08](doc/08_MANUAL_WORKFLOW.md#固定輸出格式使用者指定-2026-10-20)。命令維持 GPU 絕對 `cd` → `dev.sh up` → 單一定位命令；新 runner 沿用 `Run:`、逐幀 `Frame i/N`，必有 `load`／`registration`／`frame` 毫秒，graph 整段獨立計時；結尾 `Finished:`、`CSV:`、`Validation:`。新 `timings.csv` 固定 `idx,original_idx,timestamp_ns,backend,load_ms,registration_ms,total_ms,map_accepted,scale`。使用者明確要求格式固定，後續 agent 不得因算法修改而自行改名、換序、換單位或隱藏每幀時間；歷史輸出不回填。修改前先查使用者 full，保護執行中的來源 SHA。歷史格式更新紀錄在 `outputs/run/track00_test_2610201947`，`activation.json` 已標 applied；`track02_full_2610201936` 已無程序且僅部分輸出，不代表完整成功。一般等待期間仍不得覆寫原 runner。
+
 - 2026-10-20 最新實驗見 [42](doc/42_LAYERED_SCALE_SLOW_MAP_20261020.md)：`run_map_smoother.py` 的逐幀 map-only 尺度／分層 6-DOF／12 s 慢修正／GNSS bias、raw gyro、軟 NHC graph。兩 Track 共用算法與參數，本輪先測 Track2 是因 Track1 上傳額度用完；不要加入 Track 專屬調參。44 項檢查與三段 160 幀完整性通過，兩段 graph 發布、一段無 anchor 保留 sensor 初始化。此為明確 CPU SciPy/KD-tree 分支；原 CUDA／最佳不變，尚無新 full 或 Kaggle 分數，完整命令供使用者手動執行。逐幀尺度尚不支援固定尺度 RViz，最後版本標記不支援並排除預設回放。來源是老師以 LoGeR 產生的 `raw_ply`，未自行重跑／修改 LoGeR。證據 `outputs/run/track00_test_2610200240`；原最佳 CSV SHA 已核對不變。
 
 - 遵守 repo 根目錄 AGENTS.md；繁體中文記錄，保留 CPU 原環境及既有修改。2026-10-17 使用者指定 Midterm01 後續工作統一使用本 GPU 目錄；CPU 僅保留參考、既有輸出與共用資料。
@@ -25,7 +70,7 @@
 - 同日後續新增實驗 `surface`／`surface_tilt`，由來源／LiDAR 下方平面作獨立高度 reference，後者以固定 sensor yaw、有界 15° 的幾何 roll／pitch 修正，不套某 Track 固定外參。定位 map 保持 1 m；另用 outputs 的 0.3 m 高度帶 cache（`--height-map-cache`），有來源／範圍／leaf 核對。map_modified 新增可選 crop 與 integer overflow 明確失敗，避免 PCL 原樣返回卻誤稱 voxel cache。最終 v2 六組配對 1792 poses 全完整，859／896 幀直接支持；新角度／原點外推條件、競爭層／缺口保護有測試。Track1 前段 Z 範圍 4.458→0.613 m，但 Track2 前段退步；相對原完整最佳，整體／擬合外 probe 只在 3／6、2／6 段較低，不能升為正式最佳。證據、負面結果、失敗與候選回放見 `doc/33_SURFACE_HEIGHT_REFERENCE_20261019.md`。省略 height-mode 仍 carry，原最佳／CPU／個人紀錄不改；沒有新完整 Track 或分數。
 - 後續使用者三相機兩條完整已完成／評分，Track1 1.15346、Track2 0.31064，較既有前相機最佳增加 0.0616%／1.5960%；推薦最佳不變。CSV SHA256 為 9c37bf8618eff830eee1c20f0279bddaf997e95b19b059482b5a3ef4c6b63276／70949f80182b7fad0ca2f8b36bd6a13667c3b02d1c383c24991d94131e44c1db，3011／3299 筆及矩陣／manifest 核對通過。完整配對 XY 中位差約 1.49／1.42 cm，Z 中位差 +2.13／+1.27 m；32 個距離分位 probe 與 Track1 24×12 消融支持側面增加方向資訊，但來源深度／frame／高度一致性仍須釐清。原因、限制及改進順序見 [29｜完整分析](doc/29_THREE_CAMERA_SCORED_ANALYSIS_20261018.md)。不把 map residual／接受率／information 當精度，不按分數盲調 gain／尺度或補固定高度偏移；本輪未改 solver／重建來源或再跑完整序列。
 - 2026-10-18 同算法效能改進另設 `run_rig_fast.py`／`rig_geometry_accel.py`／`run_three_camera_full_fast.sh`，不改原 producer 的 identity。CUDA stable 整數排序、float64 批次 PCA、同規則向量化取樣及 calibration remap 快取；CPU exact KD-tree 與小型 4-DOF solver 保留。四個真實場景取樣暖機快 6.5–7.6 倍，兩條各兩幀 PLY／labels／CSV 完全相同，不能推為整幀同倍率或全序列精度證明。使用者已中斷原完整 run（Track1 2487／3011 幀）；只以 `migrate_rig_fast.py` 核對相同模型／原始影像／prior／標定／來源碼與已提交輸出後複製到新 run 接續，原 run 保留。新 identity 記 execution 與 migration hash，不直接放寬舊 resume 檢查。量測、保留項目與切換指令見 [效能報告](doc/25_RIG_PERFORMANCE_20261018.md)。完整測試仍由使用者啟動。
-- 使用者最新輸出規則：所有完整／短段／研究測試只放 `midterm01_gpu/outputs/run/`（單數），命名為 `track01_full_YYMMDDHHmm`／`track01_test_YYMMDDHHmm`、Track2用`track02`；跨Track或環境測試用`track00_test_YYMMDDHHmm`。同分鐘重名加`_0002`等碰撞序號。不得重建current／best／runs／submissions分類或測試索引；算法、版本、分數與舊路徑記在每次目錄內的test_info.json及參數／source紀錄。已有結果已集中搬移；原CSV／矩陣／manifest內容與SHA保持，舊metadata路徑只在讀取時解析，不改原始證據檔。VS Code維持依名稱排序，doc保持00_、01_…順序。
+- 使用者最新輸出規則：所有完整／短段／研究測試只放 `midterm01_gpu/outputs/run/`（單數），命名為 `track01_full_YYMMDDHHmm`／`track01_test_YYMMDDHHmm`、Track2用`track02`、Track3用`track03`；跨Track或環境測試用`track00_test_YYMMDDHHmm`。同分鐘重名加`_0002`等碰撞序號。不得重建current／best／runs／submissions分類或測試索引；算法、版本、分數與舊路徑記在每次目錄內的test_info.json及參數／source紀錄。已有結果已集中搬移；原CSV／矩陣／manifest內容與SHA保持，舊metadata路徑只在讀取時解析，不改原始證據檔。VS Code維持依名稱排序，doc保持00_、01_…順序。
 - 完整與短段測試都直接使用本次run目錄，不再建立最近／最佳捷徑；每個目錄有CSV、矩陣、validation及版本／分數資訊。
 - 2026-10-19 使用者要求完整操作不綁定歷史 run。benchmark 新增 `--full`（與 `--frames`／非零 start-frame 互斥）；surface 家族省略 `--height-map-cache` 時，從原始 map／本輪新 prior 在新 run 建立 0.3 m 高度帶 cache，核對 binary XYZ payload／SHA 後才發布有效 sidecar。定位 `--map-cache` 仍可選、預設停用，`--prior-run` 僅供明確對照重用；通用完整命令見 doc/33。沒有改已評分算法預設，完整測試仍由使用者手動啟動。
 - 後續使用者已手動完成兩條 surface_tilt 全序列（Track1 ...2610191555／Track2 ...2610191607），3011／3299 筆完整核對。Track1 截圖回報 1.15519，比最佳 1.15275 增加 0.00244／0.2117%，不升為最佳；Track2 本候選尚無回報分數。兩條 frames／sensor_prior 與各自舊最佳 bytes 相同；Track1 Z 範圍 4.86→0.92 m，但 XY／yaw 版本差 RMS 約 1.94 cm／0.090°。CSV 無 Z／roll／pitch，高度穩定／map residual 不代替正式精度。完整診斷與下輪優先位置先驗單項消融、獨立跨幀／水平觀測的設計見 doc/33 與 outputs/run/track00_test_2610191615；本輪只讀既有序列，沒改 solver 或啟動新定位。截圖無上傳 hash，local run 依上下文對應，不能聲稱已獨立核對 Kaggle bytes。
@@ -53,4 +98,4 @@
 
 - **2026-10-20 新尺度完整退步與直接full偏好**：使用者回報Track1 `track01_full_2610200142`（turn_heading_rts＋front scale7.40426＋directional＋carry）為1.15167，比最佳1.15008高0.00159／約0.138%，未升最佳。3011筆、CSV／矩陣／manifest核對通過，prior XYZ與最佳數值完全相同；XY／yaw版本差RMS 3.707cm／0.2758°。本機新CSV SHA為75f96243d764d32eaaf71bcbc26976b99eb0830ffa28902481e3f7f81e71b8a7，截圖無上傳SHA，未獨立核對Kaggle bytes。使用者明確要求有想測版本就直接叫他算full提交；仍由使用者啟動，不要求本地先證明勝出。本輪已直接提供pose_yaw＋front scale3＋directional＋carry的Track1 full，保留原motion XYZ／IMU tilt，只換yaw來源；模式先前8×48短段與主機／ROS機制通過，來源碼SHA核對相同，這輪不重複無必要定位。最新命令在doc/16最上方，方法與失敗紀錄見doc/40_SCORED_SCALE_FAILURE_AND_POSE_YAW_20261020.md；新航向full尚無分數，0.6仍未達成。助理未自行啟動full；原最佳與失敗原CSV等證據bytes保留。
 
-- **2026-10-20 後續已評分及外部0.65479分析**：上項pose_yaw full_2610200155已回報1.30507，3011筆完整，較最佳退步13.47645%，停止推薦，負面分數已記test_info。使用者提供outputs/track1_test.csv score0.65479，原樣副本及完整分析位於outputs/run/track01_test_2610200208；後補學長方法文字說明但無程式／逐幀scale／ICP或真值，不稱已重現。外部相對本機XY／yaw差RMS0.94471m／0.88078°，依可分離評分式位置改善至少0.31913m；本機map改prior XY僅0.01582m。兩份純欄位交叉CSV在track01_test_2610200214（本機XY＋外部yaw）及_0002（外部XY＋本機yaw），均3011筆、原欄位字串／SHA核對、尚無分數；可選後者由使用者提交分解位置與航向貢獻，不需重新full。不是新定位算法或學長算法重現。新增analyze_external_reference.py與doc/41，外部CSV不作訓練真值／標定。原輸出SHA不變，沒有新full／提交。下一模型主線為map聯合scale／6-DOF產生有支持的慢變修正，再接GNSS bias／gyro／NHC；本輪未實作該solver，不再建議只改固定倍率或直接GNSS yaw。0.6仍是目標，自行重現最佳仍1.15008／0.30488。
+- **2026-10-20 後續已評分及外部0.65479分析**：上項pose_yaw full_2610200155已回報1.30507，3011筆完整，較最佳退步13.47645%，停止推薦，負面分數已記test_info。使用者提供outputs/track1_test.csv score0.65479，原樣副本及完整分析位於outputs/run/track01_test_2610200208；後補學長方法文字說明但無程式／逐幀scale／ICP或真值，不稱已重現。外部相對本機XY／yaw差RMS0.94471m／0.88078°，依可分離評分式位置改善至少0.31913m；本機map改prior XY僅0.01582m。兩份純欄位交叉CSV在track01_test_2610200214（本機XY＋外部yaw）及_0002（外部XY＋本機yaw），均3011筆、原欄位字串／SHA核對、尚無分數；當時建議的分項交叉提交已於 2026-10-21 撤回，原 CSV 僅保留歷史證據。不是新定位算法或學長算法重現。新增analyze_external_reference.py與doc/41，外部CSV不作訓練真值／標定。原輸出SHA不變，沒有新full／提交。下一模型主線為map聯合scale／6-DOF產生有支持的慢變修正，再接GNSS bias／gyro／NHC；本輪未實作該solver，不再建議只改固定倍率或直接GNSS yaw。0.6仍是目標，自行重現最佳仍1.15008／0.30488。

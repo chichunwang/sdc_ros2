@@ -13,6 +13,7 @@ from scipy.spatial.transform import Rotation
 
 from prior_ablation import dump
 from three_camera_source import sha256
+from competition_rules import official_pdf_path
 
 
 def wrap(value):
@@ -98,7 +99,7 @@ def main():
     parser.add_argument('--output', type=saved_path, required=True)
     args = parser.parse_args()
     if args.output.exists(): raise ValueError('Preserve the previous contract audit')
-    pdf = args.data_root.parent/'docs/SDC 2026 Midterm01 Competition -  Localization.pdf'
+    pdf = official_pdf_path()
     reports = [audit(args.raw_directory/f'input_track{track}.npz', args.data_root, track, pdf) for track in (1, 2)]
     dump(args.output, reports)
     print(json.dumps([{'track': r['track'], 'rig_valid': r['camera_camera_rig_valid'],
