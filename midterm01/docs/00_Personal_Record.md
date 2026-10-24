@@ -1,6 +1,36 @@
 https://ithelp.ithome.com.tw/articles/10253122 Rviz使用
 # 指令待辦
-https://drive.google.com/file/d/1ZHeWxVrf86GDtHtFY7JyXY7w1vge3Fsa/view
+
+**目前 GPU Track3 的配準核心在 [`midterm01_gpu/track3/gpu.py`](/home/ricky/sdc_ros2/midterm01_gpu/track3/gpu.py:123)**，主要入口是 `Registration.align()`。依專案規則，實際修改集中在 `midterm01_gpu/`，`midterm01/` 保留 CPU 參考。
+
+你可以依想改的部分找這些位置：
+
+| 想改什麼 | 程式位置 | 負責內容 |
+|---|---|---|
+| **整體配準算法** | [`gpu.py → align()`](/home/ricky/sdc_ros2/midterm01_gpu/track3/gpu.py:128) | 切局部地圖、粗到細配準、求解 pose 與 scale、判斷是否接受 |
+| **點怎麼找地圖對應** | [`gpu.py → correspond()`](/home/ricky/sdc_ros2/midterm01_gpu/track3/gpu.py:72) | 搜尋鄰近 27 個 voxel，選最近的中心點 |
+| **誤差怎麼算** | [`gpu.py → linearize()`](/home/ricky/sdc_ros2/midterm01_gpu/track3/gpu.py:96) | 粗配準的 Gaussian 誤差、細配準的 point-to-plane 誤差，以及 robust 權重 |
+| **配準參數** | [`config/track3.json`](/home/ricky/sdc_ros2/midterm01_gpu/config/track3.json:6) | 初始尺度、地圖範圍、voxel 大小、迭代次數與 coverage 門檻 |
+| **更新步長與收斂** | [`line_search.py`](/home/ricky/sdc_ros2/midterm01_gpu/track3/line_search.py:6) | Armijo 回溯、步長縮減與停止條件 |
+| **配準後的 IMU 融合** | [`filter.py → update()`](/home/ricky/sdc_ros2/midterm01_gpu/track3/filter.py:53) | 判斷配準結果是否通過 NIS 檢查，再更新最終 pose |
+
+整體流程可以從 [`run_track3.py` 第 112 行](/home/ricky/sdc_ros2/midterm01_gpu/scripts/run_track3.py:112) 開始讀：
+
+```text
+讀本幀點雲 → IMU 預測 pose → 地圖配準 → 配準接受檢查
+          → Kalman/NIS 檢查 → 輸出當前 pose
+```
+
+**建議先看既有 run 的 `observations.jsonl`，分辨是哪一層出問題：**
+
+- `registration_reason` 是 `not_converged:...`：查 `align()`、誤差模型與 `line_search.py`。
+- 原因是 `low_coverage`、`empty_submap`：查點雲尺度、初始 pose、局部地圖與對應搜尋。
+- `filter_decision` 是 `nis_rejected`：配準通過，但融合階段拒絕，查 `filter.py`。
+- `map_accepted=false`：這幀輸出的是運動預測；連續發生時，軌跡可能持續漂移。
+
+目前使用的點變換是 **`q = R × (scale × p) + t`**。初始 `scale=3.0` 只是沿用參考預設，尚非已驗證的標定；若你看到點雲整體大小或朝向不對，應先確認尺度與座標定義，再改 ICP/NDT 參數。
+
+如果你指的是老師原本的 **CPU 範例**，定位迴圈在 [`localization.cpp → RunLocalization()`](/home/ricky/sdc_ros2/midterm01/src/localization/src/localization.cpp:497)，配準核心在 [`AlignNDT()`](/home/ricky/sdc_ros2/midterm01/src/localization/src/localization.cpp:556)，那份實作使用的是 PCL NDT。
 
 # 學習順序
 

@@ -1,0 +1,14 @@
+FROM osrf/ros:humble-desktop
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates python3-pip python3-venv python3-numpy python3-scipy \
+    python3-matplotlib python3-colcon-common-extensions ros-humble-rosbag2-storage-default-plugins \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb -o /tmp/cuda-keyring.deb \
+    && dpkg -i /tmp/cuda-keyring.deb && rm /tmp/cuda-keyring.deb \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    cuda-nvcc-12-8 cuda-cudart-dev-12-8 cuda-cccl-12-8 && rm -rf /var/lib/apt/lists/*
+ENV CUDA_HOME=/usr/local/cuda-12.8 \
+    PATH=/usr/local/cuda-12.8/bin:$PATH \
+    LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64
+CMD ["sleep", "infinity"]

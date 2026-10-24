@@ -1,0 +1,6 @@
+FROM midterm01_track3:cuda12.8
+USER root
+RUN /opt/track3/bin/pip install --no-cache-dir torch==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+RUN /opt/track3/bin/pip install --no-cache-dir \
+    huggingface-hub==0.34.4 einops==0.8.1 opencv-python-headless==4.11.0.86 pillow==11.3.0
+USER 1000:1000

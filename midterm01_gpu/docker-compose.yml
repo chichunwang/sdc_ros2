@@ -1,0 +1,30 @@
+name: midterm01_track3
+services:
+  track3:
+    image: ${TRACK3_IMAGE:-midterm01_track3:loger}
+    container_name: midterm01_track3
+    user: "${TRACK3_UID:-1000}:${TRACK3_GID:-1000}"
+    init: true
+    shm_size: '2gb'
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,graphics,display
+      DISPLAY: ${DISPLAY:-:0}
+      XAUTHORITY: /tmp/track3.Xauthority
+      QT_X11_NO_MITSHM: '1'
+      LD_LIBRARY_PATH: /opt/track3/lib/python3.10/site-packages/nvidia/cuda_nvrtc/lib:/opt/track3/lib/python3.10/site-packages/nvidia/cublas/lib:/opt/track3/lib/python3.10/site-packages/nvidia/cusolver/lib:/opt/track3/lib/python3.10/site-packages/nvidia/cusparse/lib:/opt/track3/lib/python3.10/site-packages/nvidia/nvjitlink/lib:/usr/local/cuda-12.8/lib64
+      ROS_DOMAIN_ID: '33'
+      ROS_LOCALHOST_ONLY: '1'
+    volumes:
+      - ..:/workspace:ro
+      - ./outputs:/workspace/midterm01_gpu/outputs:rw
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - ${TRACK3_XAUTHORITY:-/run/user/1000/gdm/Xauthority}:/tmp/track3.Xauthority:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: [sleep, infinity]

@@ -1,0 +1,46 @@
+--- a/scripts/run_track3.py
++++ b/scripts/run_track3.py
+@@ -20,7 +20,7 @@
+ from track3.filter import Fusion
+ 
+ TIMINGS = 'idx,original_idx,timestamp_ns,backend,load_ms,registration_ms,total_ms,map_accepted,scale'.split(',')
+-OUTPUT_FILES = ['poses.txt', 'result_3.csv', 'timings.csv', 'frame_manifest.csv', 'observations.jsonl']
++OUTPUT_FILES = ['poses.txt', 'result_3.csv', 'timings.csv', 'frame_manifest.csv', 'observations.jsonl', 'pose_trace.jsonl']
+ 
+ 
+ def capture_progress(info, run, *, accepted_count, consecutive_rejections,
+@@ -105,7 +105,8 @@
+         registration_total=0.; initialized=False; tlocal=time.perf_counter()
+         with (run/'poses.txt').open('x') as poses,(run/'result_3.csv').open('x',newline='') as result, \
+              (run/'timings.csv').open('x',newline='') as timing,(run/'observations.jsonl').open('x') as observations, \
+-             (run/'frame_manifest.csv').open('x',newline='') as manifest:
++             (run/'frame_manifest.csv').open('x',newline='') as manifest, \
++             (run/'pose_trace.jsonl').open('x') as pose_trace:
+             cw=csv.writer(result);cw.writerow(['idx','x','y','yaw'])
+             tw=csv.writer(timing);tw.writerow(TIMINGS)
+             mw=csv.writer(manifest);mw.writerow(['idx','original_idx','timestamp_ns','path','sha256'])
+@@ -114,6 +115,7 @@
+                 points=loader(row['path']); point_sha=sha256(row['path'])
+                 samples=imu.until(stamp); prior=fusion.predict(stamp,samples)
+                 load_ms=(time.perf_counter()-tick)*1000
++                input_scale=float(scale)
+                 reg_start=time.perf_counter()
+                 estimate=registration.align(points,prior,scale,initialize=not initialized); sync()
+                 reg_ms=(time.perf_counter()-reg_start)*1000; registration_total+=reg_ms/1000
+@@ -131,6 +133,16 @@
+                 map_age_seconds=None if last_accepted_timestamp_ns is None else (stamp-last_accepted_timestamp_ns)*1e-9
+                 T=fusion.T.copy()
+                 if not valid_pose(T): raise ValueError(f'Invalid output pose at frame {idx}')
++                # Diagnostics only: record all three poses, regardless of registration acceptance.
++                pose_trace.write(json.dumps(dict(
++                    idx=idx, original_idx=row['original_idx'], timestamp_ns=stamp,
++                    predicted_T=np.asarray(prior, dtype=float).tolist(),
++                    registered_T=np.asarray(estimate['T'], dtype=float).tolist(),
++                    final_T=np.asarray(T, dtype=float).tolist(),
++                    input_scale=input_scale, proposed_scale=float(estimate['scale']), final_scale=float(scale),
++                    registration_accepted=bool(estimate['accepted']), map_accepted=bool(adopted),
++                    registration_reason=estimate['reason'], filter_decision=filter_decision
++                ), allow_nan=False)+'\n'); pose_trace.flush()
+                 if visualizer is not None:
+                     visualizer.publish_frame(points,T,scale,stamp,registration)
+                 poses.write(' '.join(f'{v:.12g}' for v in T[:3].ravel())+'\n');poses.flush()

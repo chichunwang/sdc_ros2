@@ -1,0 +1,36 @@
+{
+  "version": "track3_cuda_voxel_v2_armijo_turn",
+  "data_dir": "/workspace/midterm01/data/Track3",
+  "ply_subdir": "raw_ply",
+  "expected_frames": 3142,
+  "initial_scale": 3.0,
+  "scale_origin": "CPU reference ply_scale default; not verified metric calibration",
+  "pose_convention": "T_map_ply, same convention as provided initial guess and converter; evaluation reference not independently verified",
+  "map_leaf_m": 0.35,
+  "registration": {
+    "submap_half_extent_m": [90, 90, 30],
+    "max_source_points": 12000,
+    "robust_m": 0.3,
+    "scale_bounds": [0.2, 30.0],
+    "initial_log_scale_sigma": 1.0,
+    "log_scale_sigma": 0.15,
+    "min_coverage": 0.3,
+    "stages": [
+      {"voxel_m": 8.0, "mode": "ndt", "iterations": 40},
+      {"voxel_m": 4.0, "mode": "ndt", "iterations": 30},
+      {"voxel_m": 2.0, "mode": "ndt", "iterations": 25},
+      {"voxel_m": 1.0, "mode": "icp", "iterations": 30}
+    ]
+  },
+  "filter": {
+    "acceleration_noise_mps2": 2.0,
+    "gyro_noise_radps": 0.02,
+    "bias_random_walk_radps": 0.0001,
+    "map_position_sigma_m": 0.3,
+    "map_yaw_sigma_rad": 0.035,
+    "initial_position_sigma_m": 5.0,
+    "initial_yaw_sigma_rad": 0.35,
+    "max_imu_age_s": 0.1,
+    "nis_limit_4d": 18.47
+  }
+}
