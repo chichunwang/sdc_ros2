@@ -1,5 +1,5 @@
 {
-  "version": "track3_cuda_v4_denoise_geometry_visual_prior",
+  "version": "track3_cuda_v4_perf_v1",
   "data_dir": "/workspace/midterm01/data/Track3",
   "ply_subdir": "raw_ply",
   "expected_frames": 3142,
@@ -97,5 +97,11 @@
     "max_depth_projection_px": 4.0,
     "max_speed_mps": 50.0,
     "max_rotation_rate_radps": 2.0
+  },
+  "gpu_memory": {
+    "pool_limit_mib": 4096,
+    "trim_above_mib": 3072,
+    "reserve_mib": 1024,
+    "min_trim_mib": 256
   }
 }

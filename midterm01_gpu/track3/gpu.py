@@ -73,18 +73,8 @@ class VoxelModel:
         self.normals = vec[:, :, 0]
 
     def correspond(self, q, mode='icp'):
-        cells = cp.floor(q/self.leaf).astype(cp.int64)
-        candidate_keys = keys(cells[:, None, :]+NEIGHBORS[None, :, :])
-        ids = cp.searchsorted(self.keys, candidate_keys)
-        ids = cp.minimum(ids, len(self.keys)-1)
-        present = self.keys[ids] == candidate_keys
-        residual = self.means[ids]-q[:, None, :]
-        d2 = cp.sum(residual**2, axis=2)
-        present &= d2 < (1.5*self.leaf)**2
-        metric = cp.einsum('nci,ncij,ncj->nc',residual,self.precision[ids],residual) if mode=='ndt' else d2
-        metric = cp.where(present,metric,cp.inf)
-        choice = cp.argmin(metric, axis=1); rows = cp.arange(len(q))
-        return ids[rows,choice],cp.isfinite(metric[rows,choice])
+        from .search import closest_voxels
+        return closest_voxels(q,self.keys,self.means,self.precision,self.leaf,mode)
 
 
 class PointModel:
@@ -184,6 +174,8 @@ class Registration:
             initialization={k:v for k,v in seed.items() if k not in ('T','scale')}
             initialization.update(T=seed['T'].tolist(),scale=seed['scale'])
             T=seed['T'];scale=seed['scale']
+            monitor=getattr(self,'memory_monitor',None)
+            if monitor is not None:monitor.checkpoint('initializer_ready',trim=True)
         scale_reference=scale
         # Use a causal prior to select map region. No trajectory-derived crop.
         if self.center is None or np.max(np.abs(T[:3,3]-self.center)) > cfg['submap_rebuild_distance_m']:
@@ -200,6 +192,8 @@ class Registration:
                             model_diagnostics=error.diagnostics, stages=[])
             self.models = models
             self.center = T[:3,3].copy()
+            monitor=getattr(self,'memory_monitor',None)
+            if monitor is not None:monitor.checkpoint('submap_ready',trim=True)
         converged = False; coverage = 0.; score = np.inf; Hfinal = None
         stage_records = []
         for stage in cfg['stages']:
@@ -221,9 +215,10 @@ class Registration:
                 H[6, 6] += len(sample)/sig**2
                 g[6] += len(sample)*e/sig**2
                 return H, g, cost+e*e/sig**2, cov
+            before=None
             for iteration in range(stage['iterations']):
                 record['iterations'] = iteration+1
-                before = evaluate(T, scale)
+                if before is None:before = evaluate(T, scale)
                 if before is None:
                     record['stop_reason'] = 'insufficient_correspondences'
                     break
@@ -246,6 +241,9 @@ class Registration:
                     break
                 T,scale,after,factor = candidate
                 score,coverage = after[2:]; Hfinal = after[0]
+                # The accepted candidate was already linearized by backtrack.
+                # Reuse it at the next iteration instead of repeating CUDA work.
+                before=after
                 record['min_accepted_factor'] = min(record.get('min_accepted_factor',1.),factor)
                 # A tiny line-search fraction alone is not evidence of stationarity.
                 converged = step_is_small(delta)

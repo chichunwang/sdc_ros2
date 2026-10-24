@@ -32,7 +32,7 @@ def diagnostic_pose(value):
 def capture_progress(info, run, *, accepted_count, consecutive_rejections,
                      max_consecutive_rejections, last_accepted_idx,
                      last_accepted_timestamp_ns, registration_total,
-                     localization_start):
+                     localization_start, memory=None):
     """Preserve measured progress even when preparation or a later frame fails."""
     info.update(map_accepted_frames=accepted_count,
                 consecutive_map_rejections=consecutive_rejections,
@@ -43,7 +43,8 @@ def capture_progress(info, run, *, accepted_count, consecutive_rejections,
         info['registration_seconds'] = registration_total
     if localization_start is not None:
         info['localization_seconds'] = time.perf_counter()-localization_start
-    info['output_sha256'] = {name: sha256(run/name) for name in OUTPUT_FILES
+    if memory is not None:info['gpu_memory']=memory.summary()
+    info['output_sha256'] = {name: sha256(run/name) for name in OUTPUT_FILES+['gpu_memory.jsonl']
                              if (run/name).is_file()}
 
 
@@ -60,7 +61,7 @@ def main():
     os.environ['ROS_LOG_DIR']=str(run/'ros_log')
     start=time.perf_counter(); info=dict(status='running',mode='full' if a.full else 'test',frame_count=0,version=None,score=None,score_source=None)
     write_json(run/'test_info.json',info)
-    visualizer=None; visual_prior=None; tlocal=None; registration_total=None
+    visualizer=None; visual_prior=None; memory=None; tlocal=None; registration_total=None
     accepted_count=0; consecutive_rejections=0; max_consecutive_rejections=0
     last_accepted_idx=None; last_accepted_timestamp_ns=None
     def save_progress():
@@ -69,7 +70,7 @@ def main():
                          max_consecutive_rejections=max_consecutive_rejections,
                          last_accepted_idx=last_accepted_idx,
                          last_accepted_timestamp_ns=last_accepted_timestamp_ns,
-                         registration_total=registration_total, localization_start=tlocal)
+                         registration_total=registration_total, localization_start=tlocal,memory=memory)
     try:
         cfg=json.loads(a.config.read_text()); info['version']=cfg['version']; info['source']='official_front_camera_ply'
         info['imu_used']=False; info['prediction']=cfg['prediction']
@@ -77,6 +78,10 @@ def main():
         if a.full and cfg['expected_frames'] != 3142:
             raise ValueError('Full Track3 must contain exactly 3142 frames')
         from track3.gpu import cp, sync, Registration
+        if cfg.get('gpu_memory') is not None:
+            from track3.memory import GpuMemoryMonitor
+            memory=GpuMemoryMonitor(cp,run/'gpu_memory.jsonl',cfg['gpu_memory'])
+            memory.checkpoint('context_ready')
         device=cp.cuda.runtime.getDeviceProperties(0)
         info['gpu']=dict(name=device['name'].decode(), compute_capability=[device['major'],device['minor']], cupy=cp.__version__)
         data=Path(cfg['data_dir'])
@@ -94,8 +99,10 @@ def main():
             write_json(run/'camera_sources.json',{str(path):sha256(path) for path in [
                 camera/'gige_100_f_hdr_camera_info.yaml',camera/'gige_100_f_hdr_mask.png']})
         map_points, count=load_map(data/'map.pcd',cfg['map_leaf_m']); sync()
+        if memory is not None:memory.checkpoint('map_ready',trim=True)
         info['map_points_read']=count; info['map_points_downsampled']=len(map_points)
         registration=Registration(map_points,cfg['registration'])
+        registration.memory_monitor=memory
         if a.publish_rviz:
             from track3.visualization import RvizPublisher
             visualizer=RvizPublisher()
@@ -127,6 +134,7 @@ def main():
                 reg_start=time.perf_counter()
                 estimate=registration.align(points,prior,scale,initialize=not state.initialized); sync()
                 reg_ms=(time.perf_counter()-reg_start)*1000; registration_total+=reg_ms/1000
+                memory_record=None if memory is None else memory.checkpoint('frame_end',idx=idx,trim=True)
                 decision=state.commit(estimate)
                 adopted=decision['accepted']; scale=state.scale
                 if adopted:
@@ -178,6 +186,7 @@ def main():
                          cost=cost,
                          observable=estimate.get('observable'),normalized_min_eigenvalue=estimate.get('normalized_min_eigenvalue'),
                          scale=scale)
+                obs['gpu_memory']=memory_record
                 observations.write(json.dumps(obs,allow_nan=False)+'\n');observations.flush()
                 info['frame_count']=idx+1
                 if idx==0 or (idx+1)%25==0:
@@ -204,6 +213,7 @@ def main():
         return 130 if isinstance(error,KeyboardInterrupt) else 1
     finally:
         if visualizer is not None: visualizer.close()
+        if memory is not None:memory.close()
 
 if __name__=='__main__':
     def terminate(signum, frame): raise KeyboardInterrupt('Termination signal')

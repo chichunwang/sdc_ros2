@@ -21,6 +21,7 @@ TIMING_FIELDS = [
     'registration_ms', 'total_ms', 'map_accepted', 'scale',
 ]
 PLOT_STEMS = ['01_trajectory', '02_pose_changes', '03_registration_timing']
+MEMORY_STEM = '04_gpu_memory'
 FRAME_COUNT = 3142
 
 
@@ -119,6 +120,8 @@ def plot_run(run: Path) -> dict:
     required = [run / name for name in ('test_info.json', 'result_3.csv', 'poses.txt', 'timings.csv')]
     if (run / 'frame_manifest.csv').exists():
         required.append(run / 'frame_manifest.csv')
+    memory_path=run/'gpu_memory.jsonl'
+    if memory_path.exists():required.append(memory_path)
     sources = {path.name: {'sha256': sha256(path), 'bytes': path.stat().st_size} for path in required}
     if old_manifest.exists():
         old = json.loads(old_manifest.read_text())
@@ -128,7 +131,7 @@ def plot_run(run: Path) -> dict:
             raise ValueError('Partial analysis source hashes differ; refusing to replace evidence')
     # Refuse to replace unrecognized files from another analysis workflow.
     if output.exists():
-        recognized = {'manifest.json', 'README.md'} | {f'{name}.{ext}' for name in PLOT_STEMS for ext in ('png', 'pdf')}
+        recognized = {'manifest.json', 'README.md'} | {f'{name}.{ext}' for name in PLOT_STEMS+[MEMORY_STEM] for ext in ('png', 'pdf')}
         if any(path.name not in recognized for path in output.iterdir()):
             raise FileExistsError('Analysis directory contains unrecognized files; preserved')
         if any(output.iterdir()) and not old_manifest.exists():
@@ -181,6 +184,27 @@ def plot_run(run: Path) -> dict:
         axes[0].set_title('Recorded per-frame processing times')
         axes[-1].set_xlabel('Frame idx')
         save_figure(fig, output, PLOT_STEMS[2]); plt.close(fig)
+        memory_note=''
+        if memory_path.exists():
+            records=[json.loads(line) for line in memory_path.read_text().splitlines() if line.strip()]
+            samples=[row for row in records if row.get('stage')=='frame_end']
+            if [row.get('idx') for row in samples]!=list(range(FRAME_COUNT)):
+                raise ValueError('GPU memory frame_end samples must cover exactly 0..3141')
+            fields=['pool_used_bytes','pool_reserved_bytes','pool_limit_bytes','device_free_bytes','device_total_bytes']
+            if any(type(row.get(key)) is not int or row[key]<0 for row in samples for key in fields):
+                raise ValueError('GPU memory measurements must be nonnegative integer bytes')
+            used,reserved,limit,free,total=np.asarray([[row[key] for key in fields] for row in samples],dtype=np.float64).T/(1024**3)
+            fig,axes=plt.subplots(2,1,figsize=(11,7),sharex=True)
+            axes[0].plot(frame_idx,used,label='CuPy pool in use')
+            axes[0].plot(frame_idx,reserved,label='CuPy pool reserved')
+            axes[0].plot(frame_idx,limit,'--',label='Pool limit (excludes CUDA libraries/context)')
+            axes[0].set(ylabel='GiB',title='GPU memory: end-of-frame samples, not an absolute peak');axes[0].legend()
+            axes[1].plot(frame_idx,free,label='Whole device free',color='tab:green')
+            axes[1].plot(frame_idx,total-free,label='Device total - free (driver/RViz/others)',color='tab:orange')
+            axes[1].set(xlabel='Frame idx',ylabel='GiB');axes[1].legend()
+            for ax in axes:ax.grid(alpha=.3)
+            save_figure(fig,output,MEMORY_STEM);plt.close(fig)
+            memory_note='- `04_gpu_memory.png/pdf`：逐幀末端的 CuPy in-use／reserved／limit 與整張卡 free／used，包含其他程序；不是絕對峰值。\n'
         # A changing source could indicate a still-running process. Never claim a
         # successful analysis of an input snapshot that changed while plotting.
         if any(sha256(path) != sources[path.name]['sha256'] for path in required):
@@ -192,7 +216,8 @@ def plot_run(run: Path) -> dict:
             '- `01_trajectory.png/pdf`：map XY 軌跡、起點與終點，等比例座標。\n'
             '- `02_pose_changes.png/pdf`：相鄰 pose 的三維位移與 wrap 到 [-π, π] 的 yaw 差（rad）。\n'
             '- `03_registration_timing.png/pdf`：載入、配準與總 frame 耗時，單位 ms。\n\n'
-            '原始 pose、CSV、參數與定位結果均未修改。準備、暖機與其他階段時間不包含在這三張逐幀耗時圖中。\n'
+            +memory_note+
+            '原始 pose、CSV、參數與定位結果均未修改。準備、暖機與其他階段時間不包含在逐幀耗時圖中。\n'
             '本工具只接受成功的 3142 幀 full run；失敗資訊另存 run/analysis_status.json。\n',
             encoding='utf-8',
         )

@@ -30,3 +30,22 @@ def test_full_plot_contract_and_source_protection(tmp_path):
     try:mod.validate_inputs(partial,np)
     except ValueError:pass
     else:raise AssertionError('Partial run accepted')
+
+
+def test_full_memory_chart_is_optional_and_read_only(tmp_path):
+    # Generate the same full-format fixture through the existing contract test.
+    test_full_plot_contract_and_source_protection(tmp_path)
+    run=tmp_path/'SYNTHETIC_FULL_FORMAT_ONLY'
+    import shutil
+    shutil.rmtree(run/'analysis')  # Only this test's generated plot artifacts.
+    with (run/'gpu_memory.jsonl').open('w') as f:
+        for i in range(3142):
+            f.write(json.dumps(dict(stage='frame_end',idx=i,pool_used_bytes=100*1024**2,
+                pool_reserved_bytes=300*1024**2,pool_limit_bytes=4096*1024**2,
+                device_free_bytes=6000*1024**2,device_total_bytes=8151*1024**2))+'\n')
+    script=Path(__file__).resolve().parents[1]/'scripts/analyze_run.py'
+    spec=importlib.util.spec_from_file_location('analyze_run_memory',script);mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
+    before={p.name:mod.sha256(p) for p in run.iterdir() if p.is_file()}
+    assert mod.plot_run(run)['status']=='success'
+    for ext in ['png','pdf']:assert (run/'analysis'/f'04_gpu_memory.{ext}').stat().st_size>1000
+    assert all(mod.sha256(run/name)==sha for name,sha in before.items())

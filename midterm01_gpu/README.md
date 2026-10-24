@@ -1,6 +1,8 @@
 # Midterm01 Track3 GPU 定位
 
-目前架構版本：`track3_cuda_v4_denoise_geometry_visual_prior`。定位直接讀取官方前視相機重建 PLY，經相機遮罩、CUDA 雜訊篩除與首段幾何初始化後，配準到 LiDAR XYZ 地圖。預設以前後前視影像的特徵追蹤建立因果 visual PnP prior；不讀 IMU／bag 或 GNSS，不重建影像點雲，也不使用未來影格或事後修軌跡。算法細節見[算法說明](doc/ALGORITHM.md)，競賽規則見 [midterm01/AGENTS.md](../midterm01/AGENTS.md)。
+此份部署版本為 `track3_cuda_v4_perf_v1`，由 `track3_cuda_v4_denoise_geometry_visual_prior` 延伸，只改計算實作與顯存監測。GPU 合成等價性測試和元件微基準已通過；尚未以此版本執行完整實際 Track，因此不把元件加速比當成 full 加速比，也沒有新的實際資料精度結論。算法與量測範圍見[算法說明](doc/ALGORITHM.md)及[性能與顯存紀錄](doc/51_PERFORMANCE_AND_MEMORY_20261024.md)。
+
+定位直接讀取官方前視相機重建 PLY，經相機遮罩、CUDA 雜訊篩除與首段幾何初始化後，配準到 LiDAR XYZ 地圖。預設以前後前視影像的特徵追蹤建立因果 visual PnP prior；不讀 IMU／bag 或 GNSS，不重建影像點雲，也不使用未來影格或事後修軌跡。競賽規則見 [midterm01/AGENTS.md](../midterm01/AGENTS.md)。
 
 ```mermaid
 flowchart TD
@@ -90,13 +92,14 @@ RViz 發布 `/track3/map`、`/track3/submap`、`/track3/current_cloud`、`/track
 | `timings.csv` | `idx,original_idx,timestamp_ns,backend,load_ms,registration_ms,total_ms,map_accepted,scale` |
 | `frame_manifest.csv` | 本輪索引、原始索引、整數奈秒時間戳、PLY 路徑與 SHA256 |
 | `observations.jsonl` | 配準 stages、coverage、收斂、尺度、品質閘門、失敗、preprocessing、initializer、camera mask 與 visual prior 診斷 |
+| `gpu_memory.jsonl` | 此版本在初始化、map/submap 與逐幀結束等檢查點的 CuPy pool 和整卡顯存抽樣 |
 | `pose_trace.jsonl` | predicted/registered/final 4×4 pose、尺度、接受狀態、原因與候選相對 prior 的 Δ |
 | `input_sources.json` | map、`init_guess.txt` 與設定檔的來源 SHA256 |
 | `camera_sources.json` | 相機標定與 ego mask 的來源 SHA256；逐幀影像 SHA 記在 visual prior 診斷中 |
 | `test_info.json` | 狀態、版本、來源、階段耗時、接受／拒絕統計、輸出 SHA 和失敗原因 |
 | `source/` | 本輪執行的程式、設定、文件與測試快照 |
 
-只有成功完成 3142 幀 full run 才自動產生 `analysis/` 中三組唯讀 PNG/PDF、README 和來源 SHA manifest。短段與失敗 run 不產生完整比較圖；畫圖失敗的狀態記在 run 的 `analysis_status.json` 和 log，定位輸出會保留。歷史 run 不搬移或補圖。人工重試圖表時使用 run 快照：
+成功完成 3142 幀 full run 後會在 `analysis/` 產生原有三組唯讀 PNG/PDF、README 和來源 SHA manifest；若有完整記憶體記錄，再加 `04_gpu_memory.png/pdf`。短段與失敗 run 不產生完整比較圖；畫圖失敗的狀態記在 run 的 `analysis_status.json` 和 log，定位輸出會保留。歷史 run 不搬移或補圖。人工重試圖表時使用 run 快照：
 
 ```bash
 ./scripts/dev.sh exec python outputs/run/track03_full_YYMMDDHHmm/source/scripts/analyze_run.py \
@@ -104,6 +107,16 @@ RViz 發布 `/track3/map`、`/track3/submap`、`/track3/current_cloud`、`/track
 ```
 
 定位輸出與圖表都在 `midterm01_gpu/outputs/run/`。Kaggle 提交、E3 上傳和寄信由使用者操作。
+
+## 性能與顯存監測
+
+RTX 5060 上的生成資料 GPU 測試 55 項通過，耗時 93.61 s，另有一項既有 Matplotlib `Axes3D` warning。元件 wall-time 中位數為：pixel nearest 235×、NDT voxel search 76×、ICP voxel search 59×；限定兩階段的合成 registration 為 2.22×。這些是個別元件／合成條件的比較，不是完整 Track 加速倍數。對應點、合成 solver pose/scale 與 gate 的比較皆通過。明細見[比較紀錄](outputs/run/track00_test_2610242232/comparison.json)及[GPU 測試紀錄](outputs/run/track00_test_2610242232/gpu_pytest.xml)。
+
+原 full run [`track03_full_2610242203`](outputs/run/track03_full_2610242203/test_info.json) 已以 v4 baseline 完成 3142 幀，2926 幀接受 map 更新，耗時 6275.19 s；三組標準圖表與來源 manifest 成功產生，結果及 SHA 保存在該 run 的 [`analysis/`](outputs/run/track03_full_2610242203/analysis/README.md)。該 run 沒有使用 `v4_perf_v1`，所以不能作為加速版完整 Track 的速度或精度結果。合成元件測試的[圖表與報告](outputs/run/track00_test_2610242232/analysis/README.md)已放在該測試 run 的 `analysis/`。
+
+版本另寫入 `gpu_memory.jsonl`，在 CUDA context、map、initializer、submap 與每幀結束等檢查點記錄 CuPy pool 和整卡顯存抽樣；每幀 observation 附帶 frame-end 樣本，`test_info.json` 記錄樣本摘要。CuPy pool 上限設定為 4096 MiB，但會依啟動時可用顯存、預留量和既有較小上限再收緊；它不是整張 GPU 的總顯存上限。符合條件時只嘗試釋放未使用的 pool cache，不釋放仍在使用的配置，也不靜默改用 CPU 或降低精度。記憶體 benchmark 的 pool reserved 壓力結果與量測限制見[性能與顯存紀錄](doc/51_PERFORMANCE_AND_MEMORY_20261024.md)。
+
+測試與 run 證據存於 `midterm01_gpu/outputs/run/`，此目錄受 `.gitignore` 管理，不會自動隨程式同步到另一台電腦。以上 full 是舊版 v4 的歷史結果；使用 `v4_perf_v1` 的完整定位仍由使用者手動啟動。
 
 ## 已知限制與歷史紀錄
 

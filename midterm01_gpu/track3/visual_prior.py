@@ -12,6 +12,7 @@ import yaml
 from scipy.spatial.transform import Rotation
 from .geometry import valid_pose
 from .io import frames
+from .search import closest_pixels
 
 RDF_TO_FLU=np.array([[0.,0.,1.],[-1.,0.,0.],[0.,-1.,0.]])
 
@@ -78,15 +79,12 @@ class VisualPrior:
         p=p[cp.all(cp.isfinite(p),axis=1)&(p[:,0]>0)]
         uv=cp.stack([self.K[0,2]-self.K[0,0]*p[:,1]/p[:,0],
                      self.K[1,2]-self.K[1,1]*p[:,2]/p[:,0]],axis=1)
-        ids=[];distance=[]
-        for start in range(0,len(before),128):
-            delta=cp.asarray(before[start:start+128])[:,None,:]-uv[None,:,:]
-            d2=cp.sum(delta*delta,axis=2);idx=cp.argmin(d2,axis=1)
-            ids.append(cp.asnumpy(idx));distance.append(cp.asnumpy(cp.sqrt(d2[cp.arange(len(idx)),idx])))
-        if not ids:diag['reason']='no_bidirectional_tracks';return None,diag
-        ids=np.concatenate(ids);distance=np.concatenate(distance)
+        if not len(before):diag['reason']='no_bidirectional_tracks';return None,diag
+        if not len(p):diag['reason']='insufficient_tracked_depths';return None,diag
+        matched,d2=closest_pixels(before,uv)
+        ids=cp.asnumpy(matched);distance=np.sqrt(cp.asnumpy(d2))
         keep=distance<=self.cfg['max_depth_projection_px']
-        objects=cp.asnumpy(p)[ids[keep]]*scale;pixels=after[keep]
+        objects=cp.asnumpy(p[cp.asarray(ids[keep])])*scale;pixels=after[keep]
         diag.update(tracked_features=len(before),depth_correspondences=len(objects))
         if len(objects)<self.cfg['min_inliers']:
             diag['reason']='insufficient_tracked_depths';return None,diag

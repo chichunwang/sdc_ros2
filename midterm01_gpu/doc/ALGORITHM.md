@@ -1,6 +1,6 @@
-# Track3：v4 CUDA 點雲配準與因果 visual prior
+# Track3：v4_perf_v1 CUDA 點雲配準與因果 visual prior
 
-目前程式與設定版本為 `track3_cuda_v4_denoise_geometry_visual_prior`。輸入是官方前視相機已重建 PLY；以每幀估計的正尺度 `s` 和 map pose `T=[R,t]` 將相機點轉到 LiDAR map：
+此份算法說明對應版本 `track3_cuda_v4_perf_v1`，保留 `track3_cuda_v4_denoise_geometry_visual_prior` 的估計模型，並加入已通過 GPU 合成等價性測試的計算最佳化與 pool 監測。輸入是官方前視相機已重建 PLY；以每幀估計的正尺度 `s` 和 map pose `T=[R,t]` 將相機點轉到 LiDAR map：
 
 \[
 q_i=sRp_i+t.
@@ -60,4 +60,54 @@ map registration 要求最後一個 ICP 階段收斂、有效對應 coverage 至
 
 7 幀真實 prefix `track03_test_2610242119` 在 idx 0–5 接受 map，idx 6 以 `not_converged:max_iterations` 拒絕候選並保留有效 PnP prior；6 次相鄰輸出的前向投影為正（約 0.234–0.423 m），尺度由 6.7935 至 6.7551。PnP 的內點數為 276–288，median reprojection 約 1.31–1.49 px。第一個 sensor timestamp 間隔只有 11.7 ms，因此相對速度診斷可達 25.4 m/s，不能把速度欄位當成獨立車速真值，也沒有據此改寫 timestamp 或 pose。此為只有 7 幀的短段檢查，不是 full 精度驗證。
 
-最終全套 35 項檢查通過。最終 streaming exact-kNN 與 prefix 版本在真實 frame0 選出的 32,169 點完全相同；暖機後 mean-kNN 計算約 0.087 s（matrix 版約 0.608 s），這只是該函數、該點雲的時間，不是完整 Track 加速比。對固定 pose 的唯讀比較見[本輪診斷](50_STARTUP_SCALE_NOISE_FIX_20261024.md)。
+先前 v4 的最終全套 35 項檢查通過。streaming exact-kNN 與 prefix 版本在真實 frame0 選出的 32,169 點完全相同；暖機後 mean-kNN 計算約 0.087 s（matrix 版約 0.608 s），這只是該函數、該點雲的時間，不是完整 Track 加速比。對固定 pose 的唯讀比較見[本輪診斷](50_STARTUP_SCALE_NOISE_FIX_20261024.md)。
+
+## v4_perf_v1 加速與顯存（GPU 合成驗證完成）
+
+以下結果來自 `track00_test_2610242232` 的生成資料 GPU 測試，不使用真實 Track 幀。GPU 測試 55 項通過，耗時 93.61 s，另有一項既有 Matplotlib `Axes3D` warning。比較紀錄中的所有檢查通過；詳細輸出見 [`gpu_pytest.xml`](../outputs/run/track00_test_2610242232/gpu_pytest.xml) 和 [`comparison.json`](../outputs/run/track00_test_2610242232/comparison.json)。
+
+原 full `track03_full_2610242203` 已以 v4 baseline 完成 3142 幀，2926 幀接受 map 更新，耗時 6275.19 s，三組標準圖表與來源 manifest 成功產生。該 run 沒有使用 `v4_perf_v1`，不能用來估計新版本完整 Track 耗時或精度；輸出及 SHA 保存在該 run 的 [`test_info.json`](../outputs/run/track03_full_2610242203/test_info.json) 和 [`analysis/`](../outputs/run/track03_full_2610242203/analysis/README.md)。
+
+這些最佳化不改估計模型、品質門檻、迭代數、source 點數上限、座標、尺度範圍、FP64 dtype 或因果 pose 更新規則；它們減少已計算結果的重算和 query 對應中的大型暫存陣列：
+
+| 路徑 | 實作與保持的定義 |
+| --- | --- |
+| Backtracking 與 solver iteration | line search 接受候選時，`backtrack()` 已計算候選姿態的 `(H, g, cost, coverage)`；下一次 iteration 沿用這組資料，不對相同 `T`、`scale` 重跑 `linearize()`。仍完整評估 backtracking 候選，既有步長、cost、coverage 與停止條件不變。 |
+| NDT Gaussian voxel correspondence | CUDA kernel 對每個 query 檢查 ±2 格共 125 個 voxel key，以排序 key 二分搜尋，再套用 `1.5 × leaf` 半徑 gate；NDT 以 Mahalanobis 距離排序。使用 `--fmad=false`、FP64 和既有 tie 順序，不建立 query × 125 × 3 × 3 大型暫存張量。 |
+| 相機 feature 至 3D projection correspondence | `closest_pixels()` 用每個 tracked pixel 一個 128-thread block 搜尋最近投影點，再以 block reduction 輸出索引和距離平方；只將通過 4 px gate 的選取 3D 點搬回 CPU。Euclidean pixel 距離和原始索引 tie 規則不變。 |
+
+### 生成資料 GPU 微基準
+
+RTX 5060 上的元件基準各先暖機 2 次，再量測 5 次取 wall-time median；合成 registration 暖機 2 次、量測 3 次。以下時間是同步後的 wall time。pool reserved 為各案例檢查點抽樣，不是整卡 VRAM 或 allocation peak。
+
+| 案例 | 輸入 | Baseline | `v4_perf_v1` | 加速比 | Pool reserved（baseline → 新版） |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Pixel projection search | 1200 queries、50,000 targets | 806.644 ms | 3.433 ms | 234.98× | 342.56 → 0.803 MiB |
+| NDT voxel search | 12,000 queries、561 cells | 44.879 ms | 0.590 ms | 76.04× | 361.20 → 6.432 MiB |
+| ICP voxel search | 12,000 queries、561 cells | 27.582 ms | 0.466 ms | 59.17× | 120.83 → 6.432 MiB |
+| 合成 registration | 2 m NDT 最多 30 iterations + 1 m ICP 最多 40 iterations | 124.589 ms | 56.115 ms | 2.22× | — |
+
+合成 registration 關閉 preprocessing 與 initializer，不包含影像前端、去噪或首幀初始化。該兩階段測試含 2 次暖機及 3 次量測，共 5 次 solver 執行，總共呼叫 `linearize()` 100 次；重用 accepted backtrack state 後為 60 次。這些元件與限定合成條件的加速比不能外推至完整 Track。
+
+### 等價性檢查
+
+- Pixel nearest 的有效 index 完全相同；平方根後距離通過 `rtol=1e-13`、`atol=1e-10`。
+- NDT 和 ICP 的有效性 mask 與有效 voxel index 完全相同。
+- 生成 registration 的 `T`、scale 相同，接受狀態與 gate 原因相同。
+- 對應計算與合成 registration 的比較條件全數通過；沒有降低門檻、迭代數、輸入點數或精度格式。
+
+### CuPy pool 與顯存監測
+
+設定值為 `pool_limit_mib=4096`、`trim_above_mib=3072`、`reserve_mib=1024`、`min_trim_mib=256`。啟動時實際 pool limit 取設定上限、`device_free + pool_reserved - reserve` 及已存在且較小的 pool limit 中最小值；若此值低於 pool 已使用量或無法為初始化保留預算，直接報錯，不降精度、不靜默改用 CPU。4096 MiB 是 CuPy allocator pool 的上限參數，並非整張 GPU 的總顯存限制。
+
+在要求 trim 的 map、initializer、submap 與 frame-end 檢查點，只有 pool cached 至少 256 MiB，且（reserved 達 3072 MiB 或 device free 低於 1024 MiB）時，才呼叫 CuPy GPU／pinned pool 的 `free_all_blocks()` 釋放未使用區塊。仍被陣列使用的配置不會釋放；分裂而尚不能合併的區塊可能使實際釋放量為零。此策略不會在每幀無條件清空 allocator cache。
+
+`gpu_memory.jsonl` 每筆記錄檢查點、耗時、pool used／reserved／cached／limit、整張 device 的 free／total，以及 trim 嘗試與釋放位元組數。`observations.jsonl` 附上每幀結束樣本，`test_info.json` 留下抽樣摘要，memory log 也納入 run 輸出 SHA。這些都是檢查點抽樣，不能當成 CUDA 瞬時 peak 或完整程序 VRAM；pool 不涵蓋 CUDA context、libraries、pool 外配置及其他程序。啟動時以 reserve 計算 pool 上限，也不保證整個 run 都保有固定的 1024 MiB device free。CuPy pool 快取行為見 [CuPy memory management](https://docs.cupy.dev/en/v13.6.0/user_guide/memory.html)。
+
+allocator shape stress 共 25 種輸入，baseline 與新版都完成。在相同 25-case prefix 中，pool reserved checkpoint 最大值由 baseline 4.25823 GiB 降至新版 17.073 MiB。這是此生成資料壓力測試的 CuPy pool 抽樣，不是實際 full run 顯存、整卡使用量或瞬時 peak。成功 full 且有完整 3142 筆 `frame_end` 記錄時，唯讀分析會在保留原有三組圖表之餘，額外產生 `analysis/04_gpu_memory.png/pdf`。[微基準圖表與報告](../outputs/run/track00_test_2610242232/analysis/README.md)已放在該測試 run 的 `analysis/`。
+
+### 實際資料結果與限制
+
+baseline full 的 3142 幀 run 已完成，2926 幀接受 map 更新，耗時 6275.19 s。其 prefix idx 0–815 有完整 timing/observation 交集；排除首幀後 idx 1–815 平均 load 988.5 ms、registration 911.3 ms、total frame 1987.4 ms、preprocessing 170.0 ms。首幀 registration 128138.4 ms、total 129756.1 ms，不代表穩態。同一 run 的 35 次、每秒一次 `nvidia-smi` 樣本記錄程序 5476–5478 MiB、整卡已用 6553–6557 MiB、樣本最低 free 1149 MiB。這些是 baseline 的低頻抽樣，不能視為瞬時 peak 或用來推論顯存洩漏。
+
+目前沒有 `v4_perf_v1` 的真實 Track full 速度，也沒有獨立真值精度驗證。接受率、synthetic 等價性、component speedup 與 pool stress 數字都不能替代實際資料的定位誤差。benchmark、pytest 和比較結果保存在 `outputs/run/track00_test_2610242232/`；此 outputs 受 `.gitignore` 管理，不會自動同步至其他電腦。
