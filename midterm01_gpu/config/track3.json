@@ -1,5 +1,5 @@
 {
-  "version": "track3_cuda_voxel_v2_armijo_turn",
+  "version": "track3_cuda_v4_denoise_geometry_visual_prior",
   "data_dir": "/workspace/midterm01/data/Track3",
   "ply_subdir": "raw_ply",
   "expected_frames": 3142,
@@ -8,29 +8,94 @@
   "pose_convention": "T_map_ply, same convention as provided initial guess and converter; evaluation reference not independently verified",
   "map_leaf_m": 0.35,
   "registration": {
-    "submap_half_extent_m": [90, 90, 30],
+    "submap_half_extent_m": [
+      90,
+      90,
+      30
+    ],
     "max_source_points": 12000,
     "robust_m": 0.3,
-    "scale_bounds": [0.2, 30.0],
+    "scale_bounds": [
+      0.2,
+      30.0
+    ],
     "initial_log_scale_sigma": 1.0,
     "log_scale_sigma": 0.15,
     "min_coverage": 0.3,
     "stages": [
-      {"voxel_m": 8.0, "mode": "ndt", "iterations": 40},
-      {"voxel_m": 4.0, "mode": "ndt", "iterations": 30},
-      {"voxel_m": 2.0, "mode": "ndt", "iterations": 25},
-      {"voxel_m": 1.0, "mode": "icp", "iterations": 30}
-    ]
+      {
+        "voxel_m": 8.0,
+        "mode": "ndt",
+        "iterations": 40
+      },
+      {
+        "voxel_m": 4.0,
+        "mode": "ndt",
+        "iterations": 30
+      },
+      {
+        "voxel_m": 2.0,
+        "mode": "ndt",
+        "iterations": 25
+      },
+      {
+        "voxel_m": 1.0,
+        "mode": "icp",
+        "iterations": 30
+      }
+    ],
+    "submap_rebuild_distance_m": 15.0,
+    "preprocessing": {
+      "enabled": true,
+      "k": 16,
+      "sigma_multiplier": 3.0
+    },
+    "initializer": {
+      "enabled": true,
+      "submap_half_extent_m": [
+        90,
+        90,
+        30
+      ],
+      "ground_radius_m": 18.0,
+      "ground_grid_m": 0.6,
+      "map_ground_threshold_m": 0.15,
+      "source_ground_threshold_raw": 0.015,
+      "source_feature_leaf_raw": 0.035,
+      "max_source_points": 6000,
+      "max_translation_m": 25.0,
+      "scale_bounds": [
+        0.2,
+        30.0
+      ],
+      "min_coverage": 0.6,
+      "stages": [
+        {
+          "radius_m": 3.0,
+          "robust_m": 1.0,
+          "iterations": 50
+        },
+        {
+          "radius_m": 1.5,
+          "robust_m": 0.5,
+          "iterations": 50
+        },
+        {
+          "radius_m": 0.75,
+          "robust_m": 0.3,
+          "iterations": 50
+        }
+      ]
+    }
   },
-  "filter": {
-    "acceleration_noise_mps2": 2.0,
-    "gyro_noise_radps": 0.02,
-    "bias_random_walk_radps": 0.0001,
-    "map_position_sigma_m": 0.3,
-    "map_yaw_sigma_rad": 0.035,
-    "initial_position_sigma_m": 5.0,
-    "initial_yaw_sigma_rad": 0.35,
-    "max_imu_age_s": 0.1,
-    "nis_limit_4d": 18.47
+  "prediction": "visual_pnp",
+  "visual_prior": {
+    "max_features": 1200,
+    "min_inliers": 30,
+    "min_inlier_fraction": 0.4,
+    "reprojection_px": 3.0,
+    "max_depth_projection_px": 4.0,
+    "max_speed_mps": 50.0,
+    "max_rotation_rate_radps": 2.0
   }
 }

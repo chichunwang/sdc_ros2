@@ -15,11 +15,11 @@ def test_snapshot_imports_preserve_ros_environment(tmp_path):
     probe = '''
 import pathlib, runpy, sys
 import rclpy.serialization
-from sensor_msgs.msg import Imu
+from sensor_msgs.msg import PointCloud2
 runpy.run_path(sys.argv[1], run_name="startup_probe")
 import track3.io
 assert pathlib.Path(track3.io.__file__).resolve().parent.parent == pathlib.Path(sys.argv[1]).resolve().parents[1]
-assert isinstance(rclpy.serialization.serialize_message(Imu()), bytes)
+assert isinstance(rclpy.serialization.serialize_message(PointCloud2()), bytes)
 print("snapshot source and ROS imports PASS")
 '''
     environment = os.environ.copy()

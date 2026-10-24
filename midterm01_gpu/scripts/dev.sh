@@ -5,8 +5,7 @@ export TRACK3_UID="$(id -u)" TRACK3_GID="$(id -g)"
 export TRACK3_XAUTHORITY="${XAUTHORITY:-/run/user/$(id -u)/gdm/Xauthority}"
 cd "$GPU_ROOT"
 case "${1:-help}" in
-  build) docker build --build-arg "BASE_IMAGE=${TRACK3_BASE_IMAGE:-sdc_midterm01_gpu_ros2:cuda12.8}" -f Dockerfile -t midterm01_track3:cuda12.8 .
-    exec docker build -f Dockerfile.loger -t midterm01_track3:loger . ;;
+  build) exec docker build --build-arg "BASE_IMAGE=${TRACK3_BASE_IMAGE:-sdc_midterm01_gpu_ros2:cuda12.8}" -f Dockerfile -t midterm01_track3:cuda12.8 . ;;
   up) exec docker compose -p midterm01_track3 -f docker-compose.yml up -d ;;
   down) exec docker compose -p midterm01_track3 -f docker-compose.yml down ;;
   shell) exec docker compose -p midterm01_track3 -f docker-compose.yml exec track3 /track3_entrypoint.sh bash ;;

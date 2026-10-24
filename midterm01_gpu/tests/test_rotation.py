@@ -17,7 +17,7 @@ def skew(v):
     return np.array([[0, -z, y], [z, 0, -x], [-y, x, 0]], dtype=float)
 
 
-def test_jacobian(T, scale, label):
+def check_jacobian(T, scale, label):
     from track3.geometry import apply_delta
     pts = np.array([[3., -0.5, 7.], [-4., 2., 1.], [0.8, 3., -2.]], dtype=float)
     eps = 1e-6
@@ -42,6 +42,7 @@ def test_jacobian(T, scale, label):
     print('rotation error (rx,ry,rz):   ', errors[3:6].round(8))
     print('log-scale error:             ', round(errors[6], 8))
     print('maximum absolute error:      ', f'{errors.max():.6g}')
+    assert errors.max() < 1e-3
     if errors.max() < 1e-3:
         print('PASS: apply_delta and gpu.py Jacobian agree locally.')
     else:
@@ -56,7 +57,7 @@ def main():
     T = np.eye(4)
     T[:3, :3] = [[np.cos(a), -np.sin(a), 0], [np.sin(a), np.cos(a), 0], [0, 0, 1]]
     T[:3, 3] = [2.3, -4.2, 1.7]
-    test_jacobian(T, 3.0, 'synthetic pose with nonzero translation and rotation')
+    check_jacobian(T, 3.0, 'synthetic pose with nonzero translation and rotation')
     if args.guess:
         G = np.loadtxt(args.guess)
         if G.shape != (4, 4):
@@ -64,8 +65,12 @@ def main():
         print('\nIf init_guess is T_map_base, its +X forward vector (map axes):', G[:3, 0])
         print('If init_guess is T_map_camera_optical, its +Z viewing vector (map axes):', G[:3, 2])
         print('These are alternative interpretations, not two simultaneously valid camera orientations.')
-        test_jacobian(G, 3.0, 'actual init_guess')
+        check_jacobian(G, 3.0, 'actual init_guess')
 
 
 if __name__ == '__main__':
     main()
+
+def test_pose_update_finite_difference():
+    T=np.eye(4);T[:3,3]=[660.,-220.,10.]
+    check_jacobian(T,3.,'synthetic translated pose')

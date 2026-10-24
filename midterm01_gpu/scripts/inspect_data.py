@@ -1,43 +1,67 @@
 #!/usr/bin/env python3
-"""Read-only dataset/clock/frame preflight. Never runs registration."""
+"""Read-only front PLY / XYZ map / initial-pose preflight; no bag or registration."""
 import argparse
+import csv
 import json
 from pathlib import Path
-import sqlite3
+import sys
+import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
-from rclpy.serialization import deserialize_message
-from sensor_msgs.msg import Imu
 from track3.io import frames, sha256, write_json
 from track3.geometry import valid_pose
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--record-dir',type=Path,required=True);a=p.parse_args()
-    a.record_dir.mkdir(parents=True,exist_ok=True)
-    data=Path('/workspace/midterm01/data/Track3');r=frames(data/'raw_ply')
-    cams={}
-    for camera in ('f','fl','fr'):
-        rows=frames(data/f'Track3_images/Track3_{camera}_images',suffix='.jpg')
-        cams[camera]=dict(count=len(rows),same_timestamps_as_ply=[v['timestamp_ns'] for v in rows]==[v['timestamp_ns'] for v in r])
-    db=sqlite3.connect(f'file:{data/"Track3.db3"}?mode=ro',uri=True)
-    topics=db.execute('select id,name,type from topics').fetchall()
-    imu_id=next(i for i,n,t in topics if n=='/imu/data')
-    deltas=[];last=-1;valid=0;total=0;zero_covariance=0
-    for bag,raw in db.execute('select timestamp,data from messages where topic_id=? order by timestamp,id',(imu_id,)):
-        m=deserialize_message(raw,Imu);stamp=int(m.header.stamp.sec)*10**9+int(m.header.stamp.nanosec)
-        q=np.array([m.orientation.x,m.orientation.y,m.orientation.z,m.orientation.w])
-        if stamp<=last:raise ValueError('Non-monotonic IMU header time')
-        last=stamp;total+=1;deltas.append(int(bag)-stamp)
-        valid+=int(np.isfinite(q).all() and .9<np.linalg.norm(q)<1.1 and m.orientation_covariance[0]!=-1)
-        zero_covariance+=int(not any(m.orientation_covariance))
-    report=dict(status='success',test_type='read-only dataset inspection; no localization',
-                frames=len(r),first_timestamp_ns=r[0]['timestamp_ns'],last_timestamp_ns=r[-1]['timestamp_ns'],
-                cameras=cams,initial_pose_valid=valid_pose(np.loadtxt(data/'init_guess.txt',delimiter=',')),
-                topics=topics,imu_messages=total,valid_orientation=valid,orientation_covariance_unknown=zero_covariance,
-                bag_minus_header_ns=dict(min=min(deltas),max=max(deltas)),
-                sha256={str(p):sha256(p) for p in (data/'init_guess.txt',data/'metadata.yaml')},
-                caveat='FLU inferred from bundled exporter; official PLY provenance and Kaggle reference point are not independently verified')
-    if not report['initial_pose_valid']:raise ValueError('Invalid initial pose')
-    write_json(a.record_dir/'data_inspection.json',report);print(json.dumps(report,indent=2))
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--record-dir',type=Path,required=True)
+    p.add_argument('--config',type=Path,default=Path(__file__).resolve().parents[1]/'config/track3.json')
+    a=p.parse_args(); run=a.record_dir.resolve()
+    if not (run/'source_manifest.json').is_file():
+        p.error('先使用 create_run.py 建立唯一的 run 及來源快照')
+    if any((run/name).exists() for name in ('test_info.json','data_inspection.json','frame_manifest.csv')):
+        p.error('不覆寫已使用的 run，請建立新 run')
+    start=time.perf_counter()
+    cfg=json.loads(a.config.read_text());data=Path(cfg['data_dir'])
+    info=dict(status='running',version=cfg['version'],score=None,score_source=None,
+              test_type='read-only dataset inspection; no localization',imu_used=False)
+    write_json(run/'test_info.json',info)
+    write_json(run/'parameters.json',cfg)
+    try:
+        rows=frames(data/cfg['ply_subdir'],expected=cfg['expected_frames'])
+        pose=np.loadtxt(data/'init_guess.txt',delimiter=',')
+        if not valid_pose(pose):raise ValueError('Invalid initial pose')
+        # Inspect only the PCD header. No timestamp, intensity or trajectory
+        # fields are used to infer pose; the registration loader selects XYZ.
+        with (data/'map.pcd').open('rb') as f:
+            header=[]
+            for _ in range(100):
+                line=f.readline().decode('ascii').strip();header.append(line)
+                if line.startswith('DATA '):break
+        fields=next(line.split()[1:] for line in header if line.startswith('FIELDS '))
+        if not all(axis in fields for axis in ('x','y','z')) or header[-1]!='DATA ascii':
+            raise ValueError('Map requires XYZ and ASCII PCD for the streaming loader')
+        sources=[a.config,data/'init_guess.txt',data/'map.pcd',rows[0]['path'],rows[-1]['path']]
+        source_hashes={str(path):sha256(path) for path in sources}
+        with (run/'frame_manifest.csv').open('x',newline='') as f:
+            writer=csv.writer(f);writer.writerow(['idx','original_idx','timestamp_ns','path'])
+            for idx,row in enumerate(rows):writer.writerow([idx,row['original_idx'],row['timestamp_ns'],str(row['path'])])
+        report=dict(frames=len(rows),first_timestamp_ns=rows[0]['timestamp_ns'],
+                    last_timestamp_ns=rows[-1]['timestamp_ns'],initial_pose_valid=True,
+                    map_fields=fields,localization_map_fields=['x','y','z'],imu_used=False,
+                    input_sha256=source_hashes,
+                    sha_scope='config, initial pose, map, first and last PLY; interior PLY contents not read',
+                    caveat='PLY FLU and T_map_ply conventions retained; evaluation frame and metric scale not independently verified')
+        write_json(run/'data_inspection.json',report)
+        info.update(status='success',frame_count=0,inspected_frames=len(rows),
+                    elapsed_seconds=time.perf_counter()-start,output_sha256={name:sha256(run/name) for name in ('data_inspection.json','frame_manifest.csv')})
+        print(json.dumps(report,ensure_ascii=False,indent=2))
+    except Exception as error:
+        info.update(status='failed',failure=f'{type(error).__name__}: {error}',elapsed_seconds=time.perf_counter()-start)
+        raise
+    finally:
+        write_json(run/'test_info.json',info)
+
 
 if __name__=='__main__':main()

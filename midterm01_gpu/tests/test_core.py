@@ -4,11 +4,14 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 from track3.geometry import apply_delta, valid_pose, yaw, rz, wrap
-from track3.filter import Fusion
-from track3.io import frames, load_ply, load_map, ImuStream
+from track3.io import frames, load_ply, load_map
 from track3.gpu import cp, keys, voxel_mean, VoxelModel, jacobian, linearize, Registration
 
 CFG=json.loads((Path(__file__).resolve().parents[1]/'config/track3.json').read_text())
+# Generated mathematical fixtures have no road scene or image stream.
+CFG['prediction']='previous_pose'
+CFG['registration']['preprocessing']['enabled']=False
+CFG['registration']['initializer']['enabled']=False
 
 
 def cloud():
@@ -61,29 +64,6 @@ def test_gpu_hessian_and_registration():
     assert np.linalg.norm(result['T'][:3,3])<.08
     assert Rotation.from_matrix(result['T'][:3,:3]).magnitude()<.015
     assert abs(result['scale']-3)<.03
-
-
-def simulate(n):
-    k=Fusion(np.eye(4),1_000_000_000,CFG['filter']);out=[]
-    for i in range(n):
-        t=1_000_000_000+i*100_000_000
-        samples=[] if i==0 else [(t-50_000_000,t-50_000_000,.1)]
-        k.predict(t,samples)
-        z=np.eye(4);z[:3,:3]=rz(i*.01);z[0,3]=i*.05
-        assert k.update(z,initialize=i==0)[0]
-        out.append(k.T.copy())
-        assert np.linalg.eigvalsh(k.P).min()>-1e-10
-    return out,k
-
-
-def test_filter_prefix_and_future_rejection():
-    short,k=simulate(3);long,_=simulate(5)
-    np.testing.assert_array_equal(short,long[:3])
-    with pytest.raises(ValueError):k.predict(k.stamp+1,[(k.stamp+2,k.stamp+2,1.)])
-    before=k.T.copy();wrong=before.copy();wrong[0,3]+=100
-    accepted,nis=k.update(wrong)
-    assert not accepted and nis>18.47
-    np.testing.assert_array_equal(before,k.T)
 
 
 def test_timestamp_and_frame_contract(tmp_path):

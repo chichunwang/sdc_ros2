@@ -65,7 +65,7 @@ Visualization Manager:
       Value: true
       Alpha: 1
       Color: 70; 235; 100
-      Color Transformer: FlatColor
+      Color Transformer: RGB8
       Position Transformer: XYZ
       Decay Time: 0
       Selectable: true
@@ -128,6 +128,17 @@ Visualization Manager:
       Reference Frame: track3_camera
       Length: 1.5
       Radius: 0.06
+    - Class: rviz_default_plugins/Marker
+      Name: Registration Status
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /track3/registration_status
+        Depth: 1
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        Filter size: 10
   Enabled: true
   Global Options:
     Background Color: 30; 32; 36

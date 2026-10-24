@@ -3,7 +3,6 @@ import hashlib
 import json
 from pathlib import Path
 import re
-import sqlite3
 import numpy as np
 from plyfile import PlyData
 
@@ -37,7 +36,8 @@ def load_ply(path):
     v = PlyData.read(str(path))['vertex']
     xyz = np.column_stack([v[a] for a in ('x','y','z')]).astype(np.float64)
     xyz = xyz[np.isfinite(xyz).all(axis=1)]
-    if len(xyz) < 100: raise ValueError(f'Too few finite points: {path}')
+    # A readable but sparse frame is a registration rejection, not an I/O
+    # failure: the runner must still emit its prior for this timestamp.
     return xyz
 
 
@@ -67,38 +67,3 @@ def load_map(path, leaf):
     if not pieces: raise ValueError('Empty map')
     mean, _ = voxel_mean(np.concatenate(pieces), leaf, np.concatenate(weights))
     return mean, read_count
-
-
-class ImuStream:
-    """Only /imu/data; both availability (bag) and measurement (header) clocks gated."""
-    def __init__(self, bag):
-        from rclpy.serialization import deserialize_message
-        from sensor_msgs.msg import Imu
-        self.decode = lambda x: deserialize_message(x, Imu)
-        self.db = sqlite3.connect(f'file:{Path(bag).resolve()}?mode=ro', uri=True)
-        topics = self.db.execute('select id,name,type from topics').fetchall()
-        matches = [r for r in topics if r[1] == '/imu/data' and r[2] == 'sensor_msgs/msg/Imu']
-        if len(matches) != 1: raise ValueError('Expected /imu/data of type sensor_msgs/msg/Imu')
-        self.cursor = self.db.execute('select timestamp,data from messages where topic_id=? order by timestamp,id', (matches[0][0],))
-        self.next = self.cursor.fetchone(); self.pending = []; self.invalid = 0
-
-    def until(self, frame_ns):
-        while self.next is not None and self.next[0] <= frame_ns:
-            bag_ns, raw = self.next; m = self.decode(raw)
-            stamp = int(m.header.stamp.sec)*1_000_000_000+int(m.header.stamp.nanosec)
-            q = np.array([m.orientation.x,m.orientation.y,m.orientation.z,m.orientation.w])
-            w = np.array([m.angular_velocity.x,m.angular_velocity.y,m.angular_velocity.z])
-            if (stamp > 0 and np.isfinite(q).all() and np.isfinite(w).all() and
-                    0.9 < np.linalg.norm(q) < 1.1 and m.orientation_covariance[0] != -1 and
-                    m.angular_velocity_covariance[0] != -1):
-                from scipy.spatial.transform import Rotation
-                # Quaternion's gravity/world z axis projects gyro without assuming camera/IMU yaw extrinsics.
-                rate = float((Rotation.from_quat(q).as_matrix() @ w)[2])
-                self.pending.append((stamp, int(bag_ns), rate))
-            else: self.invalid += 1
-            self.next = self.cursor.fetchone()
-        ready = [s for s in self.pending if s[0] <= frame_ns]
-        self.pending = [s for s in self.pending if s[0] > frame_ns]
-        return sorted(ready)
-
-    def close(self): self.db.close()

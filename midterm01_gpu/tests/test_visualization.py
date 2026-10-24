@@ -21,11 +21,27 @@ def test_display_cloud_matches_written_pose_and_exact_timestamp():
 def test_ros_publisher_lifecycle_with_generated_data():
     node = RvizPublisher()
     try:
+        clouds=[];statuses=[];markers=[]
+        node.cloud_pub=SimpleNamespace(publish=clouds.append)
+        node.status_pub=SimpleNamespace(publish=statuses.append)
+        node.marker_pub=SimpleNamespace(publish=markers.append)
         stamp = 1727239790258245070
         raw = np.array([[1.,0.,0.],[0.,1.,0.]])
         node.publish_map(raw,stamp)
-        node.publish_frame(raw,np.eye(4),3.,stamp,SimpleNamespace(center=None))
-        assert len(node.path.poses)==1
+        node.publish_frame(raw,np.eye(4),3.,stamp,SimpleNamespace(center=None),accepted=True,reason='accepted')
+        node.publish_frame(raw,np.eye(4),3.,stamp+1,SimpleNamespace(center=None),
+                           accepted=False,reason='low_coverage')
+        assert len(node.path.poses)==2
         assert node.path.header.frame_id=='map'
+        assert clouds[0].width==len(raw) and clouds[1].width==len(raw)
+        accepted_rgb=np.frombuffer(clouds[0].data,dtype='<u4').reshape(-1,4)[:,3]
+        prior_rgb=np.frombuffer(clouds[1].data,dtype='<u4').reshape(-1,4)[:,3]
+        assert np.all(accepted_rgb==(70<<16)|(235<<8)|100)
+        assert np.all(prior_rgb==(255<<16)|(160<<8)|40)
+        assert markers[0].text=='ACCEPTED'
+        assert markers[1].text=='PRIOR ONLY: low_coverage'
+        import json
+        assert json.loads(statuses[1].data)==dict(timestamp_ns=stamp+1,map_accepted=False,
+                                                reason='low_coverage',scale=3.)
     finally:
         node.close()

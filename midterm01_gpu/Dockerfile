@@ -2,7 +2,7 @@
 ARG BASE_IMAGE=sdc_midterm01_gpu_ros2:cuda12.8
 FROM ${BASE_IMAGE}
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends python3-venv \
+RUN apt-get update && apt-get install -y --no-install-recommends python3-venv python3-opencv \
     && rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv --system-site-packages /opt/track3
 COPY requirements.txt /opt/track3-requirements.txt

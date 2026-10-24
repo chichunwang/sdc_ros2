@@ -4,9 +4,9 @@ set -euo pipefail
 GPU_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_KIND=test
 case "${1:-}" in
-  --full) RUN_KIND=full ;;
-  --max-frames) [[ "${2:-}" =~ ^[0-9]+$ ]] && ((10#${2} > 0 && 10#${2} < 3142)) || { echo '短段幀數必須1..3141' >&2; exit 2; } ;;
-  *) echo '用法：scripts/run.sh --full [--source ply|loger] 或 --max-frames N [--source ply|loger]' >&2; exit 2 ;;
+  --full) [[ $# == 1 ]] || { echo '用法：scripts/run.sh --full' >&2; exit 2; }; RUN_KIND=full ;;
+  --max-frames) [[ $# == 2 && "${2:-}" =~ ^[0-9]+$ ]] && ((10#${2} > 0 && 10#${2} < 3142)) || { echo '用法：scripts/run.sh --max-frames N，N 必須1..3141' >&2; exit 2; } ;;
+  *) echo '用法：scripts/run.sh --full 或 --max-frames N（官方前視 PLY，不使用 IMU）' >&2; exit 2 ;;
 esac
 mkdir -p "$GPU_ROOT/outputs"
 exec 9>"$GPU_ROOT/outputs/.gpu.lock"

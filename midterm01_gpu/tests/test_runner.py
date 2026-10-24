@@ -1,15 +1,12 @@
-"""End-to-end CUDA pipeline using exclusively generated map/PLY/IMU data."""
+"""End-to-end CUDA pipeline using exclusively generated map/PLY data."""
 import csv
 import hashlib
 import importlib.util
 import json
 from pathlib import Path
-import sqlite3
 import sys
 import numpy as np
 from plyfile import PlyData,PlyElement
-from rclpy.serialization import serialize_message
-from sensor_msgs.msg import Imu
 from test_core import CFG,cloud
 
 
@@ -25,14 +22,6 @@ def test_generated_pipeline(tmp_path,monkeypatch):
         v=np.empty(len(pts),dtype=[('x','f4'),('y','f4'),('z','f4')])
         for j,k in enumerate(('x','y','z')):v[k]=pts[:,j]
         PlyData([PlyElement.describe(v,'vertex')],text=False).write(str(root/'raw_ply'/f'{idx:06d}_ts_{stamp+idx*100000000}.ply'))
-    db=sqlite3.connect(root/'Track3.db3')
-    db.executescript('create table topics(id integer,name text,type text);create table messages(id integer,topic_id integer,timestamp integer,data blob);')
-    db.execute("insert into topics values(1,'/imu/data','sensor_msgs/msg/Imu')")
-    for i in range(22):
-        t=stamp-10_000_000+i*10_000_000;mimu=Imu();mimu.orientation.w=1.
-        mimu.header.stamp.sec=t//10**9;mimu.header.stamp.nanosec=t%10**9
-        db.execute('insert into messages values(?,?,?,?)',(i,1,t,serialize_message(mimu)))
-    db.commit();db.close()
     cfg=json.loads(json.dumps(CFG));cfg['data_dir']=str(root);cfg['expected_frames']=3;cfg['map_leaf_m']=.15
     cfg['version']='SYNTHETIC_VALIDATION_ONLY'
     cfg['registration']['stages']=[{'mode':'ndt','voxel_m':2.,'iterations':30},{'mode':'icp','voxel_m':1.,'iterations':30}]
@@ -43,7 +32,13 @@ def test_generated_pipeline(tmp_path,monkeypatch):
     monkeypatch.setattr(sys,'argv',[str(script),'--config',str(config),'--run-dir',str(run),'--max-frames','3'])
     assert module.main()==0
     info=json.loads((run/'test_info.json').read_text());assert info['status']=='success'
-    assert info['frame_count']==3 and info['used_imu_samples']>0 and info['map_accepted_frames']==3
+    assert info['frame_count']==3 and info['imu_used'] is False and info['map_accepted_frames']==3
+    assert not (root/'Track3.db3').exists()
+    trace=[json.loads(line) for line in (run/'pose_trace.jsonl').read_text().splitlines()]
+    for row in trace:
+        np.testing.assert_array_equal(row['registered_T'],row['final_T'])
+        assert row['proposed_scale']==row['final_scale']
+        assert row['pose_decision']=='accepted_registration'
     poses=np.loadtxt(run/'poses.txt');assert poses.shape==(3,12)
     rows=list(csv.DictReader((run/'result_3.csv').open()))
     assert list(rows[0])==['idx','x','y','yaw'] and [r['idx'] for r in rows]==['0','1','2']
