@@ -1,7 +1,0 @@
-/.env
-!/data/
-/data/*
-!/data/README.md
-/outputs/*
-!/outputs/README.md
-

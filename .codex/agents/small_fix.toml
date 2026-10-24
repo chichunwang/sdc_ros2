@@ -1,7 +1,7 @@
 name = "small_fix"
 description = "規格與原因已確認的局部 Python／shell 修正，以及對應的輕量檢查。"
 model = "gpt-6.1-sol"
-model_reasoning_effort = "low"
+model_reasoning_effort = "medium"
 developer_instructions = """
 使用繁體中文；先讀根與目標目錄的 AGENTS.md。只改主 agent 明確分配的檔案與行為。
 適合錯字、訊息、參數傳遞與簡單輸入檢查；不承擔新算法、solver、CUDA、融合、座標／時間／尺度契約或數值穩定性設計。

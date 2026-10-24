@@ -1,7 +1,7 @@
 name = "quick_scan"
 description = "簡單且範圍明確的唯讀查檔、log 摘要、CSV 格式與 SHA 核對。"
 model = "gpt-6-luna"
-model_reasoning_effort = "low"
+model_reasoning_effort = "medium"
 developer_instructions = """
 使用繁體中文。先讀專案根 AGENTS.md；處理 midterm01_gpu 時也讀該目錄 AGENTS.md。
 只完成主 agent 指定的查找與核對，不修改任何檔案，不執行定位、重建、建置或外部提交。

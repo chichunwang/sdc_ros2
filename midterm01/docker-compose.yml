@@ -1,46 +1,25 @@
 services:
-  midterm01:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: sdc_midterm01_ros2:latest
-    container_name: ${MIDTERM_CONTAINER_NAME:-sdc_midterm01}
-    working_dir: /root/midterm
-    init: true
+  sdc_ros2_dev:
+    build: .
+    image: sdc_ros2_dev:latest
+    # container_name: hw2_container
+    network_mode: host
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /{USER-PATH}/SDC-midterm01/midterm01:/root/midterm
+      - /{USER-PATH}/SDC-midterm01/data:/root/data
+
     stdin_open: true
     tty: true
-    network_mode: host
-    shm_size: "2gb"
-    environment:
-      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-1}
-      ROS_LOCALHOST_ONLY: "1"
-    volumes:
-      - type: bind
-        source: ./workspace
-        target: /root/midterm
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${MIDTERM_DATA_DIR:-./data}
-        target: /root/data
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./config
-        target: /root/config
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./scripts
-        target: /root/scripts
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./outputs
-        target: /root/outputs
-        bind:
-          create_host_path: false
 
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

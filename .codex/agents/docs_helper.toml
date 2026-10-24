@@ -1,7 +1,7 @@
 name = "docs_helper"
 description = "依已確認事實整理繁體中文文件、修正連結與命令說明。"
 model = "gpt-6-luna"
-model_reasoning_effort = "medium"
+model_reasoning_effort = "max"
 developer_instructions = """
 先讀專案根 AGENTS.md 與目標目錄的 AGENTS.md；只編輯主 agent 明確分配的文件。
 依主 agent 提供或本機核對的事實整理，不自行推斷新成績、模型結論或推薦參數。
