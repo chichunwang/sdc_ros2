@@ -77,10 +77,9 @@
 | 47／2026-10-21 | [目前實作盤點與 Track2 最新回報](47_IMPLEMENTATION_STATUS_AND_TRACK2_SCORE_20261021.md)：說明原最佳與新 full 的方法差異、Kalman／RTS 與 ICP／batch graph 邊界、已做實驗及未完成契約 | Track2 新 full 完整性通過；使用者回報顯示 0.77，未勝 0.30488 歷史最佳 |
 | 48／2026-10-23 | [規則與程式稽核](48_RULES_AND_CODE_AUDIT_20261023.md)：現行因果條款、Track3 公告已知／未知項目及本機入口盤點 | 依 10/22 現行 PDF 與本機靜態審查 |
 | 49／2026-10-23 | [Track3 因果 baseline 與手動短段入口](49_TRACK3_CAUSAL_BASELINE_20261023.md)：分清靜態因果路徑、尚待使用者執行的 50 幀短段與未確認的正式提交契約 | 資料／CLI／乾跑及靜態審查；沒有執行定位 |
-| 50／2026-10-23，持續更新 | [指令表](50_COMMAND_REFERENCE.md)：Track3 因果 v2 full 手動命令、可選短段、dry-run／audit-only、歷史 legacy 命令、輸出檢查與事後圖表重試 | 手動命令速查；真實 v2 效果未驗證 |
-| 51／2026-10-23 | [Track3 異常跳動診斷](51_TRACK3_FAILURE_DIAGNOSIS_20261023.md)：legacy run 的收斂跳點、IMU 證據界限與因果驗證建議 | 唯讀診斷；未修改 solver 或 CSV |
-| 52／2026-10-23 | [Track3 因果 Kalman 與逐幀尺度配準](52_TRACK3_CAUSAL_KALMAN_SCALE_20261023.md)：11-state 前向模型、尺度／幾何檢查、v1 full 失敗及現行 v2 full 命令 | v2 通過合成／機制測試，尚無真實定位或新分數 |
-| 53／2026-10-23 | [Track3 初始化修正與驗證](53_TRACK3_INITIALIZATION_REPAIR_20261023.md)：v1 啟動失敗幾何線索、v2 初始化與拒絕條件、59 項檢查及其合成證據界限 | 合成／機制檢查通過；真實 v2 定位未驗證 |
+| 50／2026-10-23，持續更新 | [指令表](50_COMMAND_REFERENCE.md)：Track3 clean local-Sim3 手動 full／唯讀 dry-run；先前 map-only NDT／ICP 與獨立幀研究命令保留歷史 | 30項CPU檢查、合成3／5幀前綴、3142幀dry-run及輸入唯讀盤點通過；新GPU定位未測 |
+| 51／2026-10-23，整併原51～53，2026-10-24 更新 | [Track3 架構、演進與失敗診斷](51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)：clean local-Sim3 新架構、pair model、因果狀態與舊分支診斷；模組導航見 [`track3_clean/README.md`](../track3_clean/README.md) | clean 分支是架構重建與新 pair model，正式精度未知；舊 full／分數仍依各歷史 run 記載 |
+| 52／2026-10-24 | [根 AGENTS.md 整理前歷史快照](52_ROOT_AGENTS_ARCHIVE_20261024.md)：保留原文、來源 SHA 與歷史語境 | 僅供追查；現行協作規則以根 AGENTS.md 為準 |
 
 ## 開發脈絡
 
@@ -122,9 +121,10 @@
 | 三相機怎麼走到我開的 result_2.csv？ | 01 第 10 節 → 23 → 24 → 25 |
 | 為什麼顯存增加卻沒變快？ | 25 → 26 |
 | 最新外部方法與本地版本差異？ | 41；full 命令記錄見16，已失敗的pose_yaw命令僅供歷史參照 |
-| Track3 因果 Kalman／尺度方法採用哪些狀態、假設與驗證順序？ | [52｜因果 Kalman 與逐幀尺度配準](52_TRACK3_CAUSAL_KALMAN_SCALE_20261023.md)；v2 初始化修正與合成檢查見 [53](53_TRACK3_INITIALIZATION_REPAIR_20261023.md) |
-| Track3 如何檢視因果 baseline、手動跑新分支短段並判讀限制？ | [49｜因果 baseline](49_TRACK3_CAUSAL_BASELINE_20261023.md) → [52｜新方法與驗證順序](52_TRACK3_CAUSAL_KALMAN_SCALE_20261023.md)；現行規則與程式盤點見48 |
-| 常用指令、Track3 因果短段／歷史 legacy 命令、輸出檢查與 full 圖表重試？ | [50｜指令表](50_COMMAND_REFERENCE.md)；新方法限制見52 |
+| Track3 clean local-Sim3 如何組合尺度、pair pose 與失鎖狀態？ | [51｜架構、模型與狀態](51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)；模組導航見 [`track3_clean/README.md`](../track3_clean/README.md)，手動入口見[50](50_COMMAND_REFERENCE.md) |
+| Track3 為何大量拒絕、舊架構如何演進、舊已評分ICP如何去GNSS？ | [51｜架構、演進與完整診斷](51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)；歷史命令見[50](50_COMMAND_REFERENCE.md) |
+| Track3 如何檢視因果 baseline、手動跑短段並判讀限制？ | [49｜因果 baseline](49_TRACK3_CAUSAL_BASELINE_20261023.md) → [51｜架構與限制](51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)；現行規則與程式盤點見48 |
+| 如何手動執行 Track3 clean full 或唯讀 dry-run？ | [50｜指令表](50_COMMAND_REFERENCE.md)；算法與限制見[51](51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md) |
 
 ## 官方、CPU 與其他必要參考的中央索引
 

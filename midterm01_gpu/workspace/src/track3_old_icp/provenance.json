@@ -8,5 +8,10 @@
     "include/localization/sensor_guided.h": "363ad8363d37b5200f98affc8bb02afc92c3058d735375a3ebcde723c0981a8e",
     "include/localization/geometry_weighting.h": "94fbece61102e82eb742d6b2c751ce47572aff5309780c37a7cd943447662f04"
   },
-  "scope": "historical scored four-DOF ICP core only; GNSS/RTS prior generator not included; scores not transferred to Track3"
+  "scope": "historical scored four-DOF ICP core only; GNSS/RTS prior generator not included; scores not transferred to Track3",
+  "nearest_neighbor_sources_sha256": {
+    "workspace/src/cuda_ndt_backend/src/nearest_neighbor.cu": "606121d697d6437cbbb44104fc471ada3eae043aaeb08a76c01896ba9e5039e2",
+    "workspace/src/cuda_ndt_backend/include/cuda_ndt_backend/nearest_neighbor.h": "08225dca2815bcced3580288b1906f7203c3f33fdeaad9768788c4daeb705d23"
+  },
+  "kernel_library_sha256": "77f57eed9e1dc0ed1b961368b727eeeaa3a9d9bd3c9be4d96b8342a6bbcbfa05"
 }

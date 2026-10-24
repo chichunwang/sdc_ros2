@@ -1,18 +1,28 @@
 # Midterm01 GPU 工作區
 
+另有依使用者「真正重寫solver」要求建立的獨立 [`track3_rewrite/`](track3_rewrite/README.md)：從CPU localization模板的資料流程重新撰寫C++／CUDA ICP，不沿用舊scripts／clean solver與gate。12項GPU機制、9項launcher／I/O、合成3／5幀與失敗診斷通過；真實定位精度未知，full仍使用者手動，見唯一[51](doc/51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)及[50](doc/50_COMMAND_REFERENCE.md)。現行v2 fast與clean保持，兩者不是此新核心的相依來源。
+
+2026-10-24 Track3 已建立獨立的 [`track3_clean/`](track3_clean/README.md) 與入口 `scripts/run_track3_clean.py`，拆開資料／座標與尺度契約、GPU 配準、品質裁決、追蹤狀態、輸出及 runtime。30 項 CPU 檢查與合成 3／5 幀機制驗證通過；真實 3142 幀 dry-run 及輸入唯讀盤點完成，尚未測新入口的真實 GPU 定位或正式精度。模型與證據見唯一 [51](doc/51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)，本輪手動命令見 [50](doc/50_COMMAND_REFERENCE.md)。下面 10/23 入口與測試數字保留當時歷史語境。
+
 文件已集中到 **[doc/](doc/28_DOCUMENTATION_INDEX.md)**，以兩位數編號排列。
 
-常用命令速查：[50｜指令表](doc/50_COMMAND_REFERENCE.md)（Track3 v2 full、可選短段、資料盤點、結果與圖表）。
+常用命令速查：[50｜指令表](doc/50_COMMAND_REFERENCE.md)（Track3 map-only NDT／ICP full 與 200 幀診斷命令、研究重現、歷史命令、結果與圖表）。
 
-2026-10-23 [Track3 前向 IMU Kalman／配準拒絕／逐幀尺度](doc/52_TRACK3_CAUSAL_KALMAN_SCALE_20261023.md) 的現行入口已更新為 v2；初始化修正與驗證見 [53](doc/53_TRACK3_INITIALIZATION_REPAIR_20261023.md)。v1 full `track03_full_2610231521` 使用者回報 **82.17**，3142 筆輸出完整，但地圖觀測採用 0 筆、速度為零、位置固定初值；不推薦原樣重跑。v2 的 59 項檢查均為 CPU／CUDA 機制或合成測試，沒有真實 v2 定位、新分數或精度改善證據。配準由程式自動完成，`initial-scale 3` 只是 PLY XYZ 的未校準起始倍率。只有 full 提交產生正式分數；短段可選、不設 full 資格門檻。建議 full 命令見 [50](doc/50_COMMAND_REFERENCE.md)，由使用者手動執行；score <1.29 是目標，不保證達成。
+2026-10-23 Track3 現行入口為 `scripts/run_track3_map_only.py`，method=`track3_forward_gpu_structural_ndt_icp_reacquisition_v2`：前鏡頭、無 IMU；每幀 map NDT＋ICP，training-only source normal-axis／spatial 等權固定加權，尺度使用 0.95／1／1.05 三個 seed；map 拒絕後使用既有 8 m／30° bootstrap 域嘗試重捕獲。physical map motion 改為與最後接受的 map anchor 按時間間隔比較，pair motion rate 40 m/s、90°/s 保留，原殘差／視線／共識門檻未放寬。機制結果不代表精度已證明。
 
-2026-10-23 Track3 本機資料已盤點：3142 個 PLY 的原始索引與 bag 前相機時間逐筆吻合，map／初始矩陣存在，bag 無 GNSS。已開放既有 map-only `legacy` 的 Track3 短段入口並完成乾跑；尚未實際定位，尺度與提交 frame／yaw 契約未驗證。手動 50 幀命令與因果審查見 [49｜Track3 因果 baseline](doc/49_TRACK3_CAUSAL_BASELINE_20261023.md)。此入口不使用歷史 RTS／graph；下文非因果方法警示仍有效。
+200 幀診斷 `track03_test_2610232248` 完整結束：map 182 採用／18 拒絕、失追 0、pair 198/199 採用、最長無 map 0.107871264 秒；19 次重捕獲嘗試中 14 次成功，總耗時 338.131 秒。40 項機制／I/O 檢查、CPU/CUDA weighted-fit parity 通過，5／200 幀矩陣與 CSV 前綴逐 byte 相同。這些只說明本段完整性與機制檢查，不證明正式定位精度或全程穩定；目前沒有 full 或正式新分數。Torch peak allocated/reserved 為約 0.86／1.41 GiB；`--vram-budget-gib 4` 限制 Torch allocator，不涵蓋 driver、NVRTC 等全部 VRAM。詳細方法與限制見唯一 [51](doc/51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)，手動命令見 [50](doc/50_COMMAND_REFERENCE.md)。
+
+歷史 full `track03_full_2610231912` 僅處理 1040/3142 幀，return code 1，`output_complete_and_finite=false`、`validation_errors=[]`；map 98 採用／942 拒絕，idx125為最後 map 採用、idx181起失追859幀，最長無 map 32.893173258秒。終止原因未記錄，不推定。原 run 保留且不推薦原樣重跑；同一 CLI 現在執行 v2，不能重現 v1，舊 source snapshot 保留。根因詳解見唯一 [51](doc/51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)。
+
+舊核心 full `track03_full_2610231748` 使用者回報 **77.96**，上傳 bytes 未核對，保留歷史且不推薦原樣重跑。先前 v1／v2、獨立幀尺度歧義及失敗實驗也保留在 [51](doc/51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)；先前 8/8 拒絕指獨立幀診斷，不能當成新前向 runner 的結果。
+
+2026-10-23 Track3 本機資料已盤點：3142 個 PLY 的原始索引與 bag 前相機時間逐筆吻合，map／初始矩陣存在，bag 無 GNSS。既有 map-only `legacy` 路徑審查見 [49｜Track3 因果 baseline](doc/49_TRACK3_CAUSAL_BASELINE_20261023.md)。
 
 Python／Matplotlib 的 full run 事後圖表，隨每次成功完成的 full run 寫入該 run 的 `analysis/`；格式、來源與限制見 [08｜操作手冊](doc/08_MANUAL_WORKFLOW.md#full-run-事後圖表)。定位後圖表只讀診斷，不修正軌跡。舊教學素材與圖表說明保留於 [doc/analysis/README.md](doc/analysis/README.md)，不補繪歷史 run。
 
 2026-10-23 Track3 資料說明更新：使用者轉貼的 Kaggle 原文已確認三相機 H265、`/imu/data`（orientation／acceleration）、CSV 表頭 `idx,x,y,yaw` 與 3142 筆資料（不含表頭；含表頭共 3143 筆紀錄）。完整原文與來源範圍見 [資料規格](../midterm01/docs/KAGGLE_DATASET_SPEC.md)。公告確認不代表本機 bag／sample 或因果 runner 已驗證。
 
-**現行規則（2026-10-23）：**[00｜整合新版（31 頁）](<doc/Competition Regulations/00_SDC_2026_Midterm01_Localization_整合新版_20261022.pdf>) 與 [01｜因果定位細則（4 頁）](<doc/Competition Regulations/01_Mid01_Updates_Rules.pdf>) 優先；[90](<doc/Competition Regulations/90_舊版_已取代_可刪除_SDC_2026_Midterm01_Localization_24頁.pdf>)／[91](<doc/Competition Regulations/91_舊版_已取代_可刪除_Mid01_Updates_Adjustments_20261021.pdf>) 僅保留歷史。因果規則禁止未來資訊回修 pose、RTS／backward smoothing 與定位後離線修正，所有 Track 適用；Track1／2 GNSS 仍可輸入，但 RTS 不合規。現有 RTS、map batch graph 與離線 joint 分支不可用於正式提交，舊分數只作歷史紀錄。規則與程式盤點見 [48](doc/48_RULES_AND_CODE_AUDIT_20261023.md)；此文件更新不授權新 full。
+**現行規則（2026-10-23）：**[00｜整合新版（31 頁）](<doc/Competition Regulations/00_SDC_2026_Midterm01_Localization_整合新版_20261022.pdf>) 與 [01｜因果定位細則（4 頁）](<doc/Competition Regulations/01_Mid01_Updates_Rules.pdf>) 優先；[90](<doc/Competition Regulations/90_舊版_已取代_可刪除_SDC_2026_Midterm01_Localization_24頁.pdf>)／[91](<doc/Competition Regulations/91_舊版_已取代_可刪除_Mid01_Updates_Adjustments_20261021.pdf>) 僅保留歷史。因果規則禁止未來資訊回修 pose、RTS／backward smoothing 與定位後離線修正，所有 Track 適用；Track1／2 GNSS 仍可輸入，但 RTS 不合規。現有 RTS、map batch graph 與離線 joint 分支不可用於正式提交，舊分數只作歷史紀錄。規則與程式盤點見 [48](doc/48_RULES_AND_CODE_AUDIT_20261023.md)；現行 Track3 手動 full 命令見 [50](doc/50_COMMAND_REFERENCE.md)。
 
 **歷史分數提示：**1.15008／0.30488、0.77 及其相關方法均來自含非因果平滑／離線 graph 的舊實驗，僅保留歷史證據，不是現行規則下的合規最佳或提交推薦。不得因這些分數啟動新的 full。
 

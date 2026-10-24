@@ -1,13 +1,51 @@
 # Midterm01 GPU 工作約定
 
+## 2026-10-24 Track3 v2 執行加速（先加速現行 v2，clean 分支保持）
+
+- 使用者選定先加速現行 v2、以既有200幀作同算法對照；新入口 `scripts/run_track3_map_only_fast.py`，method=`track3_forward_gpu_structural_ndt_icp_reacquisition_v2_fast`。共享 tracker 狀態／品質門檻／runner I/O；CUDA 融合變換、對應、GM/H/b，同幀共享 source/weights，3 worker 各固定1 stream。原點數、3 seeds、150迭代預算、float64/int64、PCA256及CPU小solver保持，不接IMU/GNSS/外部預測，不用未來幀／回修。`track3_clean/` 未改。
+- `track03_test_2610240052` 完整200：registration中位1473.079→574.460ms(2.56倍)，總338.131→148.823s(2.27倍)，map182/200、pair198/199、lost0；805 fits的checks/accepted/reasons及每層迭代/support/stop相同，pose元素最大差1.14e-13、scale5.86e-14。5/200 TXT/CSV逐byte前綴及141個staged source SHA一致。Torch peak allocated/reserved約.955/1.643GiB，預算仍4GiB、只限Torch非driver全部；早期並行因cuBLAS逐thread/stream工作區在idx127 OOM，已改固定stream並重驗3次tile切換。證據聚合 `outputs/run/track03_test_2610232356/`，方法/命令仍唯一[51](doc/51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)/[50](doc/50_COMMAND_REFERENCE.md)。
+- 使用者明確授權SIGINT中斷舊full2327以騰GPU，原run保留2025幀、721map、最後map idx862、lost1107，KeyboardInterrupt明記；不是完整成功或OOM。此次只有速度優化，未修好v2後段失鎖、沒有新分數，不把200相同裁決當精度。完整定位／提交仍使用者手動，不新增資格門檻。
+
+## 2026-10-23 結構均衡／重捕獲 v2與200幀（最新）
+
+- 使用者明確授權修正及200幀、要求繼續。現行`run_track3_map_only.py` method=`track3_forward_gpu_structural_ndt_icp_reacquisition_v2`，同CLI不能重現1912 v1。只用前鏡頭／map XYZ，不讀IMU/GNSS/外部預測、不回改舊pose。Map每幀NDT+ICP三scale seed，training-only source法向方向與空間塊取樣均衡，權重在同幀固定；拒絕後用原8m/30°域重捕獲，一般仍2m/8°。Map gate比較上次map anchor與同段elapsed，pair原rate與幾何/視線/共識門檻保留。
+- `track03_test_2610232248`200完整：map182/200、pair198/199、lost0、最長無map.107871264s，19次重捕獲14次取回支持，總338.131s、後續配準中位1.473s；40機制/I/O通過、CPU/CUDA權重/fit配對及5/200逐byte前綴、131 source SHA一致，聚合`track03_test_2610232000/`。有限段不等於full精度，沒有新正式分數；full仍由使用者手動，不新增門檻。
+- `--vram-budget-gib 4`預設只限制Torch allocator，不涵蓋driver/NVRTC/cuSOLVER全部VRAM；PCA每批256、無CUDA失敗CPU fallback，失敗/中斷記錄及stage/state彙總已補。200 Torch peak allocated/reserved約.86/1.41GiB，固定輸出保持。
+- 學長`Others_track3_T3g.csv`使用者回報1.02、3142筆，外部預測非真值，不作校準/solver輸入；前200幀XY差異RMS舊77.96版37.145m、1912 3.271m、v2 1.272m，不是ATE或分數。證據`track03_test_2610232251/`；算法/限制仍唯一[51](doc/51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)、手動命令[50](doc/50_COMMAND_REFERENCE.md)。
+
+## 2026-10-23 前鏡頭失效根因診斷（最新）
+
+- 使用者要求先只用前鏡頭、重查失敗原因，IMU暫緩。手動full1912僅1040/3142幀，map98/942、末map125、首lost181、lost859、最長無map32.893173258s；returncode1且validation_errors空，結束原因未知，不推定OOM／使用者中斷。原run不改、無正式分數，不推薦原樣重跑。
+- 研究`outputs/run/track03_test_2610231928/`完成22次獨立當前幀GPU配準、10對RGB輔助檢查，6個原樣控制pose/scale逐值重現、129個source SHA與full快照一致、原run直接檔案SHA不變，未產生新軌跡／full。idx126兩map解雖低殘差，同source全點差median1.249m；近水平共同平面點沿面差1.069m、法向僅0.0113m。rank7/heldout/accepted不能排除沿面多解。
+- 一般map只有ICP(`use_ndt=False`)，NDT僅bootstrap/pair；兩seed只剩一個supported也會共識拒絕。失鎖後仍用2m/8°與單幀motion gate，lost不觸發重捕獲，pair高採用率不代表全局支持。原8m/30°初始化域獨立診斷130/150一致、140仍歧義；未改生產gate或宣稱恢復／真值。8對足夠留出RGB未支持突然大尺度跳變，非尺度標定。
+- 架構／原因唯一[51](doc/51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)，詳細證據在研究run README。map.pcd仍在且本輪只讀；raw_ply是相機來源，bag沒有PointCloud topic。下一版先修可辨識幾何、map粗細配準與追蹤/失鎖/重捕獲狀態，full仍使用者手動，不新增資格門檻。
+
+## 2026-10-23 前向 map-only 新runner（最新接續）
+
+- 入口 `scripts/run_track3_map_only.py`／核心 `track3_map_only.py`，method=`track3_forward_gpu_ndt_icp_adjacent_cloud_visibility_v1`。GPU相鄰PLY六自由度NDT/ICP給初值，再當前map Sim3 ICP＋視線深度／held-out／局部尺度重啟與運動檢查，不讀IMU/GNSS/舊pose、無RTS/graph/回修。初始化ground seed排除held-out；尺度從當前training求得，首幀約6.3986非校準常數。共享CUDA module、float64/int64、deterministic Torch及每批256的eigh，固定輸出格式不變；成功full才自動在該run產analysis。
+- 32項CPU/CUDA/I/O檢查通過（`outputs/run/track03_test_2610231802/final_verified_32_tests.log`）。有限100幀 `track03_test_2610231848` 完整、map74/100、pair98/99、lost0、最長無map .145396566s，idx66切tile，總179.218s、Torch peak allocated/reserved約 .89/1.42GB。5/32/100 TXT/CSV前綴逐byte一致；最後共識防護唯讀核對100裁決不變，最新5幀來源驗證另存1856。沒有自動full、提交或新分數，這些只驗機制／因果I/O，不保證精度或全段穩定。
+- full乾跑3142通過，手動新full命令見[50](doc/50_COMMAND_REFERENCE.md)，詳解唯一[51](doc/51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)。先處理map可靠性再IMU；正式精度未知，不增加full資格門檻，full／外部提交仍由使用者啟動。下段獨立幀8/8拒絕是前期實驗，不能當成新前向runner的結果。
+
+## 2026-10-23 Track3 map-only 配準重建，IMU 暫緩（最新）
+
+- 舊核心full1748使用者回報77.96，3142幀全accepted仍不代表追蹤精度；原run保留、不推薦原樣重跑。新入口 `scripts/test_track3_map_registration.py`／核心 `track3_registration.py` 只做獨立當前幀研究，不讀IMU／bag／舊pose，不產生軌跡或提交。GPU P2D NDT surrogate＋robust point-to-point ICP，非PCL原likelihood；保留float64／int64及256批eigh，CPU只留I/O、小solver與邊界。
+- 21項CPU/CUDA機制檢查通過（`outputs/run/track03_test_2610231802/final_mechanism_tests.log`）。最終 `track03_test_2610231818`：5組map-derived變換×2算法、真實8幀×6初值共48候選；8個multi-start全部拒絕。首幀尺度2.71355／6.39973皆能局部通過，必須歧義拒絕，尚未達可用map精度，不因低殘差／rank／accepted宣稱準確。單一實際CPU/CUDA配對數值及checks一致，4.883／1.330s只該例，非full速度。研究圖在該run，只是配準機制診斷，不是full標準軌跡分析。
+- 先釐清獨立尺度／非共面幾何及初始化支持，再處理IMU。架構／推導仍唯一[51](doc/51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)，[50](doc/50_COMMAND_REFERENCE.md)為研究重現命令，沒有新full定位入口或分數。完整定位／提交仍使用者手動；不自動重跑舊失敗full、不改歷史CSV。
+
+## 2026-10-23 Track3 舊已評分核心對照（最新）
+
+- 依使用者要求新增 `scripts/run_track3_old_icp.py`，直接呼叫 `workspace/src/track3_old_icp` 凍結四檔及相同舊CUDA最近鄰library；原碼SHA對照10/19已評分Track1來源，不重寫ICP。去GNSS/RTS/graph/newSim3/Kalman，prior=上一輸出XYZ/RP＋過去gyro；固定scale3及舊PCL/四自由度/directional/regularizer/接受條件。regularizer現在是motion prior，不是假GNSS。首次ground初始化只對首PLY下平面與map+Z作近似，支持official控制，不是物理標定。
+- 11項CPU/CUDA合成串接通過（`outputs/run/track00_test_2610231633`），含無重疊拒絕、CPU/GPU對照及3/5byte前綴；沒有真實舊核心對照定位/新分數。run內隔離編譯，不重建installedbinary或改CPU。定位全部仍使用者手動，禁止與現有full並行爭GPU。
+- v2 full1608_0002已完成3142幀，map52/lost2357，63.0847s最長無支持；全程103幀出現未收斂候選遮住其他收斂候選，已唯讀記錄，不能當已修復。原51～53整併到唯一[51](doc/51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)，舊原件/SHA在 `outputs/run/track03_test_2610231612/original_documents/`。本輪命令見[50](doc/50_COMMAND_REFERENCE.md)；下段未實際v2定位為歷史狀態。
+
 ## 2026-10-23 Track3 初始化 v2（最新）
 
-- 同入口 `scripts/run_track3_causal.py` 已改為 `track3_causal_vertical_imu_kalman_sim3_v2`；[53](doc/53_TRACK3_INITIALIZATION_REPAIR_20261023.md) 記錄靜態地面差18.54–18.89°超舊15°、候選尺度改變有效法向及v2修正。尺度9僅靜態比較，非校準／推薦值；CLI仍從未校準3啟動。初始化training地面seed／24°工程域、每候選metric PCA、完整metadata cache identities、首次anchor與後續運動gate分開、固定source覆蓋代價、實際步長／cost收斂及bounds檢查已實作，後續運動gate保留。0筆map更新不再宣告定位成功。
+- 同入口 `scripts/run_track3_causal.py` 已改為 `track3_causal_vertical_imu_kalman_sim3_v2`；[51](doc/51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md) 記錄靜態地面差18.54–18.89°超舊15°、候選尺度改變有效法向及v2修正。尺度9僅靜態比較，非校準／推薦值；CLI仍從未校準3啟動。初始化training地面seed／24°工程域、每候選metric PCA、完整metadata cache identities、首次anchor與後續運動gate分開、固定source覆蓋代價、實際步長／cost收斂及bounds檢查已實作，後續運動gate保留。0筆map更新不再宣告定位成功。
 - 59項不同合成CPU/CUDA/runner檢查與3142幀full乾跑通過，合成3/5幀前綴一致；證據 `outputs/run/track03_test_2610231550/`、`track00_test_2610231601/`。尚無真實v2定位或新分數；<1.29為使用者目標，不是保證。由使用者手動啟動下一個full，不把短段當資格門檻。原v1的82.17與來源快照保留，相同CLI現在不會重現舊v1。
 
 ## 2026-10-23 Track3 前向 Kalman／尺度分支接續
 
-- 新入口 `scripts/run_track3_causal.py` 實作 IMU 前向 Kalman、因果運動預測／配準拒絕與受約束逐幀尺度；模型及現況見 [52](doc/52_TRACK3_CAUSAL_KALMAN_SCALE_20261023.md)／[50](doc/50_COMMAND_REFERENCE.md)。39 項合成機制／CUDA／I/O 及真實輸入 CPU audit 通過，但使用者後續 full `track03_full_2610231521` 回報 **82.17**：3142 筆完整，最終 map 採用 0 筆，速度為零、XYZ 固定初值、尺度始終約 3，屬啟動／平移追蹤失敗，不推薦原樣重跑。唯讀證據在 `outputs/run/track03_test_2610231541/diagnosis.json`；分數記來源 `test_info.json`，未驗上傳 bytes。舊 legacy 106.72 保留歷史。
+- 新入口 `scripts/run_track3_causal.py` 實作 IMU 前向 Kalman、因果運動預測／配準拒絕與受約束逐幀尺度；模型及現況見 [51](doc/51_TRACK3_ARCHITECTURE_AND_DEVELOPMENT_20261023.md)／[50](doc/50_COMMAND_REFERENCE.md)。39 項合成機制／CUDA／I/O 及真實輸入 CPU audit 通過，但使用者後續 full `track03_full_2610231521` 回報 **82.17**：3142 筆完整，最終 map 採用 0 筆，速度為零、XYZ 固定初值、尺度始終約 3，屬啟動／平移追蹤失敗，不推薦原樣重跑。唯讀證據在 `outputs/run/track03_test_2610231541/diagnosis.json`；分數記來源 `test_info.json`，未驗上傳 bytes。舊 legacy 106.72 保留歷史。
 - 本機沒有已確認的相機→IMU 外參；初始化保留 `T_map_source` 慣例，gyro 用 orientation 世界 +Z 投影並假設平行 map +Z，屬平面近似。不得宣稱已完成物理座標標定或正式提交認證。噪聲／安全域是待驗工程假設，並非實測 covariance。
 - GPU 沿用 kNN／PCA／配對及每批 256 個 `eigh`；CPU 保留 I/O、小 solver／Kalman 與精確邊界裁決。map 準備與暖機另計，固定輸出格式保持。完整與短段定位仍全由使用者手動執行，不因程式完成而自動啟動。
 - 使用者最新確認只有 full 提交能得正式分數；短段只查機制與故障，不設額外 full 資格門檻。配準由程式自動估 `R,s,t`，不要求使用者手動對齊每幀或量逐幀真值；scale 3 是影像重建 PLY XYZ 的未校準啟動倍率。原始資料／CSV／矩陣／validation／manifest 保留，禁止依排行榜反推尺度或離線修軌跡。

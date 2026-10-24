@@ -10,10 +10,27 @@ from scipy.spatial.transform import Rotation
 from causal_track3_filter import proper_pose
 
 
+def legacy_float_pose(pose):
+    """Check the historical float matrix without projecting/changing its bytes.
+
+    Chaining float rotations can exceed the new float64 filter's 1e-6 test.
+    Match the bridge's 1e-3 numerical check; this is not a registration gate.
+    """
+    value = np.asarray(pose, float)
+    if (value.shape != (4, 4) or not np.isfinite(value).all()
+            or not np.allclose(value[3], [0.,0.,0.,1.], atol=1e-6, rtol=0)):
+        raise ValueError('Invalid historical pose shape/finite/bottom row')
+    rotation = value[:3,:3]
+    if (np.linalg.norm(rotation.T @ rotation-np.eye(3)) > 1e-3
+            or abs(np.linalg.det(rotation)-1.) > 1e-3):
+        raise ValueError('Invalid historical float rotation')
+    return value.copy()
+
+
 class CarryGyro:
     """Previous output position + past vertical gyro; no Kalman map update."""
     def __init__(self, pose, timestamp_ns):
-        self.pose = proper_pose(pose)
+        self.pose = legacy_float_pose(pose)
         self.ns = int(timestamp_ns)
         self.held = None
 
@@ -94,7 +111,7 @@ def parse_result(line):
     numbers = np.array([float(v) for v in fields[2:5]+fields[6:]], float)
     if not np.isfinite(numbers).all() or (numbers[:3] < 0).any():
         raise ValueError('Nonfinite/negative old-core result')
-    pose = proper_pose(np.array(list(map(float, fields[15:31]))).reshape(4, 4))
+    pose = legacy_float_pose(np.array(list(map(float, fields[15:31]))).reshape(4, 4))
     return {'accepted': fields[1] == '1', 'load_ms': float(fields[2]),
             'registration_ms': float(fields[3]), 'total_ms': float(fields[4]),
             'reasons': [] if fields[1] == '1' else [fields[5]], 'update_status': fields[5],
@@ -131,7 +148,9 @@ def build_bridge(root, run, container):
 def active_localizations():
     import os
     names = {'run_track3_causal.py', 'run_track3_old_icp.py', 'run_map_smoother.py',
-             'run_map_smoother_gpu.py', 'benchmark.py'}
+             'run_map_smoother_gpu.py', 'benchmark.py', 'run_track3_map_only.py',
+             'run_track3_map_only_fast.py', 'benchmark_track3_fast.py', 'run_track3_clean.py',
+             'test_track3_map_registration.py', 'track3_visibility.py'}
     found = []
     for item in Path('/proc').iterdir():
         if not item.name.isdigit() or int(item.name) == os.getpid():
@@ -140,6 +159,8 @@ def active_localizations():
             args = (item/'cmdline').read_bytes().decode().strip('\0').split('\0')
         except (OSError, UnicodeDecodeError):
             continue
-        if args and ('python' in Path(args[0]).name) and any(Path(arg).name in names for arg in args[1:]):
+        python_runner = args and ('python' in Path(args[0]).name) and any(Path(arg).name in names for arg in args[1:])
+        native_runner = args and Path(args[0]).name in ('localization', 'old_icp_bridge')
+        if python_runner or native_runner:
             found.append(int(item.name))
     return found

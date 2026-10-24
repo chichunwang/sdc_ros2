@@ -1,0 +1,69 @@
+{
+  "purpose": "Preserve known numerical primitives while rebuilding data contracts, candidate decisions, local-frame Sim3 prediction, state machine and runtime. No old runner or tracker imports.",
+  "extractions": [
+    {
+      "source": "scripts/track3_registration.py",
+      "sha256": "e08169f2d699eb74ed547b9d59e189a070f4802eaaf06d74d31d52c62b42e750",
+      "symbols": [
+        "RegistrationConfig"
+      ]
+    },
+    {
+      "source": "scripts/track3_registration.py",
+      "sha256": "e08169f2d699eb74ed547b9d59e189a070f4802eaaf06d74d31d52c62b42e750",
+      "symbols": [
+        "xyz",
+        "checked_pose",
+        "block_validation",
+        "source_weights",
+        "Geometry",
+        "voxel_statistics",
+        "target_planes",
+        "point_jacobian"
+      ]
+    },
+    {
+      "source": "scripts/cuda_scale_geometry.py",
+      "sha256": "e1db9c93bef082add0aa4bdcbc5c850b91f46c12eab76c82a8ed144beed68008",
+      "symbols": [
+        "CudaKernels",
+        "CudaGrid",
+        "_normal_eigh"
+      ]
+    },
+    {
+      "source": "scripts/track3_registration.py",
+      "sha256": "e08169f2d699eb74ed547b9d59e189a070f4802eaaf06d74d31d52c62b42e750",
+      "symbols": [
+        "MapRegistrar"
+      ]
+    },
+    {
+      "source": "scripts/track3_visibility.py",
+      "sha256": "342eb08bcbfb85021f1f4106a5c815f1fbb82eed11dc5856fab6abd02e525eb7",
+      "symbols": [
+        "projective_pairs",
+        "ray_depth_diagnostic"
+      ]
+    },
+    {
+      "source": "scripts/track3_structural_weights.py",
+      "sha256": "f7bc5643a204d2c3c276d2a8020cc7f4a74ea1c498bd57b2767da82abba65410",
+      "symbols": [
+        "structural_weights"
+      ]
+    },
+    {
+      "source": "scripts/old_icp_runtime.py",
+      "sha256": "b603db152e9251ab921e2a60ce1eaebd428cdcf8c1e693181c1140542ff23446",
+      "symbols": [
+        "initial_ground_tilt"
+      ]
+    },
+    {
+      "source": "scripts/causal_map_cache.py",
+      "sha256": "6ffdbeed9ba940bdd6048ac0eb968775f8c444c1eb294b2159266d8387360bdb",
+      "symbols": "complete isolated XYZ cache parser, same GPU root depth"
+    }
+  ]
+}

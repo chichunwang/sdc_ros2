@@ -15,13 +15,17 @@ from scipy.spatial.transform import Rotation
 
 from causal_track3_filter import ImuCursor, read_initial_pose, proper_pose
 from old_icp_runtime import (CarryGyro, active_localizations, build_bridge,
-                             initial_ground_tilt, parse_result)
+                             initial_ground_tilt, legacy_float_pose, parse_result)
 from run_track3_causal import (ROOT, TIMING_HEADER, coordinate_audit, digest,
     export_imu, select_frames, validate_saved, verify_container, verify_front_timestamps, write_json)
 
 METHOD = 'track3_frozen_261019_four_dof_icp_no_gnss_v1'
 BACKEND = 'historical_cpp_cuda_robust_icp'
 CORE = ROOT/'workspace/src/track3_old_icp'
+
+
+def input_inside(relative):
+    return '/root/data/'+relative
 
 
 def arguments(argv=None):
@@ -48,6 +52,8 @@ def snapshot_sources(run):
              'old_icp_bridge.cpp', 'run_track3_causal.py', 'causal_track3_filter.py',
              'export_track3_imu.py', 'three_camera_calibration.py', 'run_analysis.py', 'plot_run_analysis.py')]
     paths += [p for p in CORE.rglob('*') if p.is_file()]
+    provenance = json.loads((CORE/'provenance.json').read_text())
+    paths += [ROOT/name for name in provenance['nearest_neighbor_sources_sha256']]
     hashes = {}
     for source in paths:
         relative = source.relative_to(ROOT)
@@ -57,10 +63,12 @@ def snapshot_sources(run):
         target.write_bytes(content)
         hashes[str(relative)] = hashlib.sha256(content).hexdigest()
     write_json(run/'pipeline_source_sha256.json', hashes)
-    provenance = json.loads((CORE/'provenance.json').read_text())
     for name, expected in provenance['source_sha256'].items():
         if digest(CORE/name) != expected:
             raise ValueError('Frozen historical core modified: '+name)
+    for name, expected in provenance['nearest_neighbor_sources_sha256'].items():
+        if digest(ROOT/name) != expected:
+            raise ValueError('Historical nearest-neighbor source changed: '+name)
     return hashes
 
 
@@ -86,6 +94,7 @@ def main(argv=None):
         'cuda_components': ['unchanged historical nearest-neighbor kernel'], 'cuda_fallback': False,
         'imu_extrinsic_status': 'unknown; gravity-vertical planar approximation',
         'replay_supported': False, 'timings_header': TIMING_HEADER,
+        'rotation_serialization_tolerance': 'legacy float numerical SO(3) check 1e-3; no matrix projection or registration-gate change',
         'accuracy': 'not evaluated; historical Track1/2 scores do not transfer to Track3'}
     if args.dry_run:
         print(json.dumps(plan, ensure_ascii=False, indent=2))
@@ -140,12 +149,14 @@ def main(argv=None):
         build = time.perf_counter()
         binary = build_bridge(ROOT, run, args.container)
         summary['build_seconds'] = time.perf_counter()-build
-        write_json(run/'binary_sha256.json', {'old_icp_bridge': digest(binary),
-            'kernel_library': subprocess.check_output(['docker', 'exec', args.container, 'sha256sum',
-                '/root/midterm/install/cuda_ndt_backend/lib/libcuda_ndt_backend.so'], text=True).split()[0]})
+        library_digest = subprocess.check_output(['docker', 'exec', args.container, 'sha256sum',
+            '/root/midterm/install/cuda_ndt_backend/lib/libcuda_ndt_backend.so'], text=True).split()[0]
+        if library_digest != provenance['kernel_library_sha256']:
+            raise ValueError('CUDA library differs from the historical scored core library')
+        write_json(run/'binary_sha256.json', {'old_icp_bridge': digest(binary), 'kernel_library': library_digest})
         binary_inside = '/root/outputs/'+str(binary.relative_to(ROOT/'outputs'))
         command = ['docker', 'exec', '-i', args.container, binary_inside,
-            '--map', '/root/data/Track3/map.pcd', '--scale', str(args.ply_scale), '--geometry', args.geometry_mode]
+            '--map', input_inside('Track3/map.pcd'), '--scale', str(args.ply_scale), '--geometry', args.geometry_mode]
         write_json(run/'bridge_command.json', command)
         with (run/'bridge.log').open('x') as log:
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log,
@@ -170,14 +181,14 @@ def main(argv=None):
                 for i, (original, ns, path) in enumerate(selected):
                     summary['failed_original_idx'] = original
                     prior, imu_report = predictor.predict_to(ns, cursor)
-                    file_inside = '/root/data/Track3/raw_ply/'+path.name
+                    file_inside = input_inside('Track3/raw_ply/'+path.name)
                     request = 'FRAME '+json.dumps(file_inside)+' '+' '.join(format(x, '.17g') for x in prior.ravel())+'\n'
                     process.stdin.write(request); process.stdin.flush()
                     report = parse_result(process.stdout.readline())
                     pose = np.asarray(report['pose'], float)
                     # The historical float matrices are retained; no projection,
                     # Kalman correction, motion gate or trajectory rewrite.
-                    predictor.pose = proper_pose(pose)
+                    predictor.pose = legacy_float_pose(pose)
                     accepted = report['accepted']
                     if accepted:
                         last_accepted_ns = ns
@@ -210,6 +221,13 @@ def main(argv=None):
                 raise RuntimeError('Historical bridge failed; see bridge.log')
         print('Graph: executed=false, applied=false, time=0.00 ms', flush=True)
         errors = validate_saved(run, len(selected), np)
+        # All count/header/causal/timing/CSV checks stay shared. The historical
+        # core emits float matrices, so check rotations at its own numerical
+        # precision rather than the float64 filter's serialization tolerance.
+        saved = np.loadtxt(run/'result.txt', ndmin=2).reshape(-1,3,4)
+        for matrix in saved:
+            legacy_float_pose(np.vstack([matrix,[0.,0.,0.,1.]]))
+        errors = [error for error in errors if error != 'improper rotations']
         for relative, expected in hashes.items():
             if digest(ROOT/relative) != expected:
                 errors.append('Program changed: '+relative)
@@ -234,7 +252,10 @@ def main(argv=None):
     finally:
         if process is not None and process.poll() is None:
             if process.stdin and not process.stdin.closed:
-                process.stdin.close()
+                try:
+                    process.stdin.close()
+                except BrokenPipeError:
+                    pass
             process.wait()
         summary['pipeline_elapsed_seconds'] = time.perf_counter()-started
         write_json(run/'validation.json', summary)
