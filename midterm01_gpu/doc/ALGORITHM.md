@@ -1,6 +1,6 @@
 # Track3：v4_perf_v1 CUDA 點雲配準與因果 visual prior
 
-> 目前 v5 版本為 `track3_cuda_v5_clock_body_velocity_map_scale`。時鐘、速度座標、移動／靜止尺度政策及 frame 0 起始測試見 [55｜v5 相機時間與初段修正](55_V5_STARTUP_CLOCK_FIX_20261025.md)；IMU dynamics 與外參見 [52｜v5 IMU ESKF](52_V5_IMU_EKF_20261025.md)。下文保留 v4 基礎配準與性能模型；其中 visual prior、直接 commit 和不讀 bag 的敘述適用 v4／舊 predictor，v5 使用 IMU prediction 與 Kalman update。
+> 目前版本為 `track3_cuda_v7_multihypothesis_startup`。v7 在尚未建立 map anchor 時，完整精修全部既有 grounded 候選，再以固定非地面樣本的共同 cost 和品質閘門選擇，見 [59｜v7 首幀多候選配準](59_V7_STARTUP_HYPOTHESES_20261025.md)；沿用的 yaw robust fusion 見 [58](58_CAUSAL_YAW_AND_FUSION_TUNING_20261025.md)。時鐘、速度座標、移動／靜止尺度政策見 [55](55_V5_STARTUP_CLOCK_FIX_20261025.md)，IMU dynamics 與外參見 [52](52_V5_IMU_EKF_20261025.md)。下文保留 v4 基礎配準與性能模型；其中 visual prior、直接 commit 和不讀 bag 的敘述適用 v4／舊 predictor，v5 起使用 IMU prediction 與 Kalman update。
 
 此份算法說明對應版本 `track3_cuda_v4_perf_v1`，保留 `track3_cuda_v4_denoise_geometry_visual_prior` 的估計模型，並加入已通過 GPU 合成等價性測試的計算最佳化與 pool 監測。輸入是官方前視相機已重建 PLY；以每幀估計的正尺度 `s` 和 map pose `T=[R,t]` 將相機點轉到 LiDAR map：
 

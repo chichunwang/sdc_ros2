@@ -64,6 +64,26 @@ class GroundInitializer:
     def __init__(self,map_points,cfg):
         self.map=cp.asarray(map_points,dtype=cp.float64);self.cfg=cfg;self.center=None;self.models={}
 
+    def score_pose(self,T,scale):
+        """Compare refined seeds on ONE fixed non-ground sample and objective.
+
+        This score has no seed-dependent scale prior. Unmatched features keep
+        the truncation penalty instead of disappearing from the denominator.
+        All correspondences and weighted reductions stay on CUDA.
+        """
+        stage=self.cfg['stages'][-1]
+        radius,robust=stage['radius_m'],stage['robust_m']
+        q=self.feature_source@cp.asarray(T[:3,:3]).T*scale+cp.asarray(T[:3,3])
+        q=(q-cp.asarray(self.feature_origin))@cp.asarray(self.feature_basis)
+        ids,d2=self.feature_nn.query(q,radius)
+        w=self.feature_weight;valid=ids>=0
+        cost=float(cp.sum(w*robust**2*cp.log1p(d2/robust**2))/w.sum())
+        coverage=float(cp.sum(w*valid)/w.sum())
+        return dict(cost=cost,coverage=coverage,source_features=len(q),
+                    radius_m=float(radius),robust_m=float(robust),
+                    unmatched_policy='radius_squared_penalty_fixed_denominator',
+                    median_capped_distance_m=float(cp.median(cp.sqrt(d2))))
+
     def align(self,source,T_initial,initial_scale):
         started=time.perf_counter()
         cfg=self.cfg;given=T_initial.copy();self.center=given[:3,3].copy()
@@ -89,6 +109,11 @@ class GroundInitializer:
         _,inv,counts=cp.unique(bins,axis=0,return_inverse=True,return_counts=True)
         weight=1/cp.sqrt(counts[inv]);weight/=weight.mean()
         nn=GpuNearest(target)
+        # Keep the same raw source features, target and angular weights for
+        # every final SE(3)/Sim(3) hypothesis, regardless of its refined scale.
+        self.feature_source=(sample-cp.array([0.,0.,ds]))@cp.asarray(Bs).T
+        self.feature_weight=weight;self.feature_nn=nn
+        self.feature_origin=origin;self.feature_basis=Bm
         height=float(nm@given[:3,3]+dm)
         scale_height=height/ds if height>0 else 3.
         scales=[float(initial_scale),float(np.clip(scale_height,*cfg['scale_bounds']))]

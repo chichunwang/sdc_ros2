@@ -5,6 +5,7 @@ selection both use Euclidean distance. Surface normals only test observability.
 Point work stays on CUDA; the 7x7 pose/scale solve stays on the host.
 """
 import itertools
+import time
 import numpy as np
 import cupy as cp
 from .geometry import valid_pose
@@ -166,21 +167,70 @@ class Registration:
                         converged=False, observable=False, coverage=0., stages=[])
         if initialize and cfg.get('initializer',{}).get('enabled',False):
             from .initialization import GroundInitializer,GroundInitializationError
+            initializer=GroundInitializer(self.map,cfg['initializer'])
             try:
-                seed=GroundInitializer(self.map,cfg['initializer']).align(p,T,scale)
+                seed=initializer.align(p,T,scale)
             except GroundInitializationError as error:
                 return dict(accepted=False,reason='initialization_support_failed',T=T,scale=scale,
                             preprocessing=preprocessing,initialization=dict(failure=str(error)),stages=[])
-            initialization={k:v for k,v in seed.items() if k not in ('T','scale')}
-            initialization.update(T=seed['T'].tolist(),scale=seed['scale'])
-            T=seed['T'];scale=seed['scale']
             monitor=getattr(self,'memory_monitor',None)
             if monitor is not None:monitor.checkpoint('initializer_ready',trim=True)
+            # A small grounded-seed cost advantage must not discard another
+            # basin before full refinement. In particular, a seed that did
+            # not converge in 4DOF can still be a useful 7DOF starting point.
+            refined=[];records=[]
+            for index,candidate in enumerate(seed['candidates']):
+                tick=time.perf_counter()
+                result=self._align_seed(p,np.array(candidate['T']),candidate['scale'],True,fixed_scale,
+                                        submap_center=prior[:3,3])
+                feature_score=initializer.score_pose(result['T'],result['scale'])
+                offset=initializer.feature_basis.T@(result['T'][:3,3]-prior[:3,3])
+                within_bound=bool(np.linalg.norm(offset[:2])<=cfg['initializer']['max_translation_m'])
+                eligible=bool(result['accepted'] and within_bound and
+                              feature_score['coverage']>=cfg['initializer']['min_coverage'])
+                records.append(dict(candidate_index=index,T=result['T'].tolist(),scale=result['scale'],
+                                    registration_accepted=result['accepted'],registration_reason=result['reason'],
+                                    converged=result.get('converged',False),observable=result.get('observable',False),
+                                    coverage=result.get('coverage',0.),feature_score=feature_score,
+                                    within_translation_bound=within_bound,eligible=eligible,
+                                    elapsed_seconds=time.perf_counter()-tick,
+                                    stages=result.get('stages',[])))
+                refined.append(result)
+                print(f"startup refinement {index+1}/{len(seed['candidates'])}: "
+                      f"feature_cost={feature_score['cost']:.6f} coverage={feature_score['coverage']:.3f} "
+                      f"eligible={eligible} reason={result['reason']}",flush=True)
+            eligible=[i for i,r in enumerate(records) if r['eligible']]
+            # Failed hypotheses remain recorded, but cannot win over any
+            # hypothesis that passed both registration and feature support.
+            selected=min(eligible or range(len(records)),key=lambda i:records[i]['feature_score']['cost'])
+            result=refined[selected]
+            if not eligible:
+                result=dict(result,accepted=False,reason='startup_no_valid_candidate')
+            initialization={k:v for k,v in seed.items() if k not in ('T','scale')}
+            initialization.update(T=seed['candidates'][selected]['T'],scale=seed['candidates'][selected]['scale'],
+                                  accepted=bool(eligible),reason='refined_geometric_candidate' if eligible else 'unresolved_registration',
+                                  refinements=records,selection=dict(
+                                      method='gated_common_non_ground_cauchy_score',
+                                      selected_candidate_index=selected,eligible_count=len(eligible),
+                                      evaluated_count=len(records),future_frames_used=False,
+                                      seed_scale_prior_in_selection=False))
+            result.update(preprocessing=preprocessing,initialization=initialization)
+            return result
+        result=self._align_seed(p,T,scale,initialize,fixed_scale)
+        result.update(preprocessing=preprocessing,initialization=initialization)
+        return result
+
+    def _align_seed(self,p,T,scale,initialize,fixed_scale,submap_center=None):
+        """Refine one hypothesis; startup candidates use identical quality gates."""
+        cfg=self.cfg;T=T.copy();scale=float(scale)
         scale_reference=scale
         # Use a causal prior to select map region. No trajectory-derived crop.
-        if self.center is None or np.max(np.abs(T[:3,3]-self.center)) > cfg['submap_rebuild_distance_m']:
+        # Every startup hypothesis uses the same crop around the original
+        # prior; candidate order must not change the map available to it.
+        center=T[:3,3] if submap_center is None else submap_center
+        if self.center is None or np.max(np.abs(center-self.center)) > cfg['submap_rebuild_distance_m']:
             half = cfg['submap_half_extent_m']
-            local = self.map[cp.all(cp.abs(self.map-cp.asarray(T[:3, 3])) < cp.asarray(half), axis=1)]
+            local = self.map[cp.all(cp.abs(self.map-cp.asarray(center)) < cp.asarray(half), axis=1)]
             if len(local) < 100: return dict(accepted=False, reason='empty_submap', T=T, scale=scale)
             # Build transactionally: a failed rebuild must not leave a mixed cache.
             try:
@@ -191,7 +241,7 @@ class Registration:
                             converged=False, observable=False, coverage=0., T=T, scale=scale,
                             model_diagnostics=error.diagnostics, stages=[])
             self.models = models
-            self.center = T[:3,3].copy()
+            self.center = center.copy()
             monitor=getattr(self,'memory_monitor',None)
             if monitor is not None:monitor.checkpoint('submap_ready',trim=True)
         converged = False; coverage = 0.; score = np.inf; Hfinal = None
@@ -277,7 +327,6 @@ class Registration:
                   'degenerate_geometry' if not observable else 'low_coverage')
         return dict(T=T, scale=scale, accepted=accepted, converged=bool(converged), reason=reason,
                     scale_optimized=not fixed_scale,
-                    preprocessing=preprocessing,initialization=initialization,
                     stages=stage_records,
                     observable=observable, normalized_min_eigenvalue=min_eigenvalue,
                     coverage=coverage, cost=float(score) if np.isfinite(score) else None, hessian=Hfinal)

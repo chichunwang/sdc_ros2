@@ -1,5 +1,5 @@
 {
-  "version": "track3_cuda_v6_causal_yaw_robust_fusion",
+  "version": "track3_cuda_v7_multihypothesis_startup",
   "data_dir": "/workspace/midterm01/data/Track3",
   "ply_subdir": "raw_ply",
   "expected_frames": 3142,

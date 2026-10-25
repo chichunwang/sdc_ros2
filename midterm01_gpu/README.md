@@ -1,8 +1,12 @@
 # Midterm01 Track3 GPU 定位
 
-目前可執行版本是 `track3_cuda_v6_causal_yaw_robust_fusion`。它在既有 ESKF 的單次量測更新內，依當前 prediction 與 map yaw 的標準化差異做 Huber 式 covariance inflation；沒有額外融合同一筆 gyro／map yaw，也不回修歷史 pose。當差異小於 3 sigma 時維持原權重。gyro 與 map 量測的信任度集中於 [track3/imu_parameters.py](track3/imu_parameters.py)，預設的 gyro noise、bias random walk、map 位置及旋轉標準差保持原物理值；操作與限制見 [doc58](doc/58_CAUSAL_YAW_AND_FUSION_TUNING_20261025.md)。
+目前可執行版本是 `track3_cuda_v7_multihypothesis_startup`。官方 `init_guess.txt` 保留作粗略搜尋起點；首個 map anchor 由本幀點雲與 LiDAR XYZ 地圖決定。v7 讓既有的每個 ground／scale／yaw 候選完整經過 NDT→ICP，再用相同非地面點、角度權重與截斷 Cauchy cost，比較通過品質檢查的結果。這處理「過早只選一個局部解」的初始化風險；不是全域最優保證，也尚無 v7 真實定位或成績證據。原因、模型、合成驗證與圖表見 [doc59](doc/59_V7_STARTUP_HYPOTHESES_20261025.md)。
 
-v6 的生成資料與 CUDA regression 測試為 **136 passed**，耗時 46.26 s，另有既有 Matplotlib Axes3D warning；紀錄見 [測試 run](outputs/run/track00_test_2610251412/pytest.xml)。本次沒有執行真實短段或 full，尚無 v6 定位精度或成績證據。下方 v4／v5 成績與診斷為歷史紀錄。
+v7 的最終生成資料與 CUDA regression suite 為 **141 passed**，耗時 **227.42 s**，另有 1 個既有 Matplotlib Axes3D warning；[測試紀錄](outputs/run/track00_test_2610251515/pytest.xml)與[圖表、數值及來源 SHA](outputs/run/track00_test_2610251515/analysis/README.md)均保留在該 run。已核對 60 個程式／設定／測試檔與受測快照 SHA 相同。本次沒有執行真實短段或 full；合成結果不代表實際首段偏移已消除。
+
+v7 沿用 v6 的 ESKF 與單次量測內 yaw Huber covariance inflation：當 prediction 與 map yaw 差異小於 3 sigma 時維持原權重。gyro、map 量測信任度及使用者的 `(1,6,0)` 度外參仍由 [track3/imu_parameters.py](track3/imu_parameters.py) 讀取；這次未調整 fusion／noise 參數。操作與限制見 [doc58](doc/58_CAUSAL_YAW_AND_FUSION_TUNING_20261025.md)。
+
+v6 的歷史生成資料與 CUDA regression 測試為 **136 passed**，耗時 46.26 s，另有既有 Matplotlib Axes3D warning；紀錄見 [測試 run](outputs/run/track00_test_2610251412/pytest.xml)。使用者之後執行的 [v6 短段](outputs/run/track03_test_2610251424/test_info.json) 已完成 1257 幀，並非 full，也沒有成績證據。下方 v4／v5 成績與診斷均為歷史紀錄。
 
 v5 IMU full 已完成 3142 幀；使用者回報成績 1.29，v4 full 回報 1.26，借來的外部 CSV 回報 0.65；分數來源記為使用者回報。唯讀逐幀對照顯示 v5 在 frame 2200–2600 的外部軌跡差異明顯小於 v4，但前 300 幀的 yaw 差異較大；外部軌跡不是 ground truth，不能據此判定真實誤差或精確解釋分數。v4／v5 也同時改變 fusion、尺度和 stationary 策略，不能把分數差歸因於 IMU 單一因素。官方 Public 僅評估長度未知的前 5–40% prefix，轉彎區約位於全序列 70–83%，因此其改善不會直接反映在這個 Public 前段分數。分析與限制見[doc56](doc/56_V5_SCORE_AND_HEADING_DIAGNOSIS_20261025.md)及唯讀比較圖表[README](outputs/run/track00_test_2610251302/analysis/README.md)；不建議原樣重跑同一 v5 版本期待分數改善。
 
