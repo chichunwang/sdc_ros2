@@ -3,6 +3,7 @@ scipy==1.13.1
 pandas==2.2.3
 matplotlib==3.9.4
 cupy-cuda12x==13.6.0
+nvidia-curand-cu12==10.3.9.90
 nvidia-cublas-cu12==12.8.4.1
 nvidia-cusolver-cu12==11.7.3.90
 nvidia-cusparse-cu12==12.5.8.93

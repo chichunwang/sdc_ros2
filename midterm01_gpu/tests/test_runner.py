@@ -11,7 +11,7 @@ from plyfile import PlyData,PlyElement
 from test_core import CFG,cloud
 
 
-@pytest.mark.parametrize('prediction',['previous_pose','imu_eskf'])
+@pytest.mark.parametrize('prediction',['previous_pose','gpu_monte_carlo'])
 def test_generated_pipeline(tmp_path,monkeypatch,prediction):
     root=tmp_path/'synthetic_data';root.mkdir();(root/'raw_ply').mkdir()
     m=cloud();stamp=1727239790258245070
@@ -26,8 +26,10 @@ def test_generated_pipeline(tmp_path,monkeypatch,prediction):
         PlyData([PlyElement.describe(v,'vertex')],text=False).write(str(root/'raw_ply'/f'{idx:06d}_ts_{stamp+idx*100000000}.ply'))
     cfg=json.loads(json.dumps(CFG));cfg['data_dir']=str(root);cfg['expected_frames']=3;cfg['map_leaf_m']=.15
     cfg['prediction']=prediction
-    if prediction=='imu_eskf':cfg['imu']['time_basis']='bag_arrival'
-    if prediction=='imu_eskf':
+    if prediction=='gpu_monte_carlo':
+        monkeypatch.setitem(sys.modules,'track3.inertial',None)
+    if prediction=='gpu_monte_carlo':cfg['imu']['time_basis']='bag_arrival'
+    if prediction=='gpu_monte_carlo':
         import sqlite3
         from sensor_msgs.msg import Imu
         from rclpy.serialization import serialize_message
@@ -51,17 +53,17 @@ def test_generated_pipeline(tmp_path,monkeypatch,prediction):
     monkeypatch.setattr(sys,'argv',[str(script),'--config',str(config),'--run-dir',str(run),'--max-frames','3'])
     assert module.main()==0
     info=json.loads((run/'test_info.json').read_text());assert info['status']=='success'
-    assert info['frame_count']==3 and info['imu_used']==(prediction=='imu_eskf') and info['map_accepted_frames']==3
-    assert (root/'Track3.db3').exists()==(prediction=='imu_eskf')
-    if prediction=='imu_eskf':
+    assert info['frame_count']==3 and info['imu_used']==(prediction=='gpu_monte_carlo') and info['map_accepted_frames']==3
+    assert (root/'Track3.db3').exists()==(prediction=='gpu_monte_carlo')
+    if prediction=='gpu_monte_carlo':
         sources=json.loads((run/'imu_sources.json').read_text())
         assert sources['sha256']==hashlib.sha256((root/'Track3.db3').read_bytes()).hexdigest()
         assert info['imu_samples_consumed']==23
         effective=json.loads((run/'parameters.json').read_text())['imu']
-        from track3.imu_parameters import resolve_imu_config, resolve_fusion_config
-        assert effective==resolve_imu_config(resolve_fusion_config(cfg['imu']))
-        assert effective['yaw_constraint']['enabled'] is True
-        assert effective['fusion_parameter_source']=='track3/imu_parameters.py'
+        from track3.imu_parameters import resolve_imu_config, resolve_motion_config
+        assert effective==resolve_imu_config(resolve_motion_config(cfg['imu']))
+        assert info['kalman_used'] is False
+        assert info['accelerometer_translation_used'] is False
         assert sources['T_ply_imu']==effective['T_ply_imu']
     trace=[json.loads(line) for line in (run/'pose_trace.jsonl').read_text().splitlines()]
     for i,row in enumerate(trace):
@@ -71,11 +73,12 @@ def test_generated_pipeline(tmp_path,monkeypatch,prediction):
             np.testing.assert_allclose(row['registered_T'],row['final_T'],rtol=0,atol=2e-15)
         assert row['proposed_scale']==row['final_scale']
         assert row['pose_decision']==('accepted_registration' if prediction=='previous_pose' else
-                                    'initialized_from_registration' if i==0 else 'kalman_measurement_update')
-        if prediction=='imu_eskf':
+                                    'initialized_from_registration' if i==0 else 'monte_carlo_refined_registration')
+        if prediction=='gpu_monte_carlo':
             assert row['inertial']['prediction']['latest_bag_timestamp_ns']<=row['timestamp_ns']
             assert row['inertial']['update']['measurement_accepted']
-            assert 'yaw_constraint' in row['inertial']['update']
+            assert row['inertial']['update']['kalman_used'] is False
+            assert row['monte_carlo']['posterior_recentered_by_refinement'] is False
     poses=np.loadtxt(run/'poses.txt');assert poses.shape==(3,12)
     rows=list(csv.DictReader((run/'result_3.csv').open()))
     assert list(rows[0])==['idx','x','y','yaw'] and [r['idx'] for r in rows]==['0','1','2']

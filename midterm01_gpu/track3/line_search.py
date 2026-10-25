@@ -3,20 +3,32 @@ import numpy as np
 from .geometry import apply_delta
 
 
+def array_module(value):
+    if hasattr(value,'__cuda_array_interface__'):
+        import cupy as cp
+        return cp
+    return np
+
+
 def step_is_small(delta):
-    return bool(np.linalg.norm(delta[:3]) < .005 and
-                np.linalg.norm(delta[3:6]) < .0005 and abs(delta[6]) < .0005)
+    xp=array_module(delta)
+    return bool(xp.linalg.norm(delta[:3]) < .005 and
+                xp.linalg.norm(delta[3:6]) < .0005 and abs(delta[6]) < .0005)
 
 
 def backtrack(evaluate, T, scale, delta, score, gradient, source_count, scale_bounds):
-    slope = float(2*np.dot(gradient,delta)/source_count)
+    xp=array_module(delta)
+    slope = float(2*xp.dot(gradient,delta)/source_count)
+    transform=apply_delta
+    if xp is not np:
+        from .cuda_math import apply_delta as transform
     trials = []
     if not np.isfinite(slope) or slope >= 0:
         return None, trials
     # A finite safeguard, not a grid search over algorithm parameters.
     for halving in range(20):
         factor = 2.**(-halving)
-        t, s = apply_delta(T,scale,delta*factor)
+        t, s = transform(T,scale,delta*factor)
         if not scale_bounds[0] < s < scale_bounds[1]:
             trials.append(dict(factor=factor,cost=None,coverage=None,reason='scale_bounds'))
             continue

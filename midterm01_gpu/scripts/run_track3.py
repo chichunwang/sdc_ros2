@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from track3.geometry import valid_pose, yaw
 from track3.io import frames, load_ply, load_map, sha256, write_json
 from track3.localization import PoseState
-from track3.imu_parameters import resolve_imu_config, resolve_fusion_config
+from track3.imu_parameters import resolve_imu_config, resolve_motion_config
 
 TIMINGS = 'idx,original_idx,timestamp_ns,backend,load_ms,registration_ms,total_ms,map_accepted,scale'.split(',')
 OUTPUT_FILES = ['poses.txt', 'result_3.csv', 'timings.csv', 'frame_manifest.csv', 'observations.jsonl', 'pose_trace.jsonl']
@@ -77,8 +77,17 @@ def main():
                          registration_total=registration_total, localization_start=tlocal,memory=memory)
     try:
         cfg=json.loads(a.config.read_text()); info['version']=cfg['version']; info['source']='official_front_camera_ply'
-        info['imu_used']=cfg['prediction']=='imu_eskf'; info['prediction']=cfg['prediction']
-        if info['imu_used']:cfg['imu']=resolve_imu_config(resolve_fusion_config(cfg['imu']))
+        if cfg['prediction']=='imu_eskf':
+            raise ValueError('v8 runner has removed the Kalman path; use the preserved v7 snapshot for ESKF')
+        info['imu_used']=cfg['prediction']=='gpu_monte_carlo'; info['prediction']=cfg['prediction']
+        if info['imu_used']:
+            if cfg['registration'].get('solver_device')!='cuda' or cfg['registration'].get('initializer',{}).get('solver_device')!='cuda':
+                raise ValueError('v8 requires CUDA registration and initializer solvers; CPU fallback disabled')
+            cfg['imu']=resolve_imu_config(resolve_motion_config(cfg['imu']))
+            from track3.monte_carlo_parameters import resolve_config
+            cfg['monte_carlo']=resolve_config()
+            info['kalman_used']=False
+            info['accelerometer_translation_used']=False
         if info['imu_used'] and cfg.get('motion_constraints',False):
             from track3.motion_parameters import PARAMETERS,VISUAL_VELOCITY_STD_MPS,STATIONARY_VELOCITY_STD_MPS,ENABLE_MOVING_VISUAL_SCALE
             cfg['motion_parameters']=dict(PARAMETERS,visual_velocity_std_mps=VISUAL_VELOCITY_STD_MPS,
@@ -101,9 +110,9 @@ def main():
         write_json(run/'input_sources.json',{str(s):sha256(s) for s in source_files})
         T=np.loadtxt(data/'init_guess.txt',delimiter=',')
         if not valid_pose(T): raise ValueError('Initial pose is not a valid rigid transform')
-        if cfg['prediction']=='imu_eskf':
+        if cfg['prediction']=='gpu_monte_carlo':
             from track3.imu import ImuReader
-            from track3.inertial import InertialState
+            from track3.monte_carlo import MonteCarloState
             icfg=cfg['imu']
             bag=data/icfg['bag_file']
             write_json(run/'imu_sources.json',dict(
@@ -112,8 +121,10 @@ def main():
                                     'bag arrival clock shared with PLY names; headers retained as evidence'),
                 extrinsic_status=icfg['extrinsic_status'],T_ply_imu=icfg['T_ply_imu'],
                 gravity_map_mps2=icfg['gravity_map_mps2'],
-                noise_source=icfg['noise_source'],orientation_used=False,gnss_used=False))
-            state=InertialState(T,cfg['initial_scale'],icfg,cfg['registration']['scale_bounds'])
+                noise_source=icfg['noise_source'],orientation_used=False,gnss_used=False,
+                accelerometer_translation_used=False,kalman_used=False,
+                motion_model='gyro_orientation; causal_visual_translation; velocity_random_walk_without_visual'))
+            state=MonteCarloState(T,cfg['initial_scale'],icfg,cfg['monte_carlo'],cfg['registration']['scale_bounds'])
             imu_reader=ImuReader(bag,icfg['topic'],icfg['frame_id'])
             if icfg.get('time_basis','bag_arrival')=='camera_header':
                 from track3.time_alignment import CameraClock,AcquisitionImuReader
@@ -189,17 +200,26 @@ def main():
                 load_ms=(time.perf_counter()-tick)*1000
                 input_scale=float(scale)
                 reg_start=time.perf_counter()
+                monte_carlo_ms=0.
+                if cfg['prediction']=='gpu_monte_carlo':
+                    mc_start=time.perf_counter()
+                    registration_prior=state.observe_cloud(points,registration)
+                    scale=state.scale
+                    sync();monte_carlo_ms=(time.perf_counter()-mc_start)*1000
+                else:registration_prior=prior
+                registration_input_scale=float(scale)
                 if motion_constraints is not None:
-                    estimate=registration.align(points,prior,scale,initialize=not state.initialized,
+                    estimate=registration.align(points,registration_prior,scale,initialize=not state.initialized,
                                                 fixed_scale=state.initialized and (stationary or ENABLE_MOVING_VISUAL_SCALE))
                 else:
-                    estimate=registration.align(points,prior,scale,initialize=not state.initialized)
+                    estimate=registration.align(points,registration_prior,scale,initialize=not state.initialized)
                 sync()
                 reg_ms=(time.perf_counter()-reg_start)*1000; registration_total+=reg_ms/1000
-                memory_record=None if memory is None else memory.checkpoint('frame_end',idx=idx,trim=True)
                 update_start=time.perf_counter()
                 decision=state.commit(estimate)
+                sync()
                 update_ms=(time.perf_counter()-update_start)*1000
+                memory_record=None if memory is None else memory.checkpoint('frame_end',idx=idx,trim=True)
                 adopted=decision['accepted']; scale=state.scale
                 if adopted:
                     accepted_count+=1; consecutive_rejections=0
@@ -223,6 +243,8 @@ def main():
                     registration_accepted=bool(estimate['accepted']), map_accepted=bool(adopted),
                     registration_reason=decision['reason'], pose_decision=decision['decision'],
                     prediction=decision['prediction'], delta=decision['delta'],inertial=decision.get('inertial'),
+                    monte_carlo=decision.get('monte_carlo'),registration_prior_T=registration_prior.tolist(),
+                    registration_input_scale=registration_input_scale,
                     motion_constraints=constraint_diagnostics
                 ), allow_nan=False)+'\n'); pose_trace.flush()
                 if visualizer is not None:
@@ -237,7 +259,7 @@ def main():
                 poses.write(' '.join(f'{v:.12g}' for v in T[:3].ravel())+'\n');poses.flush()
                 cw.writerow([idx,f'{T[0,3]:.12g}',f'{T[1,3]:.12g}',f'{yaw(T[:3,:3]):.12g}']);result.flush()
                 total_ms=(time.perf_counter()-tick)*1000
-                tw.writerow([idx,row['original_idx'],stamp,'cuda_voxel_ndt_icp',f'{load_ms:.6f}',f'{reg_ms:.6f}',f'{total_ms:.6f}',int(adopted),f'{scale:.12g}']);timing.flush()
+                tw.writerow([idx,row['original_idx'],stamp,'cuda_monte_carlo_ndt_icp' if cfg['prediction']=='gpu_monte_carlo' else 'cuda_voxel_ndt_icp',f'{load_ms:.6f}',f'{reg_ms:.6f}',f'{total_ms:.6f}',int(adopted),f'{scale:.12g}']);timing.flush()
                 mw.writerow([idx,row['original_idx'],stamp,str(row['path']),point_sha]);manifest.flush()
                 cost=estimate.get('cost')
                 cost=float(cost) if cost is not None and np.isfinite(cost) else None
@@ -250,6 +272,8 @@ def main():
                          preprocessing=estimate.get('preprocessing'),initialization=estimate.get('initialization'),
                          visual_prior=motion_diagnostics,
                          inertial=decision.get('inertial'),prediction_ms=prediction_ms,measurement_update_ms=update_ms,
+                         monte_carlo=decision.get('monte_carlo'),monte_carlo_ms=monte_carlo_ms,
+                         registration_input_scale=registration_input_scale,
                          motion_constraints=constraint_diagnostics,scale_optimized=estimate.get('scale_optimized'),
                          camera_mask=camera_mask_diagnostics,
                          model_diagnostics=estimate.get('model_diagnostics'),
@@ -278,9 +302,9 @@ def main():
             # Plot status and time live separately, preserving final localization evidence.
             plot=subprocess.run([sys.executable,str(Path(__file__).with_name('analyze_run.py')),'--run-dir',str(run)])
             if plot.returncode: print('Localization complete; plots failed, see analysis_status.json',file=sys.stderr)
-            if imu_reader is not None and not plot.returncode:
-                imu_plot=subprocess.run([sys.executable,str(Path(__file__).with_name('analyze_imu.py')),'--run-dir',str(run)])
-                if imu_plot.returncode:print('Localization complete; IMU plots failed, see imu_analysis_status.json',file=sys.stderr)
+            if cfg['prediction']=='gpu_monte_carlo' and not plot.returncode:
+                imu_plot=subprocess.run([sys.executable,str(Path(__file__).with_name('analyze_monte_carlo.py')),'--run-dir',str(run)])
+                if imu_plot.returncode:print('Localization complete; Monte Carlo plots failed, see monte_carlo_analysis_status.json',file=sys.stderr)
         print(f"Completed: {run} map updates={accepted_count}/{len(rows)}",flush=True)
         return 0
     except BaseException as error:

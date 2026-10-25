@@ -48,13 +48,14 @@ def fit_plane(points, threshold, up_only=False):
 
 
 def plane_basis(n):
-    x=np.array([1.,0.,0.]);x-=n*np.dot(n,x);x/=np.linalg.norm(x)
-    return np.column_stack([x,np.cross(n,x),n])
+    n=cp.asarray(n);x=cp.array([1.,0.,0.]);x-=n*cp.dot(n,x);x/=cp.linalg.norm(x)
+    return cp.asnumpy(cp.column_stack([x,cp.cross(n,x),n]))
 
 
 def transform4(u,x):
-    c,s=np.cos(x[2]),np.sin(x[2]);R=cp.array([[c,-s,0],[s,c,0],[0,0,1]],dtype=cp.float64)
-    v=u@R.T*cp.exp(x[3]);q=v+cp.array([x[0],x[1],0.])
+    x=cp.asarray(x);c,s=cp.cos(x[2]),cp.sin(x[2]);zero=cp.asarray(0.);one=cp.asarray(1.)
+    R=cp.stack((c,-s,zero,s,c,zero,zero,zero,one)).reshape(3,3)
+    v=u@R.T*cp.exp(x[3]);q=v+cp.stack((x[0],x[1],zero))
     J=cp.zeros((len(u),3,4),dtype=cp.float64)
     J[:,0,0]=1;J[:,1,1]=1;J[:,0,2]=-v[:,1];J[:,1,2]=v[:,0];J[:,:,3]=v
     return q,J
@@ -87,6 +88,7 @@ class GroundInitializer:
     def align(self,source,T_initial,initial_scale):
         started=time.perf_counter()
         cfg=self.cfg;given=T_initial.copy();self.center=given[:3,3].copy()
+        device=cfg.get('solver_device')=='cuda';xp=cp if device else np
         local=self.map[cp.all(cp.abs(self.map-cp.asarray(self.center))<cp.asarray(cfg['submap_half_extent_m']),axis=1)]
         near=local[cp.linalg.norm(local[:,:2]-cp.asarray(self.center[:2]),axis=1)<cfg['ground_radius_m']]
         cells=cp.floor(near[:,:2]/cfg['ground_grid_m']).astype(cp.int64)
@@ -95,7 +97,8 @@ class GroundInitializer:
         nm,dm,ms=fit_plane(near[order[starts]],cfg['map_ground_threshold_m'],True)
         ns,ds,ss=fit_plane(source,cfg['source_ground_threshold_raw'])
         if abs(ns[2])<.85 or ds<=0:raise GroundInitializationError('Source ground does not support a camera-above-ground FLU initialization')
-        Bs=plane_basis(ns);Bm=plane_basis(nm);origin=self.center-nm*(nm@self.center+dm)
+        Bs=plane_basis(ns);Bm=plane_basis(nm)
+        origin=cp.asnumpy(cp.asarray(self.center)-cp.asarray(nm)*(cp.asarray(nm)@cp.asarray(self.center)+dm))
         u=cp.asarray(source)@cp.asarray(Bs);u[:,2]+=ds
         target=(local-cp.asarray(origin))@cp.asarray(Bm)
         cutoff=max(.1,3*ms['mad']);target=target[target[:,2]>cutoff]
@@ -114,21 +117,21 @@ class GroundInitializer:
         self.feature_source=(sample-cp.array([0.,0.,ds]))@cp.asarray(Bs).T
         self.feature_weight=weight;self.feature_nn=nn
         self.feature_origin=origin;self.feature_basis=Bm
-        height=float(nm@given[:3,3]+dm)
+        height=float(cp.asarray(nm)@cp.asarray(given[:3,3])+dm)
         scale_height=height/ds if height>0 else 3.
-        scales=[float(initial_scale),float(np.clip(scale_height,*cfg['scale_bounds']))]
+        scales=[float(initial_scale),float(cp.clip(cp.asarray(scale_height),*cfg['scale_bounds']))]
         scales=list(dict.fromkeys(round(v,8) for v in scales))
-        forward=given[:3,:3]@Bs[:,0];f=Bm.T@forward;yaw0=float(np.arctan2(f[1],f[0]))
+        forward=cp.asarray(given[:3,:3])@cp.asarray(Bs[:,0]);f=cp.asarray(Bm).T@forward;yaw0=float(cp.arctan2(f[1],f[0]))
         ground=near[cp.abs(near@cp.asarray(nm)+dm)<cfg['map_ground_threshold_m']]
         ground,_=voxel_mean(ground,cfg['ground_grid_m'])
         xy=(ground-cp.asarray(origin))@cp.asarray(Bm)
-        _,V=np.linalg.eigh(cp.asnumpy(cp.cov(xy[:,:2].T)));a=V[:,-1];road=float(np.arctan2(a[1],a[0]));road+=np.pi*round((yaw0-road)/np.pi)
+        _,V=cp.linalg.eigh(cp.cov(xy[:,:2].T));a=V[:,-1];road=float(cp.arctan2(a[1],a[0])+cp.pi*cp.rint((yaw0-cp.arctan2(a[1],a[0]))/cp.pi))
         yaws=[yaw0,road] if abs(np.arctan2(np.sin(road-yaw0),np.cos(road-yaw0)))>.05 else [yaw0]
         candidates=[];best=None
         print(f'initialization features={len(sample)} map_features={len(target)} ground_height_scale_seed={scale_height:.4f}',flush=True)
         for scale_seed in scales:
             for yaw_seed in yaws:
-                x=np.array([0.,0.,yaw_seed,np.log(scale_seed)],dtype=float)
+                x=xp.asarray([0.,0.,yaw_seed,float(cp.log(cp.asarray(scale_seed)))],dtype=xp.float64)
                 stages=[];converged=False
                 for stage in cfg['stages']:
                     stage_started=time.perf_counter()
@@ -142,37 +145,41 @@ class GroundInitializer:
                         if int(valid.sum())<20:return None
                         residual=q[valid]-nn.points[ids[valid]];A=J[valid];ww=w[valid]/(1+d2[valid]/robust**2)
                         H=cp.einsum('nki,nkj,n->ij',A,A,ww);g=cp.einsum('nki,nk,n->i',A,residual,ww)
-                        return cost,cp.asnumpy(H),cp.asnumpy(g),float((w*valid).sum()/w.sum())
+                        return (cost,H,g,float((w*valid).sum()/w.sum())) if device else (cost,cp.asnumpy(H),cp.asnumpy(g),float((w*valid).sum()/w.sum()))
                     converged=False;reason='iterations'
                     for iteration in range(iterations):
                         e=evaluate(x,True)
                         if e is None:reason='insufficient_correspondences';break
                         cost,H,g,coverage=e
-                        delta=np.linalg.solve(H+np.diag(np.maximum(np.diag(H),1e-8))*1e-5,-g)
-                        cap=max(1.,np.linalg.norm(delta[:2])/1.5,abs(delta[2])/.1,abs(delta[3])/.15);delta/=cap
+                        delta=xp.linalg.solve(H+xp.diag(xp.maximum(xp.diag(H),1e-8))*1e-5,-g)
+                        cap=float(xp.max(xp.stack((xp.asarray(1.),xp.linalg.norm(delta[:2])/1.5,abs(delta[2])/.1,abs(delta[3])/.15))));delta/=cap
                         proposal=delta.copy();chosen=None
                         for half in range(18):
                             alpha=2.**(-half);trial=x+alpha*delta
-                            if not cfg['scale_bounds'][0]<np.exp(trial[3])<cfg['scale_bounds'][1] or np.linalg.norm(trial[:2])>cfg['max_translation_m']:continue
+                            if not cfg['scale_bounds'][0]<xp.exp(trial[3])<cfg['scale_bounds'][1] or xp.linalg.norm(trial[:2])>cfg['max_translation_m']:continue
                             after,cov=evaluate(trial)
-                            if after<=cost+1e-4*alpha*float(2*g@delta/cp.asnumpy(weight.sum())):
+                            if after<=cost+1e-4*alpha*float(2*cp.asarray(g)@cp.asarray(delta)/weight.sum()):
                                 chosen=(trial,after,cov,alpha);break
-                        trace.append(dict(cost=cost,coverage=coverage,proposal=proposal.tolist(),alpha=None if chosen is None else chosen[3]))
-                        small=np.linalg.norm(delta[:2])<.002 and abs(delta[2])<.0002 and abs(delta[3])<.0002
+                        trace.append(dict(cost=cost,coverage=coverage,proposal=cp.asnumpy(cp.asarray(proposal)).tolist(),alpha=None if chosen is None else chosen[3]))
+                        small=xp.linalg.norm(delta[:2])<.002 and abs(delta[2])<.0002 and abs(delta[3])<.0002
                         if chosen is None:
                             reason='stationary' if small else 'line_search_failed';converged=bool(small);break
                         x=chosen[0]
                         if small:reason='stationary';converged=True;break
                     cost,coverage=evaluate(x)
                     stages.append(dict(radius_m=radius,robust_m=robust,iterations=len(trace),stop_reason=reason,cost=cost,coverage=coverage,trace=trace,elapsed_seconds=time.perf_counter()-stage_started))
-                scale=float(np.exp(x[3]));Rz=Rotation.from_rotvec([0,0,x[2]]).as_matrix()
-                T=np.eye(4);T[:3,:3]=Bm@Rz@Bs.T;T[:3,3]=origin+Bm@np.array([x[0],x[1],scale*ds])
+                scale=float(cp.exp(cp.asarray(x[3])))
+                from .cuda_math import rotation_exp
+                Rz=rotation_exp(cp.stack((cp.asarray(0.),cp.asarray(0.),cp.asarray(x[2]))))
+                T=cp.eye(4);T[:3,:3]=cp.asarray(Bm)@Rz@cp.asarray(Bs).T
+                T[:3,3]=cp.asarray(origin)+cp.asarray(Bm)@cp.stack((cp.asarray(x[0]),cp.asarray(x[1]),cp.asarray(scale*ds)))
+                T=cp.asnumpy(T)
                 q,_=transform4(sample,x);ids,d2=nn.query(q,1.5);valid=ids>=0
-                distance=np.sqrt(cp.asnumpy(d2));dist_valid=distance[cp.asnumpy(valid)]
+                dist_valid=cp.sqrt(d2[valid])
                 diagnostics=dict(seed_scale=float(scale_seed),seed_yaw_deg=float(np.degrees(yaw_seed)),T=T.tolist(),scale=scale,
                                  cost=cost,coverage=coverage,converged=bool(converged),stages=stages,
-                                 median_distance_m=float(np.median(dist_valid)) if len(dist_valid) else None,
-                                 rmse_distance_m=float(np.sqrt(np.mean(dist_valid**2))) if len(dist_valid) else None,
+                                 median_distance_m=float(cp.median(dist_valid)) if len(dist_valid) else None,
+                                 rmse_distance_m=float(cp.sqrt(cp.mean(dist_valid**2))) if len(dist_valid) else None,
                                  source_features=len(sample),camera_height_m=scale*ds)
                 print(f"candidate scale_seed={scale_seed:.3f} yaw_seed={np.degrees(yaw_seed):.2f}: s={scale:.4f}, xy={T[0,3]:.3f},{T[1,3]:.3f}, yaw={np.degrees(np.arctan2(T[1,0],T[0,0])):.2f}, cost={cost:.5f} cov={coverage:.3f} {reason}",flush=True)
                 candidates.append(diagnostics)

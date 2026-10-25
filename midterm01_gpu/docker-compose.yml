@@ -12,7 +12,7 @@ services:
       DISPLAY: ${DISPLAY:-:0}
       XAUTHORITY: /tmp/track3.Xauthority
       QT_X11_NO_MITSHM: '1'
-      LD_LIBRARY_PATH: /opt/track3/lib/python3.10/site-packages/nvidia/cuda_nvrtc/lib:/opt/track3/lib/python3.10/site-packages/nvidia/cublas/lib:/opt/track3/lib/python3.10/site-packages/nvidia/cusolver/lib:/opt/track3/lib/python3.10/site-packages/nvidia/cusparse/lib:/opt/track3/lib/python3.10/site-packages/nvidia/nvjitlink/lib:/usr/local/cuda-12.8/lib64
+      LD_LIBRARY_PATH: /opt/track3/lib/python3.10/site-packages/nvidia/curand/lib:/opt/track3/lib/python3.10/site-packages/nvidia/cuda_nvrtc/lib:/opt/track3/lib/python3.10/site-packages/nvidia/cublas/lib:/opt/track3/lib/python3.10/site-packages/nvidia/cusolver/lib:/opt/track3/lib/python3.10/site-packages/nvidia/cusparse/lib:/opt/track3/lib/python3.10/site-packages/nvidia/nvjitlink/lib:/usr/local/cuda-12.8/lib64
       ROS_DOMAIN_ID: '33'
       ROS_LOCALHOST_ONLY: '1'
     volumes:

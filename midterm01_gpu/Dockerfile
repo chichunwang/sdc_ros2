@@ -15,6 +15,6 @@ ENV PATH=/opt/track3/bin:/usr/local/cuda-12.8/bin:$PATH \
     MPLCONFIGDIR=/tmp/matplotlib \
     HOME=/tmp/track3-home
 WORKDIR /workspace/midterm01_gpu
-COPY ros_entrypoint.sh /track3_entrypoint.sh
+COPY --chmod=755 ros_entrypoint.sh /track3_entrypoint.sh
 ENTRYPOINT ["/track3_entrypoint.sh"]
 CMD ["sleep", "infinity"]

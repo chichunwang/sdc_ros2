@@ -1,4 +1,7 @@
-"""IMU 外參與融合信任度調整入口；直接修改 Python 常數，執行指令不變。"""
+"""IMU 外參與 gyro noise 入口；v8 用 resolve_motion_config，不使用 Kalman。
+
+MAP_*／YAW_* 及 resolve_fusion_config 僅保留給歷史 ESKF 元件與測試。
+"""
 from copy import deepcopy
 import math
 
@@ -11,7 +14,7 @@ IMU_XYZ_M = (0.0, 0.0, 0.0)
 # 下列仍是未校正的 engineering priors；一次只改一項，不能當成精度保證。
 # Gyro 白雜訊密度，單位 (rad/s)/sqrt(Hz)，等價於 rad/sqrt(s)。
 # 變小：降低 prediction 的過程不確定性，通常較相信 gyro；不改 gyro 讀值。
-# 這也會改變 Kalman gain 與 NIS gate，效果不等於固定百分比的加權平均。
+# v8 改變粒子旋轉擾動；歷史 ESKF 才會改變 Kalman gain 與 NIS gate。
 GYRO_NOISE_DENSITY_RAD_S_SQRT_HZ = 0.02
 # Gyro bias random walk，單位 (rad/s)/sqrt(s)；越大，允許 bias 變動越快。
 GYRO_BIAS_RANDOM_WALK_RAD_S_SQRT_S = 0.001
@@ -78,6 +81,18 @@ def resolve_fusion_config(config):
         yaw_robust_enabled=YAW_ROBUST_ENABLED,
         yaw_huber_sigma=yaw_sigma,
     )
+    return cfg
+
+
+def resolve_motion_config(config):
+    """v8 僅讀 gyro 的過程雜訊；不建立 Kalman 或讀取 map/yaw 融合參數。"""
+    cfg=deepcopy(config)
+    cfg['gyro_noise_density']=_positive_finite(GYRO_NOISE_DENSITY_RAD_S_SQRT_HZ,
+                                              'GYRO_NOISE_DENSITY_RAD_S_SQRT_HZ')
+    cfg['gyro_bias_random_walk']=_positive_finite(GYRO_BIAS_RANDOM_WALK_RAD_S_SQRT_S,
+                                                'GYRO_BIAS_RANDOM_WALK_RAD_S_SQRT_S')
+    cfg['motion_parameter_source']='track3/imu_parameters.py'
+    cfg['motion_parameter_status']='uncalibrated_engineering_priors_not_accuracy_claim'
     return cfg
 
 

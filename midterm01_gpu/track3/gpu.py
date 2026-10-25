@@ -107,7 +107,7 @@ def jacobian(v):
     return J
 
 
-def linearize(source, T, scale, model, mode, robust_m):
+def linearize(source, T, scale, model, mode, robust_m, device=False):
     v = source @ cp.asarray(T[:3, :3]).T * scale
     q = v + cp.asarray(T[:3, 3]); ids, good = model.correspond(q,mode)
     n = int(good.sum())
@@ -132,18 +132,19 @@ def linearize(source, T, scale, model, mode, robust_m):
         cost=cp.sum(robust_m**2*cp.log1p(error2/robust_m**2))
     # Full-cloud cost penalizes lost support. Never compare only surviving residuals.
     penalty = 9*np.log1p(9) if mode == 'ndt' else robust_m**2*np.log1p((1.5*model.leaf/robust_m)**2)
-    score = (float(cost)+(len(source)-n)*penalty)/len(source)
-    return cp.asnumpy(H), cp.asnumpy(g), score, n/len(source)
+    score = float((cost+(len(source)-n)*penalty)/len(source))
+    return (H,g,score,n/len(source)) if device else (cp.asnumpy(H),cp.asnumpy(g),score,n/len(source))
 
 
-def normal_information(source,T,scale,model,robust_m):
+def normal_information(source,T,scale,model,robust_m,device=False):
     """Check surface observability independently of point-to-point ICP's H."""
     v=source@cp.asarray(T[:3,:3]).T*scale
     q=v+cp.asarray(T[:3,3]);ids,good=model.correspond(q)
     residual=q[good]-model.means[ids[good]]
     A=cp.einsum('ni,nij->nj',model.normals[ids[good]],jacobian(v[good]))
     w=1/(1+cp.sum(residual**2,axis=1)/robust_m**2)
-    return cp.asnumpy((A.T*w)@A)
+    H=(A.T*w)@A
+    return H if device else cp.asnumpy(H)
 
 
 class Registration:
@@ -184,8 +185,8 @@ class Registration:
                 result=self._align_seed(p,np.array(candidate['T']),candidate['scale'],True,fixed_scale,
                                         submap_center=prior[:3,3])
                 feature_score=initializer.score_pose(result['T'],result['scale'])
-                offset=initializer.feature_basis.T@(result['T'][:3,3]-prior[:3,3])
-                within_bound=bool(np.linalg.norm(offset[:2])<=cfg['initializer']['max_translation_m'])
+                offset=cp.asarray(initializer.feature_basis).T@(cp.asarray(result['T'][:3,3])-cp.asarray(prior[:3,3]))
+                within_bound=bool(cp.linalg.norm(offset[:2])<=cfg['initializer']['max_translation_m'])
                 eligible=bool(result['accepted'] and within_bound and
                               feature_score['coverage']>=cfg['initializer']['min_coverage'])
                 records.append(dict(candidate_index=index,T=result['T'].tolist(),scale=result['scale'],
@@ -223,6 +224,7 @@ class Registration:
     def _align_seed(self,p,T,scale,initialize,fixed_scale,submap_center=None):
         """Refine one hypothesis; startup candidates use identical quality gates."""
         cfg=self.cfg;T=T.copy();scale=float(scale)
+        device=cfg.get('solver_device')=='cuda';xp=cp if device else np
         scale_reference=scale
         # Use a causal prior to select map region. No trajectory-derived crop.
         # Every startup hypothesis uses the same crop around the original
@@ -256,15 +258,15 @@ class Registration:
             record = dict(mode=mode, voxel_m=leaf, source_points=len(sample),
                           iterations=0, stop_reason='max_iterations')
             def evaluate(t, s):
-                data = linearize(sample, t, s, model, mode, cfg['robust_m'])
+                data = linearize(sample, t, s, model, mode, cfg['robust_m'],device=device)
                 if data is None: return None
                 H, g, cost, cov = data
                 # Log-scale random walk prior, not a metric calibration claim.
                 sig = cfg['initial_log_scale_sigma'] if initialize else cfg['log_scale_sigma']
-                e = np.log(s/scale_reference)
+                e = xp.log(xp.asarray(s)/scale_reference)
                 H[6, 6] += len(sample)/sig**2
                 g[6] += len(sample)*e/sig**2
-                return H, g, cost+e*e/sig**2, cov
+                return H, g, float(xp.asarray(cost)+e*e/sig**2), cov
             before=None
             for iteration in range(stage['iterations']):
                 record['iterations'] = iteration+1
@@ -274,18 +276,18 @@ class Registration:
                     break
                 H, g, score, coverage = before
                 record.setdefault('initial_cost', float(score))
-                diag = np.maximum(np.diag(H), 1e-6)
+                diag = xp.maximum(xp.diag(H), 1e-6)
                 if fixed_scale:
                     # Scale was measured by causal 3D feature lengths. Solve SE(3),
                     # rather than allowing a new Sim(3) scale to absorb pose error.
-                    delta=np.r_[np.linalg.solve(H[:6,:6]+np.diag(diag[:6])*1e-5,-g[:6]),0.]
+                    delta=xp.concatenate((xp.linalg.solve(H[:6,:6]+xp.diag(diag[:6])*1e-5,-g[:6]),xp.zeros(1)))
                 else:
-                    delta = np.linalg.solve(H+np.diag(diag)*1e-5, -g)
+                    delta = xp.linalg.solve(H+xp.diag(diag)*1e-5, -g)
                 # Trust-region limits in metres, radians and log scale.
-                f = max(1., np.linalg.norm(delta[:3])/2., np.linalg.norm(delta[3:6])/np.deg2rad(5), abs(delta[6])/0.1)
+                f = float(xp.max(xp.stack((xp.asarray(1.),xp.linalg.norm(delta[:3])/2.,xp.linalg.norm(delta[3:6])/np.deg2rad(5),abs(delta[6])/0.1))))
                 delta /= f
-                record['proposed_step'] = dict(translation_m=float(np.linalg.norm(delta[:3])),
-                                              rotation_rad=float(np.linalg.norm(delta[3:6])),
+                record['proposed_step'] = dict(translation_m=float(xp.linalg.norm(delta[:3])),
+                                              rotation_rad=float(xp.linalg.norm(delta[3:6])),
                                               log_scale=float(delta[6]))
                 candidate,trials = backtrack(evaluate,T,scale,delta,score,g,len(sample),cfg['scale_bounds'])
                 record['last_line_search'] = trials
@@ -309,15 +311,15 @@ class Registration:
             stage_records.append(record)
         observable = False; min_eigenvalue = None
         if Hfinal is not None:
-            Hgeometry=normal_information(sample,T,scale,model,cfg['robust_m'])
+            Hgeometry=normal_information(sample,T,scale,model,cfg['robust_m'],device=device)
             Hgeometry[6,6]+=len(sample)/(cfg['initial_log_scale_sigma'] if initialize else cfg['log_scale_sigma'])**2
             spatial = Hgeometry[:6,:6].copy()
             if not fixed_scale:
-                spatial -= np.outer(Hgeometry[:6,6],Hgeometry[6,:6])/max(Hgeometry[6,6],1e-12)
-            diagonal = np.diag(spatial)
-            if np.min(diagonal)>1e-10:
-                normalized = spatial / np.sqrt(diagonal[:,None]*diagonal[None,:])
-                min_eigenvalue = float(np.linalg.eigvalsh(normalized).min())
+                spatial -= xp.outer(Hgeometry[:6,6],Hgeometry[6,:6])/xp.maximum(Hgeometry[6,6],1e-12)
+            diagonal = xp.diag(spatial)
+            if bool(xp.min(diagonal)>1e-10):
+                normalized = spatial / xp.sqrt(diagonal[:,None]*diagonal[None,:])
+                min_eigenvalue = float(xp.linalg.eigvalsh(normalized).min())
                 observable = min_eigenvalue > 1e-6
         candidate_valid = bool(valid_pose(T) and np.isfinite(scale) and cfg['scale_bounds'][0] < scale < cfg['scale_bounds'][1])
         accepted = bool(converged and observable and coverage >= cfg['min_coverage'] and candidate_valid)
