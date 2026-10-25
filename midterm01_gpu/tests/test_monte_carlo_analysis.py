@@ -55,3 +55,14 @@ def test_analysis_refuses_incomplete_or_unverifiable_inputs(tmp_path,monkeypatch
     p.write_text(json.dumps(info))
     with pytest.raises(ValueError):m.analyze(tmp_path)
     assert not (tmp_path/'analysis').exists()
+
+
+def test_v8_1_local_search_analysis_does_not_require_resampling_parameters(tmp_path,monkeypatch):
+    fixture(tmp_path);m=module();monkeypatch.setattr(m,'FRAME_COUNT',3)
+    p=tmp_path/'test_info.json';info=json.loads(p.read_text());info['monte_carlo_mode']='causal_local_search_not_calibrated_posterior';p.write_text(json.dumps(info))
+    (tmp_path/'parameters.json').write_text(json.dumps(dict(monte_carlo=dict(particles=64))))
+    metrics=m.analyze(tmp_path)
+    assert metrics['mode']=='causal_local_search' and not metrics['scores_are_probabilities']
+    assert (tmp_path/'analysis/monte_carlo/02_support_updates.png').exists()
+    readme=(tmp_path/'analysis/monte_carlo/README.md').read_text()
+    assert '沒有重採樣步驟' in readme and 'posterior' in readme

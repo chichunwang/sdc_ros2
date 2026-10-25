@@ -87,6 +87,7 @@ def main():
             from track3.monte_carlo_parameters import resolve_config
             cfg['monte_carlo']=resolve_config()
             info['kalman_used']=False
+            info['monte_carlo_mode']='causal_local_search_not_calibrated_posterior'
             info['accelerometer_translation_used']=False
         if info['imu_used'] and cfg.get('motion_constraints',False):
             from track3.motion_parameters import PARAMETERS,VISUAL_VELOCITY_STD_MPS,STATIONARY_VELOCITY_STD_MPS,ENABLE_MOVING_VISUAL_SCALE
@@ -124,7 +125,7 @@ def main():
                 noise_source=icfg['noise_source'],orientation_used=False,gnss_used=False,
                 accelerometer_translation_used=False,kalman_used=False,
                 motion_model='gyro_orientation; causal_visual_translation; velocity_random_walk_without_visual'))
-            state=MonteCarloState(T,cfg['initial_scale'],icfg,cfg['monte_carlo'],cfg['registration']['scale_bounds'])
+            state=MonteCarloState(T,cfg['initial_scale'],icfg,cfg['monte_carlo'],cfg['registration']['scale_bounds'],motion_limits=cfg['visual_prior'])
             imu_reader=ImuReader(bag,icfg['topic'],icfg['frame_id'])
             if icfg.get('time_basis','bag_arrival')=='camera_header':
                 from track3.time_alignment import CameraClock,AcquisitionImuReader
@@ -204,15 +205,16 @@ def main():
                 if cfg['prediction']=='gpu_monte_carlo':
                     mc_start=time.perf_counter()
                     registration_prior=state.observe_cloud(points,registration)
-                    scale=state.scale
+                    scale=state.registration_scale
                     sync();monte_carlo_ms=(time.perf_counter()-mc_start)*1000
                 else:registration_prior=prior
                 registration_input_scale=float(scale)
+                scale_prior_kwargs=dict(scale_reference=state.scale) if cfg['prediction']=='gpu_monte_carlo' else {}
                 if motion_constraints is not None:
                     estimate=registration.align(points,registration_prior,scale,initialize=not state.initialized,
-                                                fixed_scale=state.initialized and (stationary or ENABLE_MOVING_VISUAL_SCALE))
+                                                fixed_scale=state.initialized and (stationary or ENABLE_MOVING_VISUAL_SCALE),**scale_prior_kwargs)
                 else:
-                    estimate=registration.align(points,registration_prior,scale,initialize=not state.initialized)
+                    estimate=registration.align(points,registration_prior,scale,initialize=not state.initialized,**scale_prior_kwargs)
                 sync()
                 reg_ms=(time.perf_counter()-reg_start)*1000; registration_total+=reg_ms/1000
                 update_start=time.perf_counter()
@@ -245,6 +247,7 @@ def main():
                     prediction=decision['prediction'], delta=decision['delta'],inertial=decision.get('inertial'),
                     monte_carlo=decision.get('monte_carlo'),registration_prior_T=registration_prior.tolist(),
                     registration_input_scale=registration_input_scale,
+                    causal_scale_reference=input_scale,
                     motion_constraints=constraint_diagnostics
                 ), allow_nan=False)+'\n'); pose_trace.flush()
                 if visualizer is not None:
@@ -274,6 +277,7 @@ def main():
                          inertial=decision.get('inertial'),prediction_ms=prediction_ms,measurement_update_ms=update_ms,
                          monte_carlo=decision.get('monte_carlo'),monte_carlo_ms=monte_carlo_ms,
                          registration_input_scale=registration_input_scale,
+                    causal_scale_reference=input_scale,
                          motion_constraints=constraint_diagnostics,scale_optimized=estimate.get('scale_optimized'),
                          camera_mask=camera_mask_diagnostics,
                          model_diagnostics=estimate.get('model_diagnostics'),
@@ -287,7 +291,7 @@ def main():
                 obs['gpu_memory']=memory_record
                 observations.write(json.dumps(obs,allow_nan=False)+'\n');observations.flush()
                 info['frame_count']=idx+1
-                if idx==0 or (idx+1)%25==0:
+                if idx==0 or (idx+1)%25==0 or idx==len(rows)-1:
                     save_progress(); write_json(run/'test_info.json',info)
                     print(f"idx={row['original_idx']} frames={idx+1}/{len(rows)} map={int(adopted)} scale={scale:.4f} reg={reg_ms:.1f}ms reason={decision['reason']} decision={decision['decision']} rejected={consecutive_rejections}",flush=True)
         info.update(status='success' if accepted_count>0 else 'failed',map_accepted_frames=accepted_count,

@@ -108,6 +108,32 @@ class MotionConstraints:
         gyro=max((float(np.linalg.norm(s.angular_velocity)) for s in samples),default=None)
         stationary=self.rest.update(measurement_stamp,self.previous.get('measurement_stamp',self.previous['stamp']),None if flow is None else flow[2],
                                     None if baseline_flow is None else baseline_flow[2],gyro,enabled)
+        if self.rest.since is None:self.quiet_reference=None
+        elif self.quiet_reference is None:self.quiet_reference=self.previous
+        if stationary and not self.was_stationary:
+            # Anchor at the last committed frame, never move old poses to fit it.
+            self.scale_reference=self.previous
+        reference=self.scale_reference or self.previous
+        matched=flow if reference is self.previous else track_images(reference['gray'],gray,self.camera.mask,self.cfg)
+        if not stationary and (matched is None or matched[2]['median_px']>self.cfg['keyframe_median_px'] or
+                               (measurement_stamp-reference.get('measurement_stamp',reference['stamp']))*1e-9>self.cfg['keyframe_max_age_s']):
+            reference=self.scale_reference=self.previous;matched=flow
+        scale=None;metric_depth=None;scale_diag=dict(reason='insufficient_image_tracks')
+        if matched is not None:
+            import cupy as cp
+            a,va=associated_points(reference['points'],matched[0],self.camera.K,self.cfg)
+            b,vb=associated_points(points,matched[1],self.camera.K,self.cfg)
+            if a is not None and b is not None:
+                valid=va&vb
+                if int(valid.sum()):metric_depth=float(cp.median(cp.linalg.norm(a[valid],axis=1)))*reference['scale']
+                ratio,scale_diag=scale_from_pairs(a[valid],b[valid],self.cfg)
+                if ratio is not None:
+                    scale=reference['scale']*ratio
+                    if not np.isfinite(scale) or not .2<scale<30.:
+                        scale=None;scale_diag['reason']='absolute_scale_bounds'
+        if stationary and (scale is None or metric_depth is None or metric_depth>self.cfg['stationary_max_depth_m']):
+            stationary=False
+            diag['stationary_rejection']='insufficient_reliable_nearby_3d_support'
         pnp_diag=dict(accepted=False,reason='stationary' if stationary else 'insufficient_image_tracks')
         if not stationary and flow is not None:
             import cupy as cp
@@ -138,32 +164,6 @@ class MotionConstraints:
                                         speed_mps=speed,rotation_rate_radps=turn,reprojection_median_px=reprojection)
                         if accepted:self.visual_motion=motion
                     else:pnp_diag['reason']='pnp_outliers'
-        if self.rest.since is None:self.quiet_reference=None
-        elif self.quiet_reference is None:self.quiet_reference=self.previous
-        if stationary and not self.was_stationary:
-            # Anchor at the last committed frame, never move old poses to fit it.
-            self.scale_reference=self.previous
-        reference=self.scale_reference or self.previous
-        matched=flow if reference is self.previous else track_images(reference['gray'],gray,self.camera.mask,self.cfg)
-        if not stationary and (matched is None or matched[2]['median_px']>self.cfg['keyframe_median_px'] or
-                               (measurement_stamp-reference.get('measurement_stamp',reference['stamp']))*1e-9>self.cfg['keyframe_max_age_s']):
-            reference=self.scale_reference=self.previous;matched=flow
-        scale=None;metric_depth=None;scale_diag=dict(reason='insufficient_image_tracks')
-        if matched is not None:
-            import cupy as cp
-            a,va=associated_points(reference['points'],matched[0],self.camera.K,self.cfg)
-            b,vb=associated_points(points,matched[1],self.camera.K,self.cfg)
-            if a is not None and b is not None:
-                valid=va&vb
-                if int(valid.sum()):metric_depth=float(cp.median(cp.linalg.norm(a[valid],axis=1)))*reference['scale']
-                ratio,scale_diag=scale_from_pairs(a[valid],b[valid],self.cfg)
-                if ratio is not None:
-                    scale=reference['scale']*ratio
-                    if not np.isfinite(scale) or not .2<scale<30.:
-                        scale=None;scale_diag['reason']='absolute_scale_bounds'
-        if stationary and (scale is None or metric_depth is None or metric_depth>self.cfg['stationary_max_depth_m']):
-            stationary=False
-            diag['stationary_rejection']='insufficient_reliable_nearby_3d_support'
         diag.update(stationary=stationary,scale_valid=scale is not None,scale=scale,metric_feature_depth_m=metric_depth,
                     visual_velocity=pnp_diag,
                     reference_timestamp_ns=reference['stamp'],reference_scale=reference['scale'],

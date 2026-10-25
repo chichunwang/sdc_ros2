@@ -88,10 +88,11 @@ def test_generated_map_prefers_matching_mode_without_mode_averaging(tmp_path):
              source=m/3.,map_points=m,selected_T=prior,truth_T=np.eye(4))
     (tmp_path/'particle_mode_metrics.json').write_text(json.dumps(s.measurement,indent=2)+'\n')
     T=np.eye(4);T[0,3]=.05
-    d=s.commit(estimate(T));assert d['accepted'] and d['monte_carlo']['resampled']
+    d=s.commit(estimate(T));assert d['accepted'] and not d['monte_carlo']['resampled']
     assert s.representative>=0 and s.representative<s.n
-    # Output-only refinement cannot become an extra PF observation or shift.
-    assert bool(cp.all(s.p[:,0]==0.))
+    # Current-frame candidates are not a posterior to be recentered. The next
+    # prediction starts from the committed output, not from these old candidates.
+    np.testing.assert_array_equal(cp.asnumpy(s.p),before)
     assert s.T[0,3]==.05 and not d['monte_carlo']['posterior_recentered_by_refinement']
 
 
@@ -117,13 +118,14 @@ def test_failed_refinement_rolls_back_likelihood_without_resampling():
     assert not d['monte_carlo']['resampled']
 
 
-def test_two_eligible_startup_modes_survive_bootstrap():
+def test_startup_records_eligible_modes_but_commits_the_selected_anchor():
     s=state(128);s.predict(STAMP,[sample(STAMP)])
     other=np.eye(4);other[0,3]=10.
     e=estimate();e['initialization']=dict(refinements=[dict(eligible=True,T=np.eye(4).tolist(),scale=3.),dict(eligible=True,T=other.tolist(),scale=4.)])
     d=s.commit(e)
     assert d['monte_carlo']['bootstrap_anchors']==2
-    assert int(cp.sum(s.p[:,0]<3.))==64 and int(cp.sum(s.p[:,0]>7.))==64
+    assert bool(cp.all(s.p[:,0]==0.))
+    assert d['monte_carlo']['next_prediction_matches_output']
     assert s.scale==3. and s.T[0,3]==0.
 
 
@@ -134,7 +136,8 @@ def test_stationary_retains_exact_output_and_scale_evidence():
     candidate=np.eye(4);candidate[0,3]=10.
     d=s.commit(estimate(candidate,scale=4.))
     np.testing.assert_array_equal(s.T,T);np.testing.assert_array_equal(prior,T)
-    np.testing.assert_array_equal(cp.asnumpy(s.R),cp.asnumpy(R));np.testing.assert_array_equal(cp.asnumpy(s.p),cp.asnumpy(p))
+    np.testing.assert_allclose(cp.asnumpy(s.R),np.tile(T[:3,:3],(s.n,1,1)),atol=1e-14)
+    np.testing.assert_allclose(cp.asnumpy(s.p),np.tile(T[:3,3],(s.n,1)),atol=1e-14)
     assert s.scale==3.1 and d['decision']=='stationary_pose_hold'
 
 
@@ -170,7 +173,8 @@ def test_gyro_extrinsic_and_lever_arm_rotation_contract():
     s.cfg['position_diffusion_m_sqrt_s']=0.;s.cfg['velocity_diffusion_mps_sqrt_s']=0.
     s.predict(STAMP+36_000_000,[sample(STAMP+30_000_000,(0.,0.,1.))])
     truth=E[:3,:3]@Rotation.from_rotvec([0,0,.036]).as_matrix()@E[:3,:3].T
-    np.testing.assert_allclose(cp.asnumpy(s.R),np.tile(truth,(s.n,1,1)),atol=2e-14)
+    np.testing.assert_allclose(s.T[:3,:3],truth,atol=2e-14)
+    np.testing.assert_allclose(cp.asnumpy(s.R[0]),truth,atol=2e-14)
     expected=-(truth-np.eye(3))@E[:3,3]
     np.testing.assert_allclose(cp.asnumpy(s.p),np.tile(expected,(s.n,1)),atol=2e-14)
 

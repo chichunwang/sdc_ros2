@@ -2,7 +2,8 @@
 
 Coarse residuals use local Gaussian cells; fine residuals and nearest-point
 selection both use Euclidean distance. Surface normals only test observability.
-Point work stays on CUDA; the 7x7 pose/scale solve stays on the host.
+Point work stays on CUDA; solver_device=cuda also keeps the 7x7 solve on CUDA.
+The host solver remains solely for explicit historical/reference configurations.
 """
 import itertools
 import time
@@ -152,7 +153,7 @@ class Registration:
         self.map = cp.asarray(map_points); self.cfg = cfg
         self.center = None; self.models = {}
 
-    def align(self, source, prior, initial_scale, initialize=False, fixed_scale=False):
+    def align(self, source, prior, initial_scale, initialize=False, fixed_scale=False, scale_reference=None):
         cfg = self.cfg; T = prior.copy(); scale = float(initial_scale)
         preprocessing=None;initialization=None
         if not valid_pose(T) or not np.isfinite(scale) or not cfg['scale_bounds'][0] < scale < cfg['scale_bounds'][1]:
@@ -217,15 +218,17 @@ class Registration:
                                       seed_scale_prior_in_selection=False))
             result.update(preprocessing=preprocessing,initialization=initialization)
             return result
-        result=self._align_seed(p,T,scale,initialize,fixed_scale)
+        result=self._align_seed(p,T,scale,initialize,fixed_scale,scale_reference=scale_reference)
         result.update(preprocessing=preprocessing,initialization=initialization)
         return result
 
-    def _align_seed(self,p,T,scale,initialize,fixed_scale,submap_center=None):
+    def _align_seed(self,p,T,scale,initialize,fixed_scale,submap_center=None,scale_reference=None):
         """Refine one hypothesis; startup candidates use identical quality gates."""
         cfg=self.cfg;T=T.copy();scale=float(scale)
         device=cfg.get('solver_device')=='cuda';xp=cp if device else np
-        scale_reference=scale
+        scale_reference=scale if scale_reference is None else float(scale_reference)
+        if not np.isfinite(scale_reference) or not cfg['scale_bounds'][0]<scale_reference<cfg['scale_bounds'][1]:
+            raise ValueError('Invalid causal scale reference')
         # Use a causal prior to select map region. No trajectory-derived crop.
         # Every startup hypothesis uses the same crop around the original
         # prior; candidate order must not change the map available to it.
@@ -251,7 +254,7 @@ class Registration:
         for stage in cfg['stages']:
             leaf, mode = stage['voxel_m'], stage['mode']
             model = self.models[leaf]
-            sample, _ = voxel_mean(p*scale, max(leaf/3, 0.15)); sample = sample/scale
+            sample, _ = voxel_mean(p*scale_reference, max(leaf/3, 0.15)); sample = sample/scale_reference
             if len(sample) > cfg['max_source_points']:
                 sample = sample[cp.linspace(0, len(sample)-1, cfg['max_source_points']).astype(cp.int64)]
             converged = False; Hfinal = None; coverage = 0.; score = np.inf

@@ -1,5 +1,5 @@
 {
-  "version": "track3_cuda_v8_monte_carlo_no_kalman",
+  "version": "track3_cuda_v8.1_committed_anchor_scale_transaction",
   "data_dir": "/workspace/midterm01/data/Track3",
   "ply_subdir": "raw_ply",
   "expected_frames": 3142,

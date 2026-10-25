@@ -1,14 +1,10 @@
-"""Causal FP64 CUDA particle localization, without a Kalman filter.
+"""Causal CUDA local Monte Carlo search, anchored to the emitted pose.
 
-Particle state: camera-FLU pose, metric map velocity, gyro bias and log scale.
-Gyro drives orientation; causal PnP displacement drives translation when valid.
-Without PnP, velocity follows a random walk. Accelerometer translation is
-explicitly unused: uncalibrated gravity/extrinsics would accumulate drift.
-
-Cloud likelihood is a tempered robust geometric score, not calibrated sensor
-probability. Startup uses a data-derived mixture of eligible v7 anchors. Local
-NDT/ICP refinement is an output point estimate: it is NEVER scored again as an
-independent observation, nor used to collapse/recenter the particle posterior.
+v8 left a recursively weighted population behind the refined output. v8.1 draws
+fresh current-frame candidates around deterministic gyro/PnP prediction from
+that output. Scores rank local hypotheses; they are NOT a calibrated Bayesian
+posterior. Registration is used once to commit the current geometric estimate,
+not as an additional independent sensor measurement. No Kalman filter.
 """
 import numpy as np
 import cupy as cp
@@ -41,7 +37,7 @@ def systematic_indices(weights,rng):
 
 
 class MonteCarloState:
-    def __init__(self,initial_pose,initial_scale,imu_cfg,cfg,scale_bounds=(.2,30.)):
+    def __init__(self,initial_pose,initial_scale,imu_cfg,cfg,scale_bounds=(.2,30.),motion_limits=None):
         self.cfg=dict(cfg);self.imu_cfg=dict(imu_cfg);self.n=int(cfg['particles'])
         self.ext=cp.asarray(imu_cfg['T_ply_imu'],dtype=cp.float64)
         if not valid_pose(np.asarray(initial_pose)) or not valid_pose(np.asarray(imu_cfg['T_ply_imu'])):
@@ -52,8 +48,8 @@ class MonteCarloState:
         if not self.bounds[0]<initial_scale<self.bounds[1]:raise ValueError('Invalid initial scale')
         self.log_bounds=cp.log(cp.asarray(self.bounds,dtype=cp.float64))
         self.rng=create_rng(cfg['seed'])
-        self.R=cp.broadcast_to(cp.asarray(initial_pose[:3,:3]),(self.n,3,3)).copy()
-        self.p=cp.broadcast_to(cp.asarray(initial_pose[:3,3]),(self.n,3)).copy()
+        self.R=cp.broadcast_to(cp.asarray(initial_pose[:3,:3],dtype=cp.float64),(self.n,3,3)).copy()
+        self.p=cp.broadcast_to(cp.asarray(initial_pose[:3,3],dtype=cp.float64),(self.n,3)).copy()
         self.v=cp.broadcast_to(cp.asarray(imu_cfg['initial_velocity_map_mps'],dtype=cp.float64),(self.n,3)).copy()
         self.bg=cp.broadcast_to(cp.asarray(imu_cfg['initial_gyro_bias_radps'],dtype=cp.float64),(self.n,3)).copy()
         self.logs=cp.full(self.n,cp.log(initial_scale),dtype=cp.float64)
@@ -62,6 +58,14 @@ class MonteCarloState:
         self.stamp=None;self.held=None;self.pending=None;self.initialized=False
         self.prediction='gpu_monte_carlo';self.nn=None;self.center=None
         self.measurement=None;self.prediction_diagnostics=None;self.representative=0
+        self.anchor_R=cp.asarray(initial_pose[:3,:3],dtype=cp.float64).copy()
+        self.anchor_p=cp.asarray(initial_pose[:3,3],dtype=cp.float64).copy()
+        self.anchor_v=cp.asarray(imu_cfg['initial_velocity_map_mps'],dtype=cp.float64).copy()
+        self.nominal_bias=cp.asarray(imu_cfg['initial_gyro_bias_radps'],dtype=cp.float64).copy()
+        self.registration_scale=float(initial_scale)
+        self.motion_limits=dict(motion_limits or dict(max_speed_mps=50.,max_rotation_rate_radps=2.))
+        for name in ('max_speed_mps','max_rotation_rate_radps'):
+            if not np.isfinite(self.motion_limits[name]) or self.motion_limits[name]<=0:raise ValueError(f'Invalid {name}')
         self.max_gap=float(imu_cfg['max_sample_age_s'])
         for name in ('gyro_noise_density','gyro_bias_random_walk','max_sample_age_s'):
             if not np.isfinite(imu_cfg[name]) or imu_cfg[name]<=0:raise ValueError(f'Invalid {name}')
@@ -89,10 +93,8 @@ class MonteCarloState:
         if self.held is None or (target-self.held.timestamp_ns)*1e-9>self.max_gap:
             raise ValueError('IMU missing or stale; no silent fallback')
         dt=(target-self.stamp)*1e-9
-        w=cp.asarray(self.held.angular_velocity)-self.bg
-        omega=w*dt+self._noise((self.n,3),self.imu_cfg['gyro_noise_density']*dt**.5)
-        self.R=(self.R@self.ext[:3,:3])@rotation_exp(omega)@self.ext[:3,:3].T
-        self.bg+=self._noise((self.n,3),self.imu_cfg['gyro_bias_random_walk']*dt**.5)
+        w=cp.asarray(self.held.angular_velocity)-self.nominal_bias
+        self.anchor_R=(self.anchor_R@self.ext[:3,:3])@rotation_exp(w*dt)@self.ext[:3,:3].T
         self.stamp=target
 
     def predict(self,timestamp_ns,samples,*,input_scale=None,stationary=False,visual_motion=None):
@@ -118,43 +120,55 @@ class MonteCarloState:
             latest=s;previous=s.timestamp_ns
         if latest is None or (timestamp_ns-latest.timestamp_ns)*1e-9>self.max_gap:
             raise ValueError('A recent causal IMU sample is required')
-        first=self.stamp is None;old_stamp=self.stamp;old_R=self.R.copy()
-        previous_output=self.T.copy()
+        first=self.stamp is None;old_stamp=self.stamp;old_R=self.anchor_R.copy()
+        previous_output=self.T.copy();prior_scale=self.scale
+        dt=0. if first else (timestamp_ns-old_stamp)*1e-9
         if first:
             self.held=samples[-1];self.stamp=timestamp_ns
         elif stationary:
-            # Independent image+gyro rest detector owns this decision. No bias
-            # correction pretending the uncertain anchor orientation is truth.
             if samples:self.held=samples[-1]
-            self.stamp=timestamp_ns;self.v.fill(0.)
+            self.stamp=timestamp_ns;self.anchor_v.fill(0.)
         else:
-            for s in samples:
-                self._advance_rotation(s.timestamp_ns);self.held=s
+            for sample in samples:
+                self._advance_rotation(sample.timestamp_ns);self.held=sample
             self._advance_rotation(timestamp_ns)
-            dt=(timestamp_ns-old_stamp)*1e-9
             if visual_motion is not None:
                 displacement=old_R@cp.asarray(visual_motion[:3,3])
-                # PnP translation already describes the PLY origin; do not add
-                # a lever-arm correction to the same displacement twice.
-                displacement+=self._noise((self.n,3),self.cfg['visual_velocity_std_mps']*dt)
-                # Keep velocity at the IMU origin, including when the next
-                # frame loses PnP and switches to the lever-arm motion model.
-                self.v=(displacement+(self.R-old_R)@self.ext[:3,3])/dt
+                self.anchor_v=(displacement+(self.anchor_R-old_R)@self.ext[:3,3])/dt
             else:
-                self.v+=self._noise((self.n,3),self.cfg['velocity_diffusion_mps_sqrt_s']*dt**.5)
-                displacement=self.v*dt-(self.R-old_R)@self.ext[:3,3]
-            self.p+=displacement+self._noise((self.n,3),self.cfg['position_diffusion_m_sqrt_s']*dt**.5)
+                displacement=self.anchor_v*dt-(self.anchor_R-old_R)@self.ext[:3,3]
+            self.anchor_p+=displacement
+        if input_scale is not None:prior_scale=float(input_scale)
+        prior_gpu=cp.eye(4);prior_gpu[:3,:3]=self.anchor_R;prior_gpu[:3,3]=self.anchor_p
+        prior=cp.asnumpy(prior_gpu)
+        if stationary:prior=previous_output.copy()
+        self.T=prior.copy();self.scale=prior_scale;self.registration_scale=prior_scale
+        self.R=cp.broadcast_to(self.anchor_R,(self.n,3,3)).copy()
+        self.p=cp.broadcast_to(self.anchor_p,(self.n,3)).copy()
+        self.logs=cp.full(self.n,cp.log(prior_scale),dtype=cp.float64)
+        self.v=cp.broadcast_to(self.anchor_v,(self.n,3)).copy()
+        self.bg=cp.broadcast_to(self.nominal_bias,(self.n,3)).copy()
+        if not first and not stationary and self.initialized:
+            # Noise explores hypotheses only. It cannot move the emitted prior.
+            position_var=self.cfg['position_diffusion_m_sqrt_s']**2*dt
+            position_var+=(self.cfg['visual_velocity_std_mps']**2*dt**2 if visual_motion is not None else
+                           self.cfg['velocity_diffusion_mps_sqrt_s']**2*dt**3/3.)
+            self.p+=self._noise((self.n,3),float(cp.sqrt(cp.asarray(position_var))))
+            bias_sigma=cp.asarray(self.imu_cfg['initial_std'][12:15],dtype=cp.float64)
+            angle_var=self.imu_cfg['gyro_noise_density']**2*dt+bias_sigma**2*dt**2+self.imu_cfg['gyro_bias_random_walk']**2*dt**3/3.
+            dtheta=self._noise((self.n,3),1.)*cp.sqrt(angle_var)
+            self.R=(self.R@self.ext[:3,:3])@rotation_exp(dtheta)@self.ext[:3,:3].T
             self.logs+=self._noise(self.n,self.cfg['log_scale_diffusion_sqrt_s']*dt**.5)
             self._bound_scales()
-        if input_scale is not None:
-            self.logs+=cp.log(input_scale/self.scale);self._bound_scales()
-        prior,prior_scale=self._best(weighted=False)
-        if stationary:prior=previous_output;prior_scale=self.scale if input_scale is None else float(input_scale)
-        self.T=prior.copy();self.scale=prior_scale
-        self.pending=dict(prior=prior.copy(),scale=prior_scale,stationary=bool(stationary),logw=self.logw.copy())
+        # Include the undisturbed causal prediction as a candidate every frame.
+        self.R[0]=self.anchor_R;self.p[0]=self.anchor_p;self.logs[0]=cp.log(prior_scale)
+        self.logw.fill(-cp.log(float(self.n)));self.representative=0
+        self.pending=dict(prior=prior.copy(),scale=prior_scale,stationary=bool(stationary),
+                          previous_T=previous_output,dt=dt,logw=self.logw.copy())
         self.measurement=dict(applied=False,reason='not_evaluated')
         self.prediction_diagnostics=dict(mode='initial_guess' if first else 'stationary_visual_imu' if stationary else 'gpu_monte_carlo',
-            samples=len(samples),stationary=bool(stationary),translation_model='causal_visual_displacement' if visual_motion is not None else 'metric_velocity_random_walk',
+            samples=len(samples),stationary=bool(stationary),translation_model='causal_visual_displacement' if visual_motion is not None else 'last_metric_velocity',
+            search_mode='fresh_local_candidates_from_committed_output',scores_are_probabilities=False,
             accelerometer_translation_used=False,kalman_used=False,input_scale_applied=input_scale is not None,
             latest_bag_timestamp_ns=int(self.held.arrival_timestamp_ns if self.held.arrival_timestamp_ns is not None else self.held.timestamp_ns),
             latest_header_timestamp_ns=int(self.held.header_timestamp_ns),sample_age_seconds=(timestamp_ns-self.held.timestamp_ns)*1e-9)
@@ -165,16 +179,16 @@ class MonteCarloState:
         if self.pending is None:raise RuntimeError('Predict before observing cloud')
         if self.measurement['reason']!='not_evaluated':raise RuntimeError('Cloud already observed this frame')
         if not self.initialized or self.pending['stationary']:
-            self.measurement=dict(applied=False,reason='bootstrap' if not self.initialized else 'stationary_hold')
+            self.measurement=dict(applied=False,reason='bootstrap' if not self.initialized else 'stationary_hold',input_points=len(points))
             return self.T.copy()
         c=self.cfg;p=cp.asarray(points,dtype=cp.float64)
         p=p[cp.isfinite(p).all(axis=1)]
         if len(p)<30:
-            self.measurement=dict(applied=False,reason='insufficient_source');return self.T.copy()
+            self.measurement=dict(applied=False,reason='insufficient_source',input_points=len(points),points=len(p),sample_scale=self.scale);return self.T.copy()
         p,_=voxel_mean(p*self.scale,c['source_leaf_m']);p/=self.scale
         if len(p)>c['max_points']:p=p[cp.linspace(0,len(p)-1,c['max_points']).astype(cp.int64)]
         if len(p)<30:
-            self.measurement=dict(applied=False,reason='insufficient_voxel_support');return self.T.copy()
+            self.measurement=dict(applied=False,reason='insufficient_voxel_support',input_points=len(points),points=len(p),sample_scale=self.scale);return self.T.copy()
         center=self.pending['prior'][:3,3]
         if self.center is None or bool(cp.max(cp.abs(cp.asarray(center)-self.center))>registration.cfg['submap_rebuild_distance_m']):
             local=registration.map[cp.all(cp.abs(registration.map-cp.asarray(center))<cp.asarray(registration.cfg['submap_half_extent_m']),axis=1)]
@@ -199,30 +213,30 @@ class MonteCarloState:
         if not bool(cp.any(valid)):
             self.measurement=dict(applied=False,reason='all_particles_low_coverage',max_coverage=float(cp.max(coverage)),points=len(p))
             return self.T.copy()
-        likelihood=-c['effective_points']*costs/(2*c['robust_m']**2)
-        self.logw,w,ess=normalize_log_weights(cp.where(valid,self.logw+likelihood,-cp.inf))
-        selected=cp.argmax(self.logw);self.T,self.scale=self._best()
+        # Same fixed causal scale reference as the registration regularizer.
+        # Randomly selected scales must not redefine the prior being optimized.
+        e=self.logs-cp.log(self.pending['scale'])
+        objective=costs+e*e/registration.cfg.get('log_scale_sigma',.15)**2
+        score=-c['effective_points']*objective/(2*c['robust_m']**2)
+        self.logw,w,ess=normalize_log_weights(cp.where(valid,score,-cp.inf))
+        selected=cp.argmax(self.logw);candidate,self.registration_scale=self._best()
         self.measurement=dict(applied=True,reason='common_cloud_robust_likelihood',points=len(p),ess=float(ess),
-            selected_particle=int(selected),selected_cost=float(costs[selected]),selected_coverage=float(coverage[selected]),
+            selected_particle=int(selected),selected_cost=float(costs[selected]),selected_objective=float(objective[selected]),selected_coverage=float(coverage[selected]),
+            input_points=len(points),sample_scale=self.scale,scale_reference=self.pending['scale'],scores_are_probabilities=False,
             valid_particles=int(cp.sum(valid)),max_weight=float(cp.max(w)),effective_points=c['effective_points'],
             reductions_device='cuda',refinement_scored_as_independent_measurement=False)
-        return self.T.copy()
+        return candidate
 
     def _bootstrap(self,estimate):
+        # Startup candidates have already been independently refined by v7's
+        # geometric initializer. Record their count; no posterior is carried.
         init=estimate.get('initialization') or {}
-        anchors=[r for r in init.get('refinements',[]) if r.get('eligible')]
-        if not anchors:anchors=[dict(T=estimate['T'],scale=estimate['scale'])]
-        R=cp.asarray([np.asarray(a['T'])[:3,:3] for a in anchors]);p=cp.asarray([np.asarray(a['T'])[:3,3] for a in anchors])
-        scales=cp.asarray([a['scale'] for a in anchors]);ids=cp.arange(self.n)%len(anchors)
-        self.R=rotation_exp(self._noise((self.n,3),self.cfg['bootstrap_rotation_std_rad']))@R[ids]
-        self.p=p[ids]+self._noise((self.n,3),self.cfg['bootstrap_position_std_m'])
-        self.logs=cp.log(scales[ids])+self._noise(self.n,self.cfg['bootstrap_log_scale_std']);self._bound_scales()
-        self.logw.fill(-cp.log(float(self.n)))
-        self.R[0]=cp.asarray(estimate['T'][:3,:3]);self.p[0]=cp.asarray(estimate['T'][:3,3]);self.logs[0]=cp.log(estimate['scale'])
-        self.representative=0
-        self.v[:]=cp.asarray(self.imu_cfg['initial_velocity_map_mps'])
-        self.bg=cp.asarray(self.imu_cfg['initial_gyro_bias_radps'])+self._noise((self.n,3),1.)*cp.asarray(self.imu_cfg['initial_std'][12:15])
-        return len(anchors)
+        anchors=[row for row in init.get('refinements',[]) if row.get('eligible')]
+        self.R=cp.broadcast_to(cp.asarray(estimate['T'][:3,:3]),(self.n,3,3)).copy()
+        self.p=cp.broadcast_to(cp.asarray(estimate['T'][:3,3]),(self.n,3)).copy()
+        self.logs=cp.full(self.n,cp.log(estimate['scale']),dtype=cp.float64)
+        self.logw.fill(-cp.log(float(self.n)));self.representative=0
+        return len(anchors) or 1
 
     def commit(self,estimate):
         if self.pending is None:raise RuntimeError('Predict before committing')
@@ -230,22 +244,29 @@ class MonteCarloState:
         valid=valid_pose(candidate) and np.isfinite(scale) and self.bounds[0]<scale<self.bounds[1]
         accepted=bool(estimate['accepted']) and valid and not pending['stationary']
         reason='stationary_visual_imu_hold' if pending['stationary'] else 'invalid_candidate_pose_or_scale' if estimate['accepted'] and not valid else estimate['reason']
-        bootstrap=accepted and not self.initialized;resampled=False;ancestors=None;anchor_count=None
+        bootstrap=accepted and not self.initialized;anchor_count=None
+        motion_gate=dict(checked=False,reason='bootstrap_or_hold_or_rejected')
+        if accepted and not bootstrap:
+            dt=pending['dt'];old=cp.asarray(pending['previous_T'])
+            distance=cp.linalg.norm(cp.asarray(candidate[:3,3])-old[:3,3])
+            relative=cp.asarray(candidate[:3,:3])@old[:3,:3].T
+            angle=cp.arccos(cp.clip((cp.trace(relative)-1)*.5,-1.,1.))
+            speed=float(distance/dt);turn=float(angle/dt)
+            gate=bool(speed<=self.motion_limits['max_speed_mps'] and turn<=self.motion_limits['max_rotation_rate_radps'])
+            motion_gate=dict(checked=True,accepted=gate,translation_speed_mps=speed,rotation_rate_radps=turn,
+                             max_speed_mps=self.motion_limits['max_speed_mps'],max_rotation_rate_radps=self.motion_limits['max_rotation_rate_radps'],
+                             source='same_physical_limits_as_visual_motion_gate')
+            if not gate:accepted=False;reason='map_motion_limit'
         if accepted:
-            if bootstrap:anchor_count=self._bootstrap(estimate)
-            elif self.measurement['applied']:
-                self.logw,w,ess=normalize_log_weights(self.logw)
-                self.representative=int(cp.argmax(self.logw))
-                if bool(ess<self.cfg['ess_fraction']*self.n):
-                    ids=systematic_indices(w,self.rng);ancestors=int(cp.unique(ids).size)
-                    self.representative=int(cp.flatnonzero(ids==self.representative)[0])
-                    self.R=self.R[ids].copy();self.p=self.p[ids].copy();self.v=self.v[ids].copy()
-                    self.bg=self.bg[ids].copy();self.logs=self.logs[ids].copy();self.logw.fill(-cp.log(float(self.n)))
-                    resampled=True
+            if bootstrap:
+                anchor_count=self._bootstrap(estimate)
+                self.anchor_v=cp.asarray(self.imu_cfg['initial_velocity_map_mps'],dtype=cp.float64).copy()
             self.T=candidate.copy();self.scale=scale;self.initialized=True
         else:
-            # A failed refinement must not commit an unsupported cloud update.
             self.logw=pending['logw'];self.T=pending['prior'].copy();self.scale=pending['scale']
+        # Commit one coherent state, including after rejection and stationary hold.
+        self.anchor_R=cp.asarray(self.T[:3,:3]).copy();self.anchor_p=cp.asarray(self.T[:3,3]).copy()
+        self.registration_scale=self.scale
         d=None
         if valid:
             # Diagnostics use device reductions too; no CPU rotation-vector sum.
@@ -256,9 +277,11 @@ class MonteCarloState:
         cloud=dict(self.measurement,committed=bool(accepted and self.measurement['applied']),
                    rolled_back=bool(not accepted and self.measurement['applied']))
         update=dict(bootstrap=bool(bootstrap),measurement_accepted=bool(accepted),kalman_used=False,
-            particles=self.n,cloud=cloud,resampled=resampled,unique_ancestors=ancestors,
+            particles=self.n,cloud=cloud,resampled=False,unique_ancestors=None,
+            search_mode='causal_local_monte_carlo_search',scores_are_probabilities=False,
+            next_prediction_matches_output=True,motion_gate=motion_gate,
             bootstrap_anchors=anchor_count,posterior_recentered_by_refinement=False)
         self.pending=None
         return dict(accepted=bool(accepted),reason=reason,prediction=self.prediction_diagnostics['mode'],
-            decision='initialized_from_registration' if bootstrap else 'monte_carlo_refined_registration' if accepted else 'stationary_pose_hold' if pending['stationary'] else 'retained_particle_prediction',
+            decision='initialized_from_registration' if bootstrap else 'monte_carlo_refined_registration' if accepted else 'stationary_pose_hold' if pending['stationary'] else 'retained_causal_prediction',
             delta=d,inertial=dict(prediction=self.prediction_diagnostics,update=update),monte_carlo=update)
