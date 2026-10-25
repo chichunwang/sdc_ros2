@@ -1,68 +1,12 @@
 # Midterm01 Track3 GPU 定位
 
-目前可執行版本是 `track3_cuda_v7_multihypothesis_startup`。官方 `init_guess.txt` 保留作粗略搜尋起點；首個 map anchor 由本幀點雲與 LiDAR XYZ 地圖決定。v7 讓既有的每個 ground／scale／yaw 候選完整經過 NDT→ICP，再用相同非地面點、角度權重與截斷 Cauchy cost，比較通過品質檢查的結果。這處理「過早只選一個局部解」的初始化風險；不是全域最優保證，也尚無 v7 真實定位或成績證據。原因、模型、合成驗證與圖表見 [doc59](doc/59_V7_STARTUP_HYPOTHESES_20261025.md)。
+這個專案把每幀相機重建的 3D 點雲對齊 LiDAR 地圖，求出相機的位置、方向與尺度。目前版本是 **v7**（`track3_cuda_v7_multihypothesis_startup`）。
 
-v7 的最終生成資料與 CUDA regression suite 為 **141 passed**，耗時 **227.42 s**，另有 1 個既有 Matplotlib Axes3D warning；[測試紀錄](outputs/run/track00_test_2610251515/pytest.xml)與[圖表、數值及來源 SHA](outputs/run/track00_test_2610251515/analysis/README.md)均保留在該 run。已核對 60 個程式／設定／測試檔與受測快照 SHA 相同。本次沒有執行真實短段或 full；合成結果不代表實際首段偏移已消除。
+v7 改善首個定位點的選擇方式：以官方初始 pose 為搜尋起點，讓多個候選各自完成配準，再比較哪個與本幀地圖幾何最一致。首幀流程、修改原因與驗證範圍見 [v7 首幀說明](doc/59_V7_STARTUP_HYPOTHESES_20261025.md)。
 
-v7 沿用 v6 的 ESKF 與單次量測內 yaw Huber covariance inflation：當 prediction 與 map yaw 差異小於 3 sigma 時維持原權重。gyro、map 量測信任度及使用者的 `(1,6,0)` 度外參仍由 [track3/imu_parameters.py](track3/imu_parameters.py) 讀取；這次未調整 fusion／noise 參數。操作與限制見 [doc58](doc/58_CAUSAL_YAW_AND_FUSION_TUNING_20261025.md)。
+**目前狀態：**141 項合成與 CUDA 檢查通過。本次文件更新時，你啟動的 [v7 full](outputs/run/track03_full_2610251527/test_info.json) 正在執行，首幀已採用新的候選；完整定位效果與成績仍待確認。[前一輪診斷與測試圖表](outputs/run/track00_test_2610251515/analysis/README.md)已保留。
 
-v6 的歷史生成資料與 CUDA regression 測試為 **136 passed**，耗時 46.26 s，另有既有 Matplotlib Axes3D warning；紀錄見 [測試 run](outputs/run/track00_test_2610251412/pytest.xml)。使用者之後執行的 [v6 短段](outputs/run/track03_test_2610251424/test_info.json) 已完成 1257 幀，並非 full，也沒有成績證據。下方 v4／v5 成績與診斷均為歷史紀錄。
-
-v5 IMU full 已完成 3142 幀；使用者回報成績 1.29，v4 full 回報 1.26，借來的外部 CSV 回報 0.65；分數來源記為使用者回報。唯讀逐幀對照顯示 v5 在 frame 2200–2600 的外部軌跡差異明顯小於 v4，但前 300 幀的 yaw 差異較大；外部軌跡不是 ground truth，不能據此判定真實誤差或精確解釋分數。v4／v5 也同時改變 fusion、尺度和 stationary 策略，不能把分數差歸因於 IMU 單一因素。官方 Public 僅評估長度未知的前 5–40% prefix，轉彎區約位於全序列 70–83%，因此其改善不會直接反映在這個 Public 前段分數。分析與限制見[doc56](doc/56_V5_SCORE_AND_HEADING_DIAGNOSIS_20261025.md)及唯讀比較圖表[README](outputs/run/track00_test_2610251302/analysis/README.md)；不建議原樣重跑同一 v5 版本期待分數改善。
-
-v5 修正版版本為 `track3_cuda_v5_clock_body_velocity_map_scale`。它延續 doc50 的初始化、相機遮罩、CUDA 去噪與 NDT→ICP 配準，以及 doc51 的 CUDA 搜尋和顯存管理；包含 ROS bag IMU、15-state error-state Kalman filter、相機擷取時間對齊、當前 IMU 座標的視覺速度量測，以及停車約束。尺度依運動狀態處理：移動時由地圖配準共同估計 Sim(3)，確認靜止且尺度證據可靠時才用因果視覺尺度並固定當幀尺度。frame 950／2400 的診斷見[舊版尺度、靜止與轉彎說明](doc/53_V5_SCALE_STATIONARY_TURN_20261025.md)，此次計時與點雲錯位修正及真實短段證據見[doc55](doc/55_V5_STARTUP_CLOCK_FIX_20261025.md)；IMU 模型與外參判讀見[doc52](doc/52_V5_IMU_EKF_20261025.md)。使用者目前在 [track3/imu_parameters.py](track3/imu_parameters.py) 設定 `IMU_RPY_DEG = (1.0, 6.0, 0.0)`；此為逐次測試中的外參假設，並未標定。
-
-從 frame 0 重跑的 80 幀測試 [`track03_test_2610251132`](outputs/run/track03_test_2610251132/test_info.json) 接受 63/80 幀，最長連續拒絕 13 幀。相同 masked／denoised 點雲的幾何檢查顯示 frame 79 最近 map 點距離中位數，舊 v5 為 1.606 m、修正版為 0.231 m；這是幾何一致性指標，不是 ground truth 或定位精度證明。新的從頭 300 幀短段 [`track03_test_2610251140`](outputs/run/track03_test_2610251140/test_info.json) 已完成，接受 map update 268/300 幀，最長連續拒絕 13 幀。idx 299 的位置為 `(567.314498, -188.355570, 8.534851) m`、scale `7.049991`、ESKF 速度大小 `9.576343 m/s`；該幀接受 map update，拒絕連續數為 0。使用共同 12,000 點集計算的 frame 299 最近 map 距離中位數為修正版 `0.2363 m`、v4 `0.1640 m`；修正版有 88.16% 點在 0.5 m 內，v4 為 96.99%。舊 v5 的 12,000 點都超出 3 m 搜尋半徑，所以其 capped median `3.0 m` 不是實際誤差中位數。這些是幾何一致性指標，不是 ground truth。分析圖表見該 run 的 [`analysis/`](outputs/run/track03_test_2610251140/analysis/README.md)。
-
-300 幀測試只涵蓋 frame 0–299，沒有涵蓋 frame 950 停車或 frame 2200 以後的轉彎，不能視為 full Track 已修好。時間與輸出契約稽核在該 run 的 [contract audit](outputs/run/track03_test_2610251140/contract_audit.json)：camera/IMU 雙時間因果條件及 CSV/TXT/pose trace 一致性通過；其前 80 幀 pose、尺度、map 決策和 `poses.txt` 位元組與獨立 80 幀測試完全相同。早期 v5 的 89 項生成資料 CUDA／機制測試紀錄保留於 [pytest XML](outputs/run/track00_test_2610250847/gpu_pytest.xml)，沒有替代新版本檢查或真實精度證據。
-
-修正版機制驗證記錄在 [`track00_test_2610251134`](outputs/run/track00_test_2610251134/)。107 個 distinct tests 首輪為 106 passed、1 failed；唯一失敗是生成測試中 IMU 非單位外參做 `T E inv(E)` 往返後產生 `1.11e-16` 浮點差，舊斷言使用 `array_equal`。只將 IMU 首 anchor 斷言改為 `atol=2e-15` 後，兩個 runner case 都通過（2.27 s）；首輪其餘 106 case 保持原樣通過（43.22 s）。這是修正後每個 distinct case 均有通過證據，不代表曾有一輪未修改來源的 107/107 全通過。該測試設定明確使用 identity 合成外參；使用者的 `(1,6,0)` Python RPY 設定未改。
-
-`track3/imu.py` 以唯讀方式逐步讀 Track3 SQLite bag 的 `/imu/data`，只消費抵達時間不晚於當前 PLY 的訊息。`track3/time_alignment.py` 從同一 bag 讀取當前影像 header 時間；IMU 只積分到已抵達、且 header 時間不晚於該影像擷取時刻的樣本。已抵達但量測時間較晚的樣本會緩存到後續影格，遲到的舊樣本不回頭修改 pose。原始 PLY 的 bag timestamp 和輸出順序不變。定位不讀取 IMU orientation 或 GNSS。`track3/inertial.py` 以 IMU 原點為 nominal state，保存 map 座標的位置、速度、姿態及 IMU accelerometer／gyroscope bias；首筆可信地圖配準初始化 pose anchor，後續配準經 NIS gate 後作 EKF 更新。配準失敗或 NIS 不接受時，輸出本幀 IMU／視覺速度 prediction；通過靜止判斷時保留上一個錨定 pose。
-
-`T_ply_imu` 是 `imu_link` 到相機 PLY（FLU）的變換，採 `p_ply = R_ply_imu * p_imu + t_ply_imu`；輸出 map pose 時使用其逆變換。程式直接從 `track3/imu_parameters.py` 讀取使用者選定的 roll、pitch、yaw 和平移；目前 RPY 為 `(1,6,0)` 度，仍是未標定的測試設定。map 重力方向假設為 `[0,0,-9.80665] m/s²`。bag covariance 全零代表未知；濾波的 IMU noise 和配準量測標準差是未校正的 engineering priors。PLY 的 scale 把重建的 raw units 換成公尺，raw units 隨影格變化時 scale 也可能變化。Visual PnP 依目前 IMU 座標轉成速度量測再由 ESKF 融合，不是把兩套 pose 直接疊加。競賽規則見 [midterm01/AGENTS.md](../midterm01/AGENTS.md)。
-
-```mermaid
-flowchart TD
-    A[Initial Guess] --> KF[ESKF 初始化：Pose、速度、bias、covariance]
-    I[唯讀 Track3.db3 /imu/data] --> PRE[抵達時間與量測時間都不晚於目前影格]
-    C[前視相機 JPG + PLY] --> D[官方 ego mask、rectified FOV、CUDA SOR]
-    D --> MOT[目前與過去影像追蹤 + PLY 3D 對應]
-    MOT --> SCALE[相鄰 3D 距離比：估計 raw PLY 單位變化]
-    MOT --> REST{影像、gyro、時間與 3D 支持都符合靜止？}
-    PRE --> PRED[ESKF prediction：IMU、重力、尺度、視覺速度]
-    KF --> PRED
-    SCALE --> PRED
-    REST -->|靜止| ZUPT[保留錨定 Pose；零速度與 bias 約束]
-    REST -->|移動| VVEL[目前／前一影格 PnP 相對位移]
-    VVEL --> PRED
-    PRED --> PRIOR[預測 Pose、速度與 covariance]
-    M[LiDAR map XYZ] --> S[Prior 附近 local submap]
-    PRIOR --> REG[NDT 粗配準 → ICP 細配準]
-    D --> REG
-    S --> REG
-    REG --> Q{registration quality gate 通過？}
-    Q -->|否| HOLD[保留 IMU／視覺 prediction]
-    Q -->|是| FIRST{首筆 map anchor？}
-    FIRST -->|是| BOOT[Pose bootstrap 與 covariance 初始化]
-    FIRST -->|否| LOCK{靜止 Pose hold？}
-    LOCK -->|是| ZUPT
-    LOCK -->|否| NIS{innovation NIS gate 通過？}
-    NIS -->|否| HOLD
-    NIS -->|是| UPD[Kalman measurement update]
-    ZUPT --> POSE[Final Pose]
-    HOLD --> POSE
-    UPD --> POSE
-    BOOT --> POSE
-    POSE --> NEXT[下一幀狀態；不回改歷史]
-    NEXT --> PRED
-    POSE --> R[PLY 點雲轉到 Map 並輸出]
-    POSE --> RVIZ[RViz Pose / Path / Cloud]
-```
-
-靜止時 runner 仍可計算 registration 候選作診斷，但 commit 會保留錨定 pose，不採用該候選。
-
-初始姿態來自 `init_guess.txt`。第 0 幀是第一個 pose anchor，本身沒有先前影格可供估計運動；GroundInitializer 以相機與地圖的地面平面建立 roll／pitch 和高度候選，並以非地面幾何匹配產生 translation、yaw 與 scale 候選。這些只是配準 seed，最終仍須通過 NDT／ICP 品質閘門；首筆可信 registration 會建立 map pose 與絕對 scale anchor，不將初始化跳變解釋成速度。其後移動時 registration 可共同更新 pose 與 scale；只有通過視覺靜止判定且有足夠近距離 3D 支持時，才採用因果 3D 點對長度比例並固定當幀尺度。配準若被接受，依其尺度共同更新 map anchor；若被拒絕，則沿用 prior 的 pose／尺度。靜止時 ESKF 保留錨定 pose、約束零速度並更新 bias；移動時用前後影格 PnP 相對位移形成速度量測。新機制與已知限制見 [doc55](doc/55_V5_STARTUP_CLOCK_FIX_20261025.md)。道路 PCA 是無向軸，初始化本身不能證明車頭朝道路前進方向，也不指定固定前進速度。
+要執行定位，從下方「啟動與測試」開始。要修改 IMU 外參或融合參數，直接編輯 [imu_parameters.py](track3/imu_parameters.py)，各參數意義見 [IMU 與 yaw 融合說明](doc/58_CAUSAL_YAW_AND_FUSION_TUNING_20261025.md)。
 
 ## 啟動與測試
 
@@ -153,6 +97,9 @@ RViz 發布 `/track3/map`、`/track3/submap`、`/track3/current_cloud`、`/track
 
 v5 IMU full 的標準圖成功後，自動增加 `analysis/imu/` 的融合與輸入耗時 PNG/PDF、metrics 和來源 manifest；若這部分失敗，另記 `imu_analysis_status.json`，定位成功狀態保留。
 
+<details>
+<summary>歷史性能、顯存與版本限制</summary>
+
 ## 性能與顯存監測
 
 RTX 5060 上的生成資料 GPU 測試 55 項通過，耗時 93.61 s，另有一項既有 Matplotlib `Axes3D` warning。元件 wall-time 中位數為：pixel nearest 235×、NDT voxel search 76×、ICP voxel search 59×；限定兩階段的合成 registration 為 2.22×。這些是個別元件／合成條件的比較，不是完整 Track 加速倍數。對應點、合成 solver pose/scale 與 gate 的比較皆通過。明細見[比較紀錄](outputs/run/track00_test_2610242232/comparison.json)及[GPU 測試紀錄](outputs/run/track00_test_2610242232/gpu_pytest.xml)。
@@ -175,6 +122,8 @@ v4 真實 frame 0 短段 run [`track03_test_2610242114`](outputs/run/track03_tes
 
 v4 的合成 initializer 檢查以 scale 7 為輸入，兩個 scale 候選分別恢復至約 7.0132 和 7.0134。這驗證的是合成幾何機制，不代表真實 Track3 的尺度或定位已修正。v1/v2 歷史 run 和首段幾何分析仍保存在 `outputs/run/`；詳見[首段資料稽核](doc/49_DATA_FIRST_FRAME_AUDIT_20261024.md)。
 
+</details>
+
 ## 在另一台電腦建立容器
 
 先準備 NVIDIA driver 與 NVIDIA Container Toolkit，再於主機執行：
@@ -188,3 +137,68 @@ TRACK3_BASE_IMAGE=sdc_midterm01_gpu_ros2:cuda12.8 ./scripts/dev.sh build
 v4 的執行環境恢復 `PyYAML 6.0.2`，Dockerfile 安裝 `python3-opencv`；本次容器實際讀得 OpenCV `cv2 4.5.4`。若沒有相容的 CUDA 12.8／ROS 2 Humble base image，先以 `Dockerfile.base` 建立專用 base。這個工作區使用自己的 Compose project，不重啟 Docker daemon，也不停止或重建其他課程容器。
 
 doc50 的 v4 最終 35 項合成／數值／CUDA／ROS 檢查通過，紀錄於 `outputs/run/track00_test_2610242124/`。首段固定 pose 的共同點集最近 map 點距離中位數由約 0.837 m 降到 0.182 m，地面法向差由 18.32° 降到 0.48°；這是幾何一致性，不是 ground truth 定位誤差。完整說明見[當次診斷](doc/50_STARTUP_SCALE_NOISE_FIX_20261024.md)。
+
+<details>
+<summary>v4–v6 的結果、IMU 流程與首段診斷</summary>
+
+以下保留當時的版本紀錄。現行 v7 首幀流程以 [v7 首幀說明](doc/59_V7_STARTUP_HYPOTHESES_20261025.md)為準。
+
+v6 的歷史生成資料與 CUDA regression 測試為 **136 passed**，耗時 46.26 s，另有既有 Matplotlib Axes3D warning；紀錄見 [測試 run](outputs/run/track00_test_2610251412/pytest.xml)。使用者之後執行的 [v6 短段](outputs/run/track03_test_2610251424/test_info.json) 已完成 1257 幀，並非 full，也沒有成績證據。下方 v4／v5 成績與診斷均為歷史紀錄。
+
+v5 IMU full 已完成 3142 幀；使用者回報成績 1.29，v4 full 回報 1.26，借來的外部 CSV 回報 0.65；分數來源記為使用者回報。唯讀逐幀對照顯示 v5 在 frame 2200–2600 的外部軌跡差異明顯小於 v4，但前 300 幀的 yaw 差異較大；外部軌跡不是 ground truth，不能據此判定真實誤差或精確解釋分數。v4／v5 也同時改變 fusion、尺度和 stationary 策略，不能把分數差歸因於 IMU 單一因素。官方 Public 僅評估長度未知的前 5–40% prefix，轉彎區約位於全序列 70–83%，因此其改善不會直接反映在這個 Public 前段分數。分析與限制見[doc56](doc/56_V5_SCORE_AND_HEADING_DIAGNOSIS_20261025.md)及唯讀比較圖表[README](outputs/run/track00_test_2610251302/analysis/README.md)；不建議原樣重跑同一 v5 版本期待分數改善。
+
+v5 修正版版本為 `track3_cuda_v5_clock_body_velocity_map_scale`。它延續 doc50 的初始化、相機遮罩、CUDA 去噪與 NDT→ICP 配準，以及 doc51 的 CUDA 搜尋和顯存管理；包含 ROS bag IMU、15-state error-state Kalman filter、相機擷取時間對齊、當前 IMU 座標的視覺速度量測，以及停車約束。尺度依運動狀態處理：移動時由地圖配準共同估計 Sim(3)，確認靜止且尺度證據可靠時才用因果視覺尺度並固定當幀尺度。frame 950／2400 的診斷見[舊版尺度、靜止與轉彎說明](doc/53_V5_SCALE_STATIONARY_TURN_20261025.md)，此次計時與點雲錯位修正及真實短段證據見[doc55](doc/55_V5_STARTUP_CLOCK_FIX_20261025.md)；IMU 模型與外參判讀見[doc52](doc/52_V5_IMU_EKF_20261025.md)。使用者目前在 [track3/imu_parameters.py](track3/imu_parameters.py) 設定 `IMU_RPY_DEG = (1.0, 6.0, 0.0)`；此為逐次測試中的外參假設，並未標定。
+
+從 frame 0 重跑的 80 幀測試 [`track03_test_2610251132`](outputs/run/track03_test_2610251132/test_info.json) 接受 63/80 幀，最長連續拒絕 13 幀。相同 masked／denoised 點雲的幾何檢查顯示 frame 79 最近 map 點距離中位數，舊 v5 為 1.606 m、修正版為 0.231 m；這是幾何一致性指標，不是 ground truth 或定位精度證明。新的從頭 300 幀短段 [`track03_test_2610251140`](outputs/run/track03_test_2610251140/test_info.json) 已完成，接受 map update 268/300 幀，最長連續拒絕 13 幀。idx 299 的位置為 `(567.314498, -188.355570, 8.534851) m`、scale `7.049991`、ESKF 速度大小 `9.576343 m/s`；該幀接受 map update，拒絕連續數為 0。使用共同 12,000 點集計算的 frame 299 最近 map 距離中位數為修正版 `0.2363 m`、v4 `0.1640 m`；修正版有 88.16% 點在 0.5 m 內，v4 為 96.99%。舊 v5 的 12,000 點都超出 3 m 搜尋半徑，所以其 capped median `3.0 m` 不是實際誤差中位數。這些是幾何一致性指標，不是 ground truth。分析圖表見該 run 的 [`analysis/`](outputs/run/track03_test_2610251140/analysis/README.md)。
+
+300 幀測試只涵蓋 frame 0–299，沒有涵蓋 frame 950 停車或 frame 2200 以後的轉彎，不能視為 full Track 已修好。時間與輸出契約稽核在該 run 的 [contract audit](outputs/run/track03_test_2610251140/contract_audit.json)：camera/IMU 雙時間因果條件及 CSV/TXT/pose trace 一致性通過；其前 80 幀 pose、尺度、map 決策和 `poses.txt` 位元組與獨立 80 幀測試完全相同。早期 v5 的 89 項生成資料 CUDA／機制測試紀錄保留於 [pytest XML](outputs/run/track00_test_2610250847/gpu_pytest.xml)，沒有替代新版本檢查或真實精度證據。
+
+修正版機制驗證記錄在 [`track00_test_2610251134`](outputs/run/track00_test_2610251134/)。107 個 distinct tests 首輪為 106 passed、1 failed；唯一失敗是生成測試中 IMU 非單位外參做 `T E inv(E)` 往返後產生 `1.11e-16` 浮點差，舊斷言使用 `array_equal`。只將 IMU 首 anchor 斷言改為 `atol=2e-15` 後，兩個 runner case 都通過（2.27 s）；首輪其餘 106 case 保持原樣通過（43.22 s）。這是修正後每個 distinct case 均有通過證據，不代表曾有一輪未修改來源的 107/107 全通過。該測試設定明確使用 identity 合成外參；使用者的 `(1,6,0)` Python RPY 設定未改。
+
+`track3/imu.py` 以唯讀方式逐步讀 Track3 SQLite bag 的 `/imu/data`，只消費抵達時間不晚於當前 PLY 的訊息。`track3/time_alignment.py` 從同一 bag 讀取當前影像 header 時間；IMU 只積分到已抵達、且 header 時間不晚於該影像擷取時刻的樣本。已抵達但量測時間較晚的樣本會緩存到後續影格，遲到的舊樣本不回頭修改 pose。原始 PLY 的 bag timestamp 和輸出順序不變。定位不讀取 IMU orientation 或 GNSS。`track3/inertial.py` 以 IMU 原點為 nominal state，保存 map 座標的位置、速度、姿態及 IMU accelerometer／gyroscope bias；首筆可信地圖配準初始化 pose anchor，後續配準經 NIS gate 後作 EKF 更新。配準失敗或 NIS 不接受時，輸出本幀 IMU／視覺速度 prediction；通過靜止判斷時保留上一個錨定 pose。
+
+`T_ply_imu` 是 `imu_link` 到相機 PLY（FLU）的變換，採 `p_ply = R_ply_imu * p_imu + t_ply_imu`；輸出 map pose 時使用其逆變換。程式直接從 `track3/imu_parameters.py` 讀取使用者選定的 roll、pitch、yaw 和平移；目前 RPY 為 `(1,6,0)` 度，仍是未標定的測試設定。map 重力方向假設為 `[0,0,-9.80665] m/s²`。bag covariance 全零代表未知；濾波的 IMU noise 和配準量測標準差是未校正的 engineering priors。PLY 的 scale 把重建的 raw units 換成公尺，raw units 隨影格變化時 scale 也可能變化。Visual PnP 依目前 IMU 座標轉成速度量測再由 ESKF 融合，不是把兩套 pose 直接疊加。競賽規則見 [midterm01/AGENTS.md](../midterm01/AGENTS.md)。
+
+```mermaid
+flowchart TD
+    A[Initial Guess] --> KF[ESKF 初始化：Pose、速度、bias、covariance]
+    I[唯讀 Track3.db3 /imu/data] --> PRE[抵達時間與量測時間都不晚於目前影格]
+    C[前視相機 JPG + PLY] --> D[官方 ego mask、rectified FOV、CUDA SOR]
+    D --> MOT[目前與過去影像追蹤 + PLY 3D 對應]
+    MOT --> SCALE[相鄰 3D 距離比：估計 raw PLY 單位變化]
+    MOT --> REST{影像、gyro、時間與 3D 支持都符合靜止？}
+    PRE --> PRED[ESKF prediction：IMU、重力、尺度、視覺速度]
+    KF --> PRED
+    SCALE --> PRED
+    REST -->|靜止| ZUPT[保留錨定 Pose；零速度與 bias 約束]
+    REST -->|移動| VVEL[目前／前一影格 PnP 相對位移]
+    VVEL --> PRED
+    PRED --> PRIOR[預測 Pose、速度與 covariance]
+    M[LiDAR map XYZ] --> S[Prior 附近 local submap]
+    PRIOR --> REG[NDT 粗配準 → ICP 細配準]
+    D --> REG
+    S --> REG
+    REG --> Q{registration quality gate 通過？}
+    Q -->|否| HOLD[保留 IMU／視覺 prediction]
+    Q -->|是| FIRST{首筆 map anchor？}
+    FIRST -->|是| BOOT[Pose bootstrap 與 covariance 初始化]
+    FIRST -->|否| LOCK{靜止 Pose hold？}
+    LOCK -->|是| ZUPT
+    LOCK -->|否| NIS{innovation NIS gate 通過？}
+    NIS -->|否| HOLD
+    NIS -->|是| UPD[Kalman measurement update]
+    ZUPT --> POSE[Final Pose]
+    HOLD --> POSE
+    UPD --> POSE
+    BOOT --> POSE
+    POSE --> NEXT[下一幀狀態；不回改歷史]
+    NEXT --> PRED
+    POSE --> R[PLY 點雲轉到 Map 並輸出]
+    POSE --> RVIZ[RViz Pose / Path / Cloud]
+```
+
+靜止時 runner 仍可計算 registration 候選作診斷，但 commit 會保留錨定 pose，不採用該候選。
+
+初始姿態來自 `init_guess.txt`。第 0 幀是第一個 pose anchor，本身沒有先前影格可供估計運動；GroundInitializer 以相機與地圖的地面平面建立 roll／pitch 和高度候選，並以非地面幾何匹配產生 translation、yaw 與 scale 候選。這些只是配準 seed，最終仍須通過 NDT／ICP 品質閘門；首筆可信 registration 會建立 map pose 與絕對 scale anchor，不將初始化跳變解釋成速度。其後移動時 registration 可共同更新 pose 與 scale；只有通過視覺靜止判定且有足夠近距離 3D 支持時，才採用因果 3D 點對長度比例並固定當幀尺度。配準若被接受，依其尺度共同更新 map anchor；若被拒絕，則沿用 prior 的 pose／尺度。靜止時 ESKF 保留錨定 pose、約束零速度並更新 bias；移動時用前後影格 PnP 相對位移形成速度量測。新機制與已知限制見 [doc55](doc/55_V5_STARTUP_CLOCK_FIX_20261025.md)。道路 PCA 是無向軸，初始化本身不能證明車頭朝道路前進方向，也不指定固定前進速度。
+
+</details>
