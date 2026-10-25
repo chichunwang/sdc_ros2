@@ -50,5 +50,9 @@ git branch
 git switch release/1.0.0
 ```
 
+回復到上一個commit
+```bash
+git reset --hard 789abcd
+```
 
 
