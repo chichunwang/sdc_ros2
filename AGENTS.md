@@ -16,6 +16,7 @@
 ## 工作範圍與資料保護
 
 - 使用繁體中文說明與記錄，保留英文技術名詞及使用者既有修改。
+- 參數調整優先提供可直接修改的 Python 檔案與確切位置，執行指令盡量簡潔固定；不以增加 scripts 選項或產生多份設定檔作為主要操作流程。
 - Midterm01 的開發、建置與測試統一使用 `midterm01_gpu/`；開工先讀其 [README](midterm01_gpu/README.md) 與 [AGENTS.md](midterm01_gpu/AGENTS.md)。`midterm01/` 保留 CPU 參考程式、既有結果與共用原始資料；`hw2/`、`hw3/`、`hw4/` 保留各自用途。
 - 不搬移、覆寫或重算既有 CPU 結果，不改原始資料、bag、既有 CSV／矩陣／manifest。舊 metadata 路徑只在讀取時解析，不回寫證據檔；確認缺檔後才補下載。
 - Docker 指令在 Ubuntu 主機執行，ROS／colcon 在對應容器執行。GPU 啟停使用自己的 `scripts/dev.sh`，不重啟 Docker daemon 或停止／重建 CPU project；容器內同名路徑不可當成同一份主機資料。

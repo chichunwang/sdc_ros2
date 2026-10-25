@@ -1,5 +1,5 @@
 {
-  "version": "track3_cuda_v4_perf_v1",
+  "version": "track3_cuda_v5_clock_body_velocity_map_scale",
   "data_dir": "/workspace/midterm01/data/Track3",
   "ply_subdir": "raw_ply",
   "expected_frames": 3142,
@@ -88,7 +88,69 @@
       ]
     }
   },
-  "prediction": "visual_pnp",
+  "prediction": "imu_eskf",
+  "camera_mask": true,
+  "motion_constraints": true,
+  "imu": {
+    "bag_file": "Track3.db3",
+    "topic": "/imu/data",
+    "frame_id": "imu_link",
+    "extrinsic_source": "python",
+    "gravity_map_mps2": [
+      0,
+      0,
+      -9.80665
+    ],
+    "initial_velocity_map_mps": [
+      0,
+      0,
+      0
+    ],
+    "initial_accel_bias_mps2": [
+      0,
+      0,
+      0
+    ],
+    "initial_gyro_bias_radps": [
+      0,
+      0,
+      0
+    ],
+    "initial_std": [
+      10,
+      10,
+      10,
+      10,
+      10,
+      10,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.5,
+      0.05,
+      0.05,
+      0.05
+    ],
+    "registration_std": [
+      0.5,
+      0.5,
+      0.5,
+      0.0872664626,
+      0.0872664626,
+      0.0872664626
+    ],
+    "accel_noise_density": 0.2,
+    "gyro_noise_density": 0.02,
+    "accel_bias_random_walk": 0.01,
+    "gyro_bias_random_walk": 0.001,
+    "noise_source": "Explicit uncalibrated engineering priors; all-zero bag covariance means unknown, not zero noise. No accuracy claim.",
+    "max_integration_step_s": 0.01,
+    "max_sample_age_s": 0.1,
+    "nis_probability": 0.999,
+    "time_basis": "camera_header"
+  },
   "visual_prior": {
     "max_features": 1200,
     "min_inliers": 30,

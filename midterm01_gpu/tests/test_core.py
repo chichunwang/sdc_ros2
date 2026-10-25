@@ -10,6 +10,8 @@ from track3.gpu import cp, keys, voxel_mean, VoxelModel, jacobian, linearize, Re
 CFG=json.loads((Path(__file__).resolve().parents[1]/'config/track3.json').read_text())
 # Generated mathematical fixtures have no road scene or image stream.
 CFG['prediction']='previous_pose'
+CFG['camera_mask']=False
+CFG['motion_constraints']=False
 CFG['registration']['preprocessing']['enabled']=False
 CFG['registration']['initializer']['enabled']=False
 

@@ -150,7 +150,7 @@ class Registration:
         self.map = cp.asarray(map_points); self.cfg = cfg
         self.center = None; self.models = {}
 
-    def align(self, source, prior, initial_scale, initialize=False):
+    def align(self, source, prior, initial_scale, initialize=False, fixed_scale=False):
         cfg = self.cfg; T = prior.copy(); scale = float(initial_scale)
         preprocessing=None;initialization=None
         if not valid_pose(T) or not np.isfinite(scale) or not cfg['scale_bounds'][0] < scale < cfg['scale_bounds'][1]:
@@ -225,7 +225,12 @@ class Registration:
                 H, g, score, coverage = before
                 record.setdefault('initial_cost', float(score))
                 diag = np.maximum(np.diag(H), 1e-6)
-                delta = np.linalg.solve(H+np.diag(diag)*1e-5, -g)
+                if fixed_scale:
+                    # Scale was measured by causal 3D feature lengths. Solve SE(3),
+                    # rather than allowing a new Sim(3) scale to absorb pose error.
+                    delta=np.r_[np.linalg.solve(H[:6,:6]+np.diag(diag[:6])*1e-5,-g[:6]),0.]
+                else:
+                    delta = np.linalg.solve(H+np.diag(diag)*1e-5, -g)
                 # Trust-region limits in metres, radians and log scale.
                 f = max(1., np.linalg.norm(delta[:3])/2., np.linalg.norm(delta[3:6])/np.deg2rad(5), abs(delta[6])/0.1)
                 delta /= f
@@ -256,7 +261,9 @@ class Registration:
         if Hfinal is not None:
             Hgeometry=normal_information(sample,T,scale,model,cfg['robust_m'])
             Hgeometry[6,6]+=len(sample)/(cfg['initial_log_scale_sigma'] if initialize else cfg['log_scale_sigma'])**2
-            spatial = Hgeometry[:6,:6] - np.outer(Hgeometry[:6,6],Hgeometry[6,:6])/max(Hgeometry[6,6],1e-12)
+            spatial = Hgeometry[:6,:6].copy()
+            if not fixed_scale:
+                spatial -= np.outer(Hgeometry[:6,6],Hgeometry[6,:6])/max(Hgeometry[6,6],1e-12)
             diagonal = np.diag(spatial)
             if np.min(diagonal)>1e-10:
                 normalized = spatial / np.sqrt(diagonal[:,None]*diagonal[None,:])
@@ -269,6 +276,7 @@ class Registration:
                   'not_converged:'+stage_records[-1]['stop_reason'] if not converged else
                   'degenerate_geometry' if not observable else 'low_coverage')
         return dict(T=T, scale=scale, accepted=accepted, converged=bool(converged), reason=reason,
+                    scale_optimized=not fixed_scale,
                     preprocessing=preprocessing,initialization=initialization,
                     stages=stage_records,
                     observable=observable, normalized_min_eigenvalue=min_eigenvalue,

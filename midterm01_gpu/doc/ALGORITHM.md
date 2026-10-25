@@ -1,5 +1,7 @@
 # Track3：v4_perf_v1 CUDA 點雲配準與因果 visual prior
 
+> 目前 v5 版本為 `track3_cuda_v5_clock_body_velocity_map_scale`。時鐘、速度座標、移動／靜止尺度政策及 frame 0 起始測試見 [55｜v5 相機時間與初段修正](55_V5_STARTUP_CLOCK_FIX_20261025.md)；IMU dynamics 與外參見 [52｜v5 IMU ESKF](52_V5_IMU_EKF_20261025.md)。下文保留 v4 基礎配準與性能模型；其中 visual prior、直接 commit 和不讀 bag 的敘述適用 v4／舊 predictor，v5 使用 IMU prediction 與 Kalman update。
+
 此份算法說明對應版本 `track3_cuda_v4_perf_v1`，保留 `track3_cuda_v4_denoise_geometry_visual_prior` 的估計模型，並加入已通過 GPU 合成等價性測試的計算最佳化與 pool 監測。輸入是官方前視相機已重建 PLY；以每幀估計的正尺度 `s` 和 map pose `T=[R,t]` 將相機點轉到 LiDAR map：
 
 \[
@@ -58,7 +60,7 @@ map registration 要求最後一個 ICP 階段收斂、有效對應 coverage 至
 
 另有 synthetic initializer 以已知 scale 7 測試，兩個候選恢復為約 7.0132／7.0134；這支持合成幾何機制，不是實際場景準確度證明。v3 full `track03_full_2610242038` 已停止，輸出 254 幀、2 幀接受地圖更新，最後一次接受在 `idx=22`；停止前後來源 SHA 相符。這不是完成的 full run。尚無獨立真值、Kaggle 成績或完整 v4 Track3 精度驗證。成功完成 3142 幀 full 後才在 run `analysis/` 產生三組唯讀 PNG/PDF 與來源 SHA manifest；圖表不更改 pose 或 CSV。v1/v2 的歷史證據保留於 `outputs/run/`，更早首段幾何與 v2 失敗分析見[資料稽核](49_DATA_FIRST_FRAME_AUDIT_20261024.md)。
 
-7 幀真實 prefix `track03_test_2610242119` 在 idx 0–5 接受 map，idx 6 以 `not_converged:max_iterations` 拒絕候選並保留有效 PnP prior；6 次相鄰輸出的前向投影為正（約 0.234–0.423 m），尺度由 6.7935 至 6.7551。PnP 的內點數為 276–288，median reprojection 約 1.31–1.49 px。第一個 sensor timestamp 間隔只有 11.7 ms，因此相對速度診斷可達 25.4 m/s，不能把速度欄位當成獨立車速真值，也沒有據此改寫 timestamp 或 pose。此為只有 7 幀的短段檢查，不是 full 精度驗證。
+7 幀真實 prefix `track03_test_2610242119` 在 idx 0–5 接受 map，idx 6 以 `not_converged:max_iterations` 拒絕候選並保留有效 PnP prior；6 次相鄰輸出的前向投影為正（約 0.234–0.423 m），尺度由 6.7935 至 6.7551。PnP 的內點數為 276–288，median reprojection 約 1.31–1.49 px。當時使用的 11.7 ms 是兩張影像的 bag arrival 間隔；paired camera header acquisition 間隔為 35.876 ms。該舊版相對速度診斷因此偏高，不能當作車速真值。時間契約與修正比較見 doc55。此為只有 7 幀的短段檢查，不是 full 精度驗證。
 
 先前 v4 的最終全套 35 項檢查通過。streaming exact-kNN 與 prefix 版本在真實 frame0 選出的 32,169 點完全相同；暖機後 mean-kNN 計算約 0.087 s（matrix 版約 0.608 s），這只是該函數、該點雲的時間，不是完整 Track 加速比。對固定 pose 的唯讀比較見[本輪診斷](50_STARTUP_SCALE_NOISE_FIX_20261024.md)。
 

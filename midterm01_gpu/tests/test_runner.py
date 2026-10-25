@@ -6,11 +6,13 @@ import json
 from pathlib import Path
 import sys
 import numpy as np
+import pytest
 from plyfile import PlyData,PlyElement
 from test_core import CFG,cloud
 
 
-def test_generated_pipeline(tmp_path,monkeypatch):
+@pytest.mark.parametrize('prediction',['previous_pose','imu_eskf'])
+def test_generated_pipeline(tmp_path,monkeypatch,prediction):
     root=tmp_path/'synthetic_data';root.mkdir();(root/'raw_ply').mkdir()
     m=cloud();stamp=1727239790258245070
     with (root/'map.pcd').open('w') as f:
@@ -23,6 +25,23 @@ def test_generated_pipeline(tmp_path,monkeypatch):
         for j,k in enumerate(('x','y','z')):v[k]=pts[:,j]
         PlyData([PlyElement.describe(v,'vertex')],text=False).write(str(root/'raw_ply'/f'{idx:06d}_ts_{stamp+idx*100000000}.ply'))
     cfg=json.loads(json.dumps(CFG));cfg['data_dir']=str(root);cfg['expected_frames']=3;cfg['map_leaf_m']=.15
+    cfg['prediction']=prediction
+    if prediction=='imu_eskf':cfg['imu']['time_basis']='bag_arrival'
+    if prediction=='imu_eskf':
+        import sqlite3
+        from sensor_msgs.msg import Imu
+        from rclpy.serialization import serialize_message
+        db=sqlite3.connect(root/'Track3.db3')
+        db.execute('CREATE TABLE topics(id INTEGER,name TEXT,type TEXT,serialization_format TEXT)')
+        db.execute('CREATE TABLE messages(id INTEGER,topic_id INTEGER,timestamp INTEGER,data BLOB)')
+        db.execute("INSERT INTO topics VALUES(1,'/imu/data','sensor_msgs/msg/Imu','cdr')")
+        for i in range(23):
+            t=stamp-20_000_000+i*10_000_000
+            msg=Imu();msg.header.frame_id='imu_link'
+            msg.header.stamp.sec=t//1_000_000_000;msg.header.stamp.nanosec=t%1_000_000_000
+            msg.linear_acceleration.z=9.80665
+            db.execute('INSERT INTO messages VALUES(?,1,?,?)',(i+1,t,serialize_message(msg)))
+        db.commit();db.close()
     cfg['version']='SYNTHETIC_VALIDATION_ONLY'
     cfg['registration']['stages']=[{'mode':'ndt','voxel_m':2.,'iterations':30},{'mode':'icp','voxel_m':1.,'iterations':30}]
     config=tmp_path/'config.json';config.write_text(json.dumps(cfg))
@@ -32,13 +51,28 @@ def test_generated_pipeline(tmp_path,monkeypatch):
     monkeypatch.setattr(sys,'argv',[str(script),'--config',str(config),'--run-dir',str(run),'--max-frames','3'])
     assert module.main()==0
     info=json.loads((run/'test_info.json').read_text());assert info['status']=='success'
-    assert info['frame_count']==3 and info['imu_used'] is False and info['map_accepted_frames']==3
-    assert not (root/'Track3.db3').exists()
+    assert info['frame_count']==3 and info['imu_used']==(prediction=='imu_eskf') and info['map_accepted_frames']==3
+    assert (root/'Track3.db3').exists()==(prediction=='imu_eskf')
+    if prediction=='imu_eskf':
+        sources=json.loads((run/'imu_sources.json').read_text())
+        assert sources['sha256']==hashlib.sha256((root/'Track3.db3').read_bytes()).hexdigest()
+        assert info['imu_samples_consumed']==23
+        effective=json.loads((run/'parameters.json').read_text())['imu']
+        from track3.imu_parameters import resolve_imu_config
+        assert effective==resolve_imu_config(cfg['imu'])
+        assert sources['T_ply_imu']==effective['T_ply_imu']
     trace=[json.loads(line) for line in (run/'pose_trace.jsonl').read_text().splitlines()]
-    for row in trace:
-        np.testing.assert_array_equal(row['registered_T'],row['final_T'])
+    for i,row in enumerate(trace):
+        if prediction=='previous_pose':
+            np.testing.assert_array_equal(row['registered_T'],row['final_T'])
+        elif i==0:
+            np.testing.assert_allclose(row['registered_T'],row['final_T'],rtol=0,atol=2e-15)
         assert row['proposed_scale']==row['final_scale']
-        assert row['pose_decision']=='accepted_registration'
+        assert row['pose_decision']==('accepted_registration' if prediction=='previous_pose' else
+                                    'initialized_from_registration' if i==0 else 'kalman_measurement_update')
+        if prediction=='imu_eskf':
+            assert row['inertial']['prediction']['latest_bag_timestamp_ns']<=row['timestamp_ns']
+            assert row['inertial']['update']['measurement_accepted']
     poses=np.loadtxt(run/'poses.txt');assert poses.shape==(3,12)
     rows=list(csv.DictReader((run/'result_3.csv').open()))
     assert list(rows[0])==['idx','x','y','yaw'] and [r['idx'] for r in rows]==['0','1','2']

@@ -66,7 +66,8 @@ class RvizPublisher:
     def publish_frame(self, points, T, scale, timestamp_ns, registration, *, accepted, reason):
         # Show the current frame at its emitted pose in both cases. Orange
         # explicitly identifies a prior-only cloud, useful for overlap diagnosis.
-        color=(70,235,100) if accepted else (255,160,40)
+        stationary=reason=='stationary_visual_imu_hold'
+        color=(80,190,255) if stationary else (70,235,100) if accepted else (255,160,40)
         self.cloud_pub.publish(cloud_message(points,timestamp_ns,T,scale,color=color))
         if registration.center is not None and (self.submap_center is None or
                 not np.array_equal(self.submap_center, registration.center)):
@@ -93,7 +94,8 @@ class RvizPublisher:
         marker.color.r = 0.2 if accepted else 1.
         marker.color.g = 1. if accepted else 0.5
         marker.color.b = 0.2 if accepted else 0.1; marker.color.a = 1.
-        marker.text = 'ACCEPTED' if accepted else f'PRIOR ONLY: {reason}'
+        if stationary:marker.color.r,marker.color.g,marker.color.b=.3,.75,1.
+        marker.text = 'STATIONARY (IMAGE + IMU)' if stationary else 'ACCEPTED' if accepted else f'PRIOR ONLY: {reason}'
         self.marker_pub.publish(marker)
         self.path.header = p.header; self.path.poses.append(p); self.path_pub.publish(self.path)
         transform = TransformStamped(); transform.header = p.header

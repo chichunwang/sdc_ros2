@@ -38,11 +38,9 @@ def filter_by_camera_mask(points,K,valid_mask):
                                     removed_points=int((~keep).sum()),method='provided_front_ego_mask_and_rectified_FOV')
 
 
-class VisualPrior:
-    def __init__(self,data,cfg,expected_frames):
-        self.cfg=cfg;self.previous=None;self.current=None
-        rows=frames(Path(data)/'Track3_images/Track3_f_images',suffix='.jpg',expected=expected_frames)
-        self.images={r['timestamp_ns']:r['path'] for r in rows}
+class CameraMask:
+    """Camera calibration/mask independent of the selected motion predictor."""
+    def __init__(self,data):
         camera=Path(data)/'Track3_images/camera_info'
         calibration=yaml.safe_load((camera/'gige_100_f_hdr_camera_info.yaml').read_text())
         K=np.array(calibration['camera_matrix']['data']).reshape(3,3)
@@ -54,6 +52,14 @@ class VisualPrior:
         if mask is None:raise ValueError('Missing front-camera ego mask')
         mask=cv2.remap(mask,*self.maps,cv2.INTER_NEAREST,borderMode=cv2.BORDER_CONSTANT,borderValue=255)
         self.mask=cv2.erode(np.where(mask==0,255,0).astype('uint8'),np.ones((7,7),dtype='uint8'))
+
+
+class VisualPrior(CameraMask):
+    def __init__(self,data,cfg,expected_frames):
+        super().__init__(data)
+        self.cfg=cfg;self.previous=None;self.current=None
+        rows=frames(Path(data)/'Track3_images/Track3_f_images',suffix='.jpg',expected=expected_frames)
+        self.images={r['timestamp_ns']:r['path'] for r in rows}
 
     def predict(self,stamp,enabled):
         path=self.images[stamp]
