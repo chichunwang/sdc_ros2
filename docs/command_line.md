@@ -55,4 +55,10 @@ git switch release/1.0.0
 git reset --hard 789abcd
 ```
 
-
+想查看舊版本
+```bash
+git switch --detach <舊版本commit ID>
+git switch --detach c345678
+看完之後
+git switch main
+```
