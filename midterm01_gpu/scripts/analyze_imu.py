@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""已結束 v5 run 的唯讀 IMU 融合診斷；支援短段，不修改或重估 pose。"""
+"""已結束 run 的唯讀 IMU 融合診斷；支援短段，不修改或重估 pose。"""
 import argparse
 import json
 from pathlib import Path
@@ -80,7 +80,7 @@ def analyze(run):
         axes[3,0].set(ylabel='Gyro bias [rad/s]')
         axes[3,1].plot(elapsed,np.sqrt(cov[:,:3]).max(axis=1),label='Max position std',lw=.8)
         axes[3,1].set(ylabel='Position std [m]')
-        fig.suptitle('v5 IMU fusion diagnostics; no ground truth / no extrinsic calibration')
+        fig.suptitle('IMU fusion diagnostics; no ground truth / no extrinsic calibration')
         for ax in axes.flat:ax.grid(alpha=.3);ax.legend(fontsize=7)
         for ax in axes[-1]:ax.set_xlabel('Time since first PLY [s]')
         fig.tight_layout()
@@ -104,7 +104,7 @@ def analyze(run):
                      extrinsic_status=json.loads((run/'imu_sources.json').read_text())['extrinsic_status'],
                      caveat='Diagnostic consistency only; accepted fraction, NIS and bias do not prove accuracy or calibrate extrinsics.')
         write_json(output/'metrics.json',metrics)
-        (output/'README.md').write_text('v5 已結束 run 的唯讀 IMU 診斷。首筆 bootstrap 殘差已排除。\n'
+        (output/'README.md').write_text('已結束 run 的唯讀 IMU 診斷。首筆 bootstrap 殘差已排除。\n'
             '圖示殘差、NIS、濾波決策、速度、bias、不確定度與輸入年齡；無 ground truth，不能單憑較小殘差或較高接受率認定外參正確。\n'
             '來源 SHA 在 manifest.json；pose、CSV 與原始資料均未修改。\n')
         if any(sha256(run/name)!=digest for name,digest in sources.items()):

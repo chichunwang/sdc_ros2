@@ -37,6 +37,56 @@ def test_python_extrinsic_rejects_nonfinite_parameters(monkeypatch):
         imu_parameters.resolve_imu_config({'extrinsic_source':'python'})
 
 
+def test_fusion_defaults_preserve_physical_settings_and_do_not_mutate_input():
+    original = {'gyro_noise_density': .02, 'gyro_bias_random_walk': .001,
+                'registration_std': [.5, .5, .5, .0872664626, .0872664626, .0872664626],
+                'untouched': {'values': [1, 2]}}
+    before = json.loads(json.dumps(original))
+    resolved = imu_parameters.resolve_fusion_config(original)
+    assert resolved['gyro_noise_density'] == original['gyro_noise_density']
+    assert resolved['gyro_bias_random_walk'] == original['gyro_bias_random_walk']
+    # JSON 的舊 5° 值保留到 10 位小數；新入口使用標準 radians 轉換。
+    np.testing.assert_allclose(resolved['registration_std'], original['registration_std'],
+                               rtol=0, atol=3e-13)
+    assert resolved['fusion_parameter_source'] == 'track3/imu_parameters.py'
+    assert resolved['fusion_parameter_values']['map_rotation_std_deg'] == [5., 5., 5.]
+    resolved['untouched']['values'].append(3)
+    assert original == before
+
+
+@pytest.mark.parametrize(('name', 'value', 'output', 'expected'), [
+    ('GYRO_NOISE_DENSITY_RAD_S_SQRT_HZ', .04, 'gyro_noise_density', .04),
+    ('GYRO_BIAS_RANDOM_WALK_RAD_S_SQRT_S', .002, 'gyro_bias_random_walk', .002),
+    ('MAP_POSITION_STD_M', (.2, .3, .4), 'registration_std',
+     [.2, .3, .4, *np.deg2rad([5., 5., 5.])]),
+    ('MAP_ROTATION_STD_DEG', (5., 5., 2.), 'registration_std',
+     [.5, .5, .5, *np.deg2rad([5., 5., 2.])]),
+])
+def test_fusion_python_setting_reaches_config(monkeypatch, name, value, output, expected):
+    monkeypatch.setattr(imu_parameters, name, value)
+    resolved = imu_parameters.resolve_fusion_config({'other_setting': 42})
+    np.testing.assert_allclose(resolved[output], expected, rtol=0, atol=1e-15)
+    assert resolved['other_setting'] == 42
+
+
+@pytest.mark.parametrize(('name', 'value'), [
+    ('GYRO_NOISE_DENSITY_RAD_S_SQRT_HZ', 0.),
+    ('GYRO_NOISE_DENSITY_RAD_S_SQRT_HZ', float('nan')),
+    ('GYRO_BIAS_RANDOM_WALK_RAD_S_SQRT_S', -1.),
+    ('GYRO_BIAS_RANDOM_WALK_RAD_S_SQRT_S', float('inf')),
+    ('MAP_POSITION_STD_M', (.5, 0., .5)),
+    ('MAP_POSITION_STD_M', (.5, .5)),
+    ('MAP_ROTATION_STD_DEG', (5., 5., float('inf'))),
+    ('MAP_ROTATION_STD_DEG', 5.),
+])
+def test_fusion_rejects_invalid_noise_before_mutating_input(monkeypatch, name, value):
+    monkeypatch.setattr(imu_parameters, name, value)
+    original = {'sentinel': [42]}
+    with pytest.raises(ValueError, match=name):
+        imu_parameters.resolve_fusion_config(original)
+    assert original == {'sentinel': [42]}
+
+
 def script(name):
     spec=importlib.util.spec_from_file_location(name,SCRIPTS/(name+'.py'))
     module=importlib.util.module_from_spec(spec)

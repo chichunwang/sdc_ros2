@@ -9,6 +9,7 @@ from scipy.spatial.transform import Rotation
 from scipy.stats import chi2
 from .geometry import valid_pose
 from .motion_parameters import VISUAL_VELOCITY_STD_MPS, STATIONARY_VELOCITY_STD_MPS
+from .yaw_constraints import YawConstraint
 
 
 def skew(v):
@@ -55,6 +56,7 @@ class InertialState:
         self.measurement_std = np.asarray(cfg['registration_std'], dtype=float)
         if self.measurement_std.shape != (6,) or not np.isfinite(self.measurement_std).all() or np.any(self.measurement_std <= 0):
             raise ValueError('registration_std requires 6 positive standard deviations')
+        self.yaw_constraint = YawConstraint(cfg.get('yaw_constraint', {}))
         noise = np.asarray([cfg[k] for k in ('accel_noise_density', 'gyro_noise_density',
                                            'accel_bias_random_walk', 'gyro_bias_random_walk')])
         if not np.isfinite(noise).all() or np.any(noise <= 0):
@@ -250,7 +252,7 @@ class InertialState:
             predicted_velocity_map_mps=self.v.tolist())
         return prior
 
-    def _measurement(self, T):
+    def _measurement(self, T, camera_covariance=None):
         z = T @ self.extrinsic
         r = np.r_[z[:3, 3]-self.X[:3, 3],
                   Rotation.from_matrix(z[:3, :3] @ self.X[:3, :3].T).as_rotvec()]
@@ -259,7 +261,8 @@ class InertialState:
         # Registration uncertainty is specified at the PLY origin in map axes.
         J = np.eye(6)
         J[:3, 3:] = -skew(T[:3, :3] @ self.extrinsic[:3, 3])
-        V = J @ np.diag(self.measurement_std**2) @ J.T
+        C = np.diag(self.measurement_std**2) if camera_covariance is None else camera_covariance
+        V = J @ C @ J.T
         return z, r, H, V
 
     def commit(self, estimate):
@@ -283,8 +286,18 @@ class InertialState:
         nis = None
         innovation = None
         bootstrap = False
+        yaw_diagnostics = dict(enabled=self.yaw_constraint.enabled, weight=1.,
+                               covariance_inflated=False, reason='registration_not_accepted')
         if valid:
-            z, r, H, V = self._measurement(candidate)
+            camera_covariance = np.diag(self.measurement_std**2)
+            if self.pending_stationary:
+                yaw_diagnostics['reason'] = 'stationary_pose_hold'
+            elif not self.initialized:
+                yaw_diagnostics['reason'] = 'initial_bootstrap_not_downweighted'
+            elif accepted:
+                camera_covariance, yaw_diagnostics = self.yaw_constraint.covariance(
+                    self.T[:3,:3], candidate[:3,:3], self.P[6:9,6:9], camera_covariance)
+            z, r, H, V = self._measurement(candidate, camera_covariance)
             innovation = r.tolist()
         if accepted:
             if not self.initialized:
@@ -323,11 +336,13 @@ class InertialState:
                 self.scale = scale
                 self.initialized = True
         self.pending = None
+        yaw_diagnostics['measurement_used'] = bool(accepted)
         diagnostics = dict(nis=nis, nis_limit=self.nis_limit, innovation=innovation,
                            bootstrap=bootstrap, measurement_accepted=accepted,
                            velocity_map_mps=self.v.tolist(), accel_bias_mps2=self.ba.tolist(),
                            gyro_bias_radps=self.bg.tolist(), covariance_diagonal=np.diag(self.P).tolist(),
-                           measurement_std=self.measurement_std.tolist())
+                           measurement_std=self.measurement_std.tolist(),
+                           yaw_constraint=yaw_diagnostics)
         return dict(accepted=accepted, reason=reason, prediction=self.prediction_diagnostics['mode'],
                     decision=('initialized_from_registration' if bootstrap else 'kalman_measurement_update') if accepted else
                     'stationary_pose_hold' if self.pending_stationary else 'retained_imu_prediction',

@@ -58,8 +58,10 @@ def test_generated_pipeline(tmp_path,monkeypatch,prediction):
         assert sources['sha256']==hashlib.sha256((root/'Track3.db3').read_bytes()).hexdigest()
         assert info['imu_samples_consumed']==23
         effective=json.loads((run/'parameters.json').read_text())['imu']
-        from track3.imu_parameters import resolve_imu_config
-        assert effective==resolve_imu_config(cfg['imu'])
+        from track3.imu_parameters import resolve_imu_config, resolve_fusion_config
+        assert effective==resolve_imu_config(resolve_fusion_config(cfg['imu']))
+        assert effective['yaw_constraint']['enabled'] is True
+        assert effective['fusion_parameter_source']=='track3/imu_parameters.py'
         assert sources['T_ply_imu']==effective['T_ply_imu']
     trace=[json.loads(line) for line in (run/'pose_trace.jsonl').read_text().splitlines()]
     for i,row in enumerate(trace):
@@ -73,6 +75,7 @@ def test_generated_pipeline(tmp_path,monkeypatch,prediction):
         if prediction=='imu_eskf':
             assert row['inertial']['prediction']['latest_bag_timestamp_ns']<=row['timestamp_ns']
             assert row['inertial']['update']['measurement_accepted']
+            assert 'yaw_constraint' in row['inertial']['update']
     poses=np.loadtxt(run/'poses.txt');assert poses.shape==(3,12)
     rows=list(csv.DictReader((run/'result_3.csv').open()))
     assert list(rows[0])==['idx','x','y','yaw'] and [r['idx'] for r in rows]==['0','1','2']

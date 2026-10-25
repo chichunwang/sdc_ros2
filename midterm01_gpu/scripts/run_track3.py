@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from track3.geometry import valid_pose, yaw
 from track3.io import frames, load_ply, load_map, sha256, write_json
 from track3.localization import PoseState
-from track3.imu_parameters import resolve_imu_config
+from track3.imu_parameters import resolve_imu_config, resolve_fusion_config
 
 TIMINGS = 'idx,original_idx,timestamp_ns,backend,load_ms,registration_ms,total_ms,map_accepted,scale'.split(',')
 OUTPUT_FILES = ['poses.txt', 'result_3.csv', 'timings.csv', 'frame_manifest.csv', 'observations.jsonl', 'pose_trace.jsonl']
@@ -78,7 +78,7 @@ def main():
     try:
         cfg=json.loads(a.config.read_text()); info['version']=cfg['version']; info['source']='official_front_camera_ply'
         info['imu_used']=cfg['prediction']=='imu_eskf'; info['prediction']=cfg['prediction']
-        if info['imu_used']:cfg['imu']=resolve_imu_config(cfg['imu'])
+        if info['imu_used']:cfg['imu']=resolve_imu_config(resolve_fusion_config(cfg['imu']))
         if info['imu_used'] and cfg.get('motion_constraints',False):
             from track3.motion_parameters import PARAMETERS,VISUAL_VELOCITY_STD_MPS,STATIONARY_VELOCITY_STD_MPS,ENABLE_MOVING_VISUAL_SCALE
             cfg['motion_parameters']=dict(PARAMETERS,visual_velocity_std_mps=VISUAL_VELOCITY_STD_MPS,
