@@ -1,0 +1,189 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+      Splitter Ratio: 0.5
+  - Class: rviz_common/Views
+    Name: Views
+    Expanded:
+      - /Current View1
+    Splitter Ratio: 0.5
+  - Class: rviz_common/Time
+    Name: Time
+    SyncMode: 0
+    SyncSource: Current Cloud
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/PointCloud2
+      Name: LiDAR Map
+      Enabled: true
+      Value: true
+      Alpha: 0.65
+      Color: 150; 150; 150
+      Color Transformer: FlatColor
+      Position Transformer: XYZ
+      Decay Time: 0
+      Selectable: true
+      Style: Flat Squares
+      Size (Pixels): 2
+      Size (m): 0.08
+      Use Fixed Frame: true
+      Topic:
+        Value: /track2/map
+        Depth: 1
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        Filter size: 10
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Registration Submap
+      Enabled: true
+      Value: true
+      Alpha: 0.8
+      Color: 115; 145; 175
+      Color Transformer: FlatColor
+      Position Transformer: XYZ
+      Decay Time: 0
+      Selectable: true
+      Style: Flat Squares
+      Size (Pixels): 2
+      Size (m): 0.08
+      Use Fixed Frame: true
+      Topic:
+        Value: /track2/submap
+        Depth: 1
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        Filter size: 10
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Current Cloud
+      Enabled: true
+      Value: true
+      Alpha: 1
+      Color: 70; 235; 100
+      Color Transformer: RGB8
+      Position Transformer: XYZ
+      Decay Time: 0
+      Selectable: true
+      Style: Flat Squares
+      Size (Pixels): 3
+      Size (m): 0.12
+      Use Fixed Frame: true
+      Topic:
+        Value: /track2/current_cloud
+        Depth: 1
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        Filter size: 10
+    - Class: rviz_default_plugins/Pose
+      Name: Estimated Pose
+      Enabled: true
+      Value: true
+      Alpha: 1
+      Color: 245; 55; 45
+      Shape: Arrow
+      Shaft Length: 2
+      Shaft Radius: 0.15
+      Head Length: 0.7
+      Head Radius: 0.4
+      Axes Length: 2
+      Axes Radius: 0.08
+      Topic:
+        Value: /track2/pose
+        Depth: 1
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        Filter size: 10
+    - Class: rviz_default_plugins/Path
+      Name: Localization Path
+      Enabled: true
+      Value: true
+      Alpha: 1
+      Color: 255; 155; 40
+      Buffer Length: 1
+      Line Style: Billboards
+      Line Width: 0.15
+      Pose Style: None
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Topic:
+        Value: /track2/path
+        Depth: 1
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        Filter size: 10
+    - Class: rviz_default_plugins/Axes
+      Name: Camera Axes
+      Enabled: true
+      Value: true
+      Reference Frame: track2_camera
+      Length: 1.5
+      Radius: 0.06
+    - Class: rviz_default_plugins/Marker
+      Name: Registration Status
+      Enabled: true
+      Value: true
+      Topic:
+        Value: /track2/registration_status
+        Depth: 1
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        Filter size: 10
+  Enabled: true
+  Global Options:
+    Background Color: 30; 32; 36
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 255; 220; 80
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Value: Orbit (rviz)
+      Target Frame: track2_camera
+      Distance: 45
+      Pitch: 0.85
+      Yaw: 3.141592654
+      Focal Point:
+        X: 8
+        Y: 0
+        Z: 1
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05
+      Near Clip Distance: 0.05
+      Invert Z Axis: false
+      Enable Stereo Rendering:
+        Value: false
+        Stereo Eye Separation: 0.06
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+    Saved: ~
+Window Geometry:
+  Width: 1440
+  Height: 900
+  X: 40
+  Y: 40
+  Hide Left Dock: false
+  Hide Right Dock: false

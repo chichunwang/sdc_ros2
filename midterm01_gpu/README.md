@@ -1,4 +1,8 @@
-# Midterm01 Track3 GPU 定位
+# Midterm01 GPU 定位
+
+**Track2 現行程式（2026-10-29）：**`track2_causal_metric_correction_memory_v4` 保留逐幀 GNSS／IMU prior、當幀地面尺度／傾斜與非地面配準，並以有不確定度的因果 XY／yaw 修正狀態處理短暫失敗和配準跳動。運動候選比較與濾波預測 NIS 分開；當幀 correction 增量另有限幅。現行機制通過 29 項合成檢查（10.30 秒；[pytest.xml](outputs/run/track00_test_2610290341/pytest.xml)）；888 幀唯讀舊候選對照見[frame 428](outputs/run/track00_test_2610290340_0002/analysis/01_frame_0428_correction_replay.png)與[frame 653](outputs/run/track00_test_2610290340_0002/analysis/01_frame_0653_correction_replay.png)。這些不代表真實定位精度。v3 full 已停止於 1689 幀；歷史 metadata 仍標 `running`，保留不改，細節見 [67｜因果地圖修正記憶](doc/67_TRACK2_CAUSAL_CORRECTION_MEMORY_20261029.md)。操作見 [Track2 README](track2/README.md)；[66](doc/66_TRACK2_METRIC_SCALE_20261029.md) 是 v3 尺度歷史，[65](doc/65_TRACK2_5839746C_CAUSAL.md) 是固定尺度 v2 歷史。Track2 會自動開啟 RViz。下方 Track3 程式與入口維持原樣.
+
+## Track3 原有入口
 
 這個專案把每幀相機重建的 3D 點雲對齊 LiDAR 地圖，求出相機的位置、方向與尺度。目前版本是 **v7**（`track3_cuda_v7_multihypothesis_startup`）。
 

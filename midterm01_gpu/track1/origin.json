@@ -1,0 +1,71 @@
+{
+  "parent_run": "track02_full_2610290345",
+  "parent_version": "track2_causal_metric_correction_memory_v4",
+  "adaptation": "Independent Track1 copy: names,3011 frames,bag/camera paths,result_1.csv,topics; camera CUDA import delayed until apply; inactive legacy guided-only parameters omitted; no numerical retuning",
+  "files": {
+    "track1/__init__.py": {
+      "parent_source": "track2/__init__.py",
+      "parent_sha256": "3480ccf0b33eb90138deff968e14849b62598b62d8dd8d944ef333b540f15478"
+    },
+    "track1/parameters.py": {
+      "parent_source": "track2/parameters.py",
+      "parent_sha256": "5c30081e6d90ab6914d078a34f817ee2340742fb861f6ce47e68692deb19c63f"
+    },
+    "track1/causal_prior.py": {
+      "parent_source": "track2/causal_prior.py",
+      "parent_sha256": "a07dd36e559c8d517a536fd274d912152fa960a4e568b717b6417a6cd553a208"
+    },
+    "track1/correction_filter.py": {
+      "parent_source": "track2/correction_filter.py",
+      "parent_sha256": "4ab7a938233ad9fb8402c2e703ec27f01395962cd45fee967fa5b25279850b68"
+    },
+    "track1/metric_registration.py": {
+      "parent_source": "track2/metric_registration.py",
+      "parent_sha256": "bd11f28cf8cf6741a5a8cdac6965c40c6675e5d2c6e5481882848007b886f995"
+    },
+    "track1/map_io.py": {
+      "parent_source": "track2/map_io.py",
+      "parent_sha256": "b10a755834d93a9a1b5091f124e0f1e55d6545fcf45c6375d95960f862524097"
+    },
+    "track1/camera.py": {
+      "parent_source": "track2/camera.py",
+      "parent_sha256": "350a1f5e85a9e2d5911ce743b2099dad2e4d114b9a40f1374dc71ba4ec90df88"
+    },
+    "track1/sensors.py": {
+      "parent_source": "track2/sensors.py",
+      "parent_sha256": "afd75c07e2639ed75a098d60bffd72e9b990d60beccb50264486b4790e708454"
+    },
+    "track1/visualization.py": {
+      "parent_source": "track2/visualization.py",
+      "parent_sha256": "cb20027d634d4d590481e62c933087297648d3a545073bc36474417e03c3b462"
+    },
+    "track1/analysis.py": {
+      "parent_source": "track2/analysis.py",
+      "parent_sha256": "0e13afbcb6f1c6cb4461587812a47fcfe054e638569ff16be2ee103ae0b464ee"
+    },
+    "scripts/run_track1.py": {
+      "parent_source": "scripts/run_track2.py",
+      "parent_sha256": "e1f8da67442feb667e161f9c40aa1acb1039fd25c6ccab2711f0dc6fad49ece6"
+    },
+    "scripts/run_track1.sh": {
+      "parent_source": "scripts/run_track2.sh",
+      "parent_sha256": "9b610973393ca971a4a9426d1ab23c95d55a32950f5121af3f8041245384879d"
+    },
+    "scripts/create_track1_run.py": {
+      "parent_source": "scripts/create_track2_run.py",
+      "parent_sha256": "c8932d1b1f93c5fe01d8a3b33d2699e7bc0aadff9b3469aa84372df9cacd68e3"
+    },
+    "scripts/start_track1_rviz.py": {
+      "parent_source": "scripts/start_track2_rviz.py",
+      "parent_sha256": "2958846a9dfacda990394da2a776935c63479063c1e28ab80b76cd679e1e3655"
+    },
+    "scripts/analyze_track1.py": {
+      "parent_source": "scripts/analyze_track2.py",
+      "parent_sha256": "116211e0745c6853b1f8532ef1c3fc789f05de7468279ae582620e8c8bcc1843"
+    },
+    "config/track1.rviz": {
+      "parent_source": "config/track2.rviz",
+      "parent_sha256": "42d4391218612e994a46d5147079e18932142ef9e009616c9629e5ddff2b95c3"
+    }
+  }
+}

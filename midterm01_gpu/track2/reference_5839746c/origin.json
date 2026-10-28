@@ -1,0 +1,38 @@
+{
+  "commit": "5839746ce1e4fe59ed4980ae07cb5ceb3f27ddeb",
+  "purpose": "reference_only_not_imported_by_localization",
+  "files": {
+    "src/sensor_guided.cpp": {
+      "git_path": "midterm01_gpu/workspace/src/localization/src/sensor_guided.cpp",
+      "sha256": "54a2df030398c734ced1fd9c3fc3370c3c273ccad8315b858f3edeadb2603851"
+    },
+    "src/geometry_weighting.cpp": {
+      "git_path": "midterm01_gpu/workspace/src/localization/src/geometry_weighting.cpp",
+      "sha256": "4c61d72dc1046fb0d741585e78b006948d5697c87b66d42fa20703ba59c65c14"
+    },
+    "include/localization/sensor_guided.h": {
+      "git_path": "midterm01_gpu/workspace/src/localization/include/localization/sensor_guided.h",
+      "sha256": "37816838ad220dc541be25459757140601418fee03dbf148954fa43c8b6112e5"
+    },
+    "include/localization/geometry_weighting.h": {
+      "git_path": "midterm01_gpu/workspace/src/localization/include/localization/geometry_weighting.h",
+      "sha256": "94fbece61102e82eb742d6b2c751ce47572aff5309780c37a7cd943447662f04"
+    },
+    "include/cuda_ndt_backend/nearest_neighbor.h": {
+      "git_path": "midterm01_gpu/workspace/src/cuda_ndt_backend/include/cuda_ndt_backend/nearest_neighbor.h",
+      "sha256": "08225dca2815bcced3580288b1906f7203c3f33fdeaad9768788c4daeb705d23"
+    },
+    "src/nearest_neighbor.cu": {
+      "git_path": "midterm01_gpu/workspace/src/cuda_ndt_backend/src/nearest_neighbor.cu",
+      "sha256": "606121d697d6437cbbb44104fc471ada3eae043aaeb08a76c01896ba9e5039e2"
+    },
+    "offline_reference/sensor_fusion.py": {
+      "git_path": "midterm01_gpu/scripts/sensor_fusion.py",
+      "sha256": "20dd38ed34dd66188b868f95ffc466e9c2a061fe902c49453e600bab8e3d2d88"
+    },
+    "offline_reference/prepare_sensor_prior.py": {
+      "git_path": "midterm01_gpu/scripts/prepare_sensor_prior.py",
+      "sha256": "182114fd3dab299b87b2f6d477d369192cd36ed6f1e8e5f8558689a39f029355"
+    }
+  }
+}
