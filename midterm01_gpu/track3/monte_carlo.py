@@ -4,13 +4,15 @@ v8 left a recursively weighted population behind the refined output. v8.1 draws
 fresh current-frame candidates around deterministic gyro/PnP prediction from
 that output. Scores rank local hypotheses; they are NOT a calibrated Bayesian
 posterior. Registration is used once to commit the current geometric estimate,
-not as an additional independent sensor measurement. No Kalman filter.
+not as an additional independent sensor measurement. An optional stationary
+gyro-bias Kalman filter corrects the IMU rates, never the committed map pose.
 """
 import numpy as np
 import cupy as cp
 from .geometry import valid_pose
 from .gpu import voxel_mean
 from .nearest import GpuNearest
+from .gyro_bias import StationaryGyroBias
 
 
 from .cuda_math import rotation_exp,create_rng
@@ -61,7 +63,8 @@ class MonteCarloState:
         self.anchor_R=cp.asarray(initial_pose[:3,:3],dtype=cp.float64).copy()
         self.anchor_p=cp.asarray(initial_pose[:3,3],dtype=cp.float64).copy()
         self.anchor_v=cp.asarray(imu_cfg['initial_velocity_map_mps'],dtype=cp.float64).copy()
-        self.nominal_bias=cp.asarray(imu_cfg['initial_gyro_bias_radps'],dtype=cp.float64).copy()
+        self.bias_filter=StationaryGyroBias(imu_cfg)
+        self.nominal_bias=self.bias_filter.bias
         self.registration_scale=float(initial_scale)
         self.motion_limits=dict(motion_limits or dict(max_speed_mps=50.,max_rotation_rate_radps=2.))
         for name in ('max_speed_mps','max_rotation_rate_radps'):
@@ -110,7 +113,7 @@ class MonteCarloState:
         latest=self.held
         # Validate time, vectors, freshness over the entire batch before mutation.
         for s in samples:
-            if not isinstance(s.timestamp_ns,(int,np.integer)) or not previous<=s.timestamp_ns<=timestamp_ns:
+            if not isinstance(s.timestamp_ns,(int,np.integer)) or not previous<s.timestamp_ns<=timestamp_ns:
                 raise ValueError('IMU must be ordered and past-only')
             if self.stamp is not None and s.timestamp_ns==self.stamp:raise ValueError('Already-consumed IMU sample')
             for v in (s.angular_velocity,s.linear_acceleration):
@@ -122,6 +125,7 @@ class MonteCarloState:
             raise ValueError('A recent causal IMU sample is required')
         first=self.stamp is None;old_stamp=self.stamp;old_R=self.anchor_R.copy()
         previous_output=self.T.copy();prior_scale=self.scale
+        bias_variance=self.bias_filter.variance.copy()
         dt=0. if first else (timestamp_ns-old_stamp)*1e-9
         if first:
             self.held=samples[-1];self.stamp=timestamp_ns
@@ -138,6 +142,7 @@ class MonteCarloState:
             else:
                 displacement=self.anchor_v*dt-(self.anchor_R-old_R)@self.ext[:3,3]
             self.anchor_p+=displacement
+        bias_diagnostics=self.bias_filter.step(timestamp_ns,samples,stationary)
         if input_scale is not None:prior_scale=float(input_scale)
         prior_gpu=cp.eye(4);prior_gpu[:3,:3]=self.anchor_R;prior_gpu[:3,3]=self.anchor_p
         prior=cp.asnumpy(prior_gpu)
@@ -154,8 +159,7 @@ class MonteCarloState:
             position_var+=(self.cfg['visual_velocity_std_mps']**2*dt**2 if visual_motion is not None else
                            self.cfg['velocity_diffusion_mps_sqrt_s']**2*dt**3/3.)
             self.p+=self._noise((self.n,3),float(cp.sqrt(cp.asarray(position_var))))
-            bias_sigma=cp.asarray(self.imu_cfg['initial_std'][12:15],dtype=cp.float64)
-            angle_var=self.imu_cfg['gyro_noise_density']**2*dt+bias_sigma**2*dt**2+self.imu_cfg['gyro_bias_random_walk']**2*dt**3/3.
+            angle_var=self.imu_cfg['gyro_noise_density']**2*dt+bias_variance*dt**2+self.imu_cfg['gyro_bias_random_walk']**2*dt**3/3.
             dtheta=self._noise((self.n,3),1.)*cp.sqrt(angle_var)
             self.R=(self.R@self.ext[:3,:3])@rotation_exp(dtheta)@self.ext[:3,:3].T
             self.logs+=self._noise(self.n,self.cfg['log_scale_diffusion_sqrt_s']*dt**.5)
@@ -169,7 +173,8 @@ class MonteCarloState:
         self.prediction_diagnostics=dict(mode='initial_guess' if first else 'stationary_visual_imu' if stationary else 'gpu_monte_carlo',
             samples=len(samples),stationary=bool(stationary),translation_model='causal_visual_displacement' if visual_motion is not None else 'last_metric_velocity',
             search_mode='fresh_local_candidates_from_committed_output',scores_are_probabilities=False,
-            accelerometer_translation_used=False,kalman_used=False,input_scale_applied=input_scale is not None,
+            accelerometer_translation_used=False,kalman_used=self.bias_filter.enabled,
+            gyro_bias_filter=bias_diagnostics,input_scale_applied=input_scale is not None,
             latest_bag_timestamp_ns=int(self.held.arrival_timestamp_ns if self.held.arrival_timestamp_ns is not None else self.held.timestamp_ns),
             latest_header_timestamp_ns=int(self.held.header_timestamp_ns),sample_age_seconds=(timestamp_ns-self.held.timestamp_ns)*1e-9)
         return prior.copy()
@@ -278,6 +283,7 @@ class MonteCarloState:
                    rolled_back=bool(not accepted and self.measurement['applied']))
         update=dict(bootstrap=bool(bootstrap),measurement_accepted=bool(accepted),kalman_used=False,
             particles=self.n,cloud=cloud,resampled=False,unique_ancestors=None,
+            gyro_bias_kalman_used=self.bias_filter.enabled,pose_kalman_used=False,
             search_mode='causal_local_monte_carlo_search',scores_are_probabilities=False,
             next_prediction_matches_output=True,motion_gate=motion_gate,
             bootstrap_anchors=anchor_count,posterior_recentered_by_refinement=False)

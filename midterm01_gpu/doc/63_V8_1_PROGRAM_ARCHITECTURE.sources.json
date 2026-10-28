@@ -1,0 +1,82 @@
+{
+  "created_at": "2026-10-26T16:54:30+08:00",
+  "purpose": "Track3 v8.1 documentation only; no localization, GPU work or accuracy evaluation",
+  "version": "track3_cuda_v8.1_committed_anchor_stationary_gyro_bias_kalman",
+  "commit": "6c9c1a77e84a7deb6974ad62afc3350d75719b8a",
+  "source_root": "/home/ricky/sdc_ros2/midterm01_gpu",
+  "source_sha256": {
+    "Dockerfile": "d8e7db50a00fbd19d4cead967dd809ba67bd8c8ef6433b35c5dfb033115dd3ce",
+    "config/track3.json": "630014f79c2f6d188e0bda16d98f24f8d88701f7a97c8bba17084cd741af8252",
+    "docker-compose.yml": "2b6233a83c77591dd43afbb268e4ce581e8688ca9c305c229f625dcb74562eb2",
+    "requirements.txt": "754b9dbff3bdde60adbffbc63bfbdedea68ddb851381f3a3623e5114e9e4230d",
+    "scripts/analyze_imu.py": "45d5eafc4d9cdc2cdd68b55346aab1b2d4dcf5b22f33fe48f9c78d8ec8035a4f",
+    "scripts/analyze_monte_carlo.py": "88a9b689588cfec1d4daa1532cc7285f829b22d5ae28ec64cc6e0065276b265c",
+    "scripts/analyze_run.py": "f1310f62da0f1d1fc142c774cb6120f3b8bac5f008ca7956c211f1aa8470b031",
+    "scripts/configure_imu.py": "60834c3d5253579b5fab653ae449714ebba76887cfb19579d0661303c9600b39",
+    "scripts/create_run.py": "f08056673d4b1266cdcc20daa38f466af3afb14f87bfbafd33230342675fea05",
+    "scripts/dev.sh": "a2354ca8c9de0a18dbd62e498593051137a3557ca57ed58c5e34b20e94ef9fd6",
+    "scripts/inspect_data.py": "67ff3cbb74b0d18441bc741ab573b8a40cfa62fdf05f72e4b6cfe052b4918405",
+    "scripts/inspect_imu.py": "d4943389efc182f5d20c0d931fed1d7520324cf8425b2db69f2b30aa81539e5b",
+    "scripts/preview_imu_extrinsic.py": "e774a89032a35d42b1fee13d54876787a31cdbe83c5a7470b921e6f61f83ce3f",
+    "scripts/run.sh": "dcfc6c86998d85cf6fba67e5b8f5598d0381b9b90dc57866017791e4daec301b",
+    "scripts/run_track3.py": "494d9bdd3168d215a3f033ad7d4ef5dc29b06a785fe86d3f7c88ee8d852b970a",
+    "scripts/start_rviz.py": "9c728da44a84143b9a475ee601195dc4eb354897d2e359895bc569dba7d5b920",
+    "track3/__init__.py": "9249206a56dca0ad1b8517d1ac944fbe216e7ee03081e80d4bdf84d841792f77",
+    "track3/cuda_math.py": "9b40dd1fe32d71c17e7ac2e780ede8c473e183151496a240987cd13438075995",
+    "track3/geometry.py": "73dbef9b654ef23bf9c33f247a7130f0215075ac3148b9af28942cbd58dc652f",
+    "track3/gpu.py": "7f81ca033701912424c3c0ef55a431b102c7f0d06c62dd7c43c099949a12bdf8",
+    "track3/gyro_bias.py": "f12dc78b4e84d3c6d62cea137f5f3b0306556c8a2cc8a9141a4b12f95e597c8c",
+    "track3/imu.py": "2e1f57509e52ae15b58105636490bd29759bdf09bba0a2911417963160247120",
+    "track3/imu_parameters.py": "56a09d5d8d59840c7bb9d45b38995c8b478ad6476f1cdb123541a782f1993a86",
+    "track3/inertial.py": "2534b99c64cfcee01c80274337a687bde0e04ab1e9c0fedeefe87360ec619919",
+    "track3/initialization.py": "fd09d39542f72784cef3f8f41de6a5c09f73b88a53f9b6b36346b68db2e2392a",
+    "track3/io.py": "04a9014a5375c187350b2c7487ee4e9052a9df76ac03e57cbf59888b11ebcce5",
+    "track3/line_search.py": "23ad3e3d95b6526e234b7b7c2d3a281b455282a58ae076ea1cddd3f97b3a9d85",
+    "track3/localization.py": "6a9d62a551f68ae81e0622bc255a4cc60b820dd64ad693adc5b764594c62df83",
+    "track3/memory.py": "8db2b5a464c85859d6769c555021b5393110cd7c3409a64d0bf4d1ac437f1c80",
+    "track3/monte_carlo.py": "75527968c6d1f7e4bbc9eec6c53ae3c519dc6a8c6a1fd55732d10c5d17c142f9",
+    "track3/monte_carlo_parameters.py": "53470c417b25bbdb339bda0c455794e23bbc3534ee2b2a57009e71f3a8251c03",
+    "track3/motion_constraints.py": "a9f85c8f63ef8620ebe17c27b124d52980af369300d85d184ac2e8e2b7e901c2",
+    "track3/motion_parameters.py": "275398d9e937902d7d61f264c05303e573d76da3bcc284bff57cbe56db267440",
+    "track3/nearest.py": "4eacfff2c8d2492824668154af5e6e6108b2770e3513d22917c7062d3a6ece96",
+    "track3/preprocessing.py": "622a54c2daee8f7db2b6f6e741003a1a56604f60d63481c642c1854e44f3bdff",
+    "track3/search.py": "e7b11ac4ccd82bcd9395cae34a39d953a1adfcd7784679b315ec00c75389053d",
+    "track3/time_alignment.py": "373b88918c71d099e030368f2b847f5b28d2120a84fe23f59d206c01987452e2",
+    "track3/visual_prior.py": "04b2533957e166df1a1280af58fd914bacafaf072728359ca81d83135f424570",
+    "track3/visualization.py": "3adf8746d4987087d7813c7fdeb9a723028830cdff2562cbc9504f53538277bc",
+    "track3/yaw_constraints.py": "ef8d5b3f316976ac0206b9a3b26b0f795fb9f0aa86971934cde8b91a23a44520",
+    "doc/61_V8_1_V8_FAILURE_AND_COMMITTED_SEARCH_20261025.md": "fd9f069a55eb9f6bc80b8eb5025ff2b224e9626f59bafa7f2e958644e5860bef",
+    "doc/62_V8_1_STATIONARY_GYRO_BIAS_KALMAN_20261026.md": "9f767721897ec5dbe79cd45f286be09394da4298aff4ca7274259d8eba086be7",
+    "doc/analysis/render_v8_1_architecture.py": "3355a86e47108687aea9b8024b20cf2bf51499fd84f1c0ff5f958c63f9bec83e"
+  },
+  "artifacts_sha256": {
+    "63_V8_1_PROGRAM_ARCHITECTURE.md": "8dd414a46d1dac01670e41ad7bf90899fd866cac33d8374a9181b1f94906373a",
+    "63_V8_1_PROGRAM_ARCHITECTURE.svg": "849e77c506b17d959ad1a9e4ce2142d6ece3bab7c77ea4aecc69b518277b8264",
+    "63_V8_1_PROGRAM_ARCHITECTURE.png": "b6dd7ab87eefdede2f88d5a93c608ee95af0185cacb14defb329c6a4ee41342c"
+  },
+  "reference_folder": "/home/ricky/Downloads/midterm01_track1&2 structure",
+  "reference_sha256": {
+    "40_PROGRAM_ARCHITECTURE.md": "213275e596339528637644a35cab69456eaa3c51d64805cdbaa84a1382c9b286",
+    "40_PROGRAM_ARCHITECTURE.svg": "5b0f9d44c62672cb6b6608bb7ed39fc8554761bd053138064db9dacfdaa39f4f",
+    "40_PROGRAM_ARCHITECTURE.png": "8a4f9f40c1a615f2d5d6af2ca3889181359820969132fdb7fe74884c23f18683"
+  },
+  "preserved_user_full": {
+    "run": "/home/ricky/sdc_ros2/midterm01_gpu/outputs/run/track03_full_2610261433",
+    "source_manifest_sha256": "cb2b0a0ebe9afffea7001216a0cd0d43d3a4b23bf26591825cf01dcac27a1f9a",
+    "source_files_verified": 95,
+    "snapshot_matches_recorded_sources": true,
+    "diagram_programs_match_full_snapshot": true
+  },
+  "render": {
+    "width": 2400,
+    "height": 2770,
+    "checked_text_lines": 120,
+    "minimum_text_margin_px": 115,
+    "backend": "host GdkPixbuf/librsvg and Pango; CPU only"
+  },
+  "validation_run": "/home/ricky/sdc_ros2/midterm01_gpu/outputs/run/track00_test_2610261457",
+  "limitations": [
+    "Architecture evidence does not establish localization accuracy.",
+    "Historical doc61 predates the stationary gyro-bias addition; doc62 and these sources identify the current scope."
+  ]
+}

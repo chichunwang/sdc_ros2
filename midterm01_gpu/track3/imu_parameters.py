@@ -1,4 +1,4 @@
-"""IMU 外參與 gyro noise 入口；v8 用 resolve_motion_config，不使用 Kalman。
+"""IMU 外參、gyro noise 與 v8.1 靜止 gyro-bias Kalman 入口。
 
 MAP_*／YAW_* 及 resolve_fusion_config 僅保留給歷史 ESKF 元件與測試。
 """
@@ -14,10 +14,12 @@ IMU_XYZ_M = (0.0, 0.0, 0.0)
 # 下列仍是未校正的 engineering priors；一次只改一項，不能當成精度保證。
 # Gyro 白雜訊密度，單位 (rad/s)/sqrt(Hz)，等價於 rad/sqrt(s)。
 # 變小：降低 prediction 的過程不確定性，通常較相信 gyro；不改 gyro 讀值。
-# v8 改變粒子旋轉擾動；歷史 ESKF 才會改變 Kalman gain 與 NIS gate。
+# v8.1 用於旋轉候選擾動，亦決定靜止 gyro 均值量測的 variance。
 GYRO_NOISE_DENSITY_RAD_S_SQRT_HZ = 0.02
 # Gyro bias random walk，單位 (rad/s)/sqrt(s)；越大，允許 bias 變動越快。
 GYRO_BIAS_RANDOM_WALK_RAD_S_SQRT_S = 0.001
+# 只在影像＋raw gyro＋3D 確認靜止時學習 bias；False 還原無濾波的 v8.1。
+GYRO_BIAS_KALMAN_ENABLED = True
 # 地圖配準的位置標準差 (map X, Y, Z)，公尺；越小，越相信該方向量測。
 MAP_POSITION_STD_M = (0.5, 0.5, 0.5)
 # 地圖配準的小角度旋轉標準差 (map X, Y, Z)，度；越小，越相信該方向量測。
@@ -85,12 +87,18 @@ def resolve_fusion_config(config):
 
 
 def resolve_motion_config(config):
-    """v8 僅讀 gyro 的過程雜訊；不建立 Kalman 或讀取 map/yaw 融合參數。"""
+    """只融合靜止 gyro bias，不建立 pose ESKF 或讀取 map/yaw 融合參數。"""
     cfg=deepcopy(config)
     cfg['gyro_noise_density']=_positive_finite(GYRO_NOISE_DENSITY_RAD_S_SQRT_HZ,
                                               'GYRO_NOISE_DENSITY_RAD_S_SQRT_HZ')
     cfg['gyro_bias_random_walk']=_positive_finite(GYRO_BIAS_RANDOM_WALK_RAD_S_SQRT_S,
                                                 'GYRO_BIAS_RANDOM_WALK_RAD_S_SQRT_S')
+    if not isinstance(GYRO_BIAS_KALMAN_ENABLED,bool):
+        raise ValueError('GYRO_BIAS_KALMAN_ENABLED 必須為 bool')
+    from .motion_parameters import PARAMETERS
+    cfg['gyro_bias_filter']=dict(enabled=GYRO_BIAS_KALMAN_ENABLED,
+        max_raw_gyro_radps=PARAMETERS['max_raw_gyro_radps'],
+        scope='stationary_gyro_bias_only_no_pose_fusion')
     cfg['motion_parameter_source']='track3/imu_parameters.py'
     cfg['motion_parameter_status']='uncalibrated_engineering_priors_not_accuracy_claim'
     return cfg

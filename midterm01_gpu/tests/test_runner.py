@@ -62,7 +62,8 @@ def test_generated_pipeline(tmp_path,monkeypatch,prediction):
         effective=json.loads((run/'parameters.json').read_text())['imu']
         from track3.imu_parameters import resolve_imu_config, resolve_motion_config
         assert effective==resolve_imu_config(resolve_motion_config(cfg['imu']))
-        assert info['kalman_used'] is False
+        assert info['kalman_used'] is effective['gyro_bias_filter']['enabled']
+        assert not info['pose_kalman_used'] and sources['kalman_scope']=='stationary_gyro_bias_only_no_pose_fusion'
         assert info['accelerometer_translation_used'] is False
         assert sources['T_ply_imu']==effective['T_ply_imu']
     trace=[json.loads(line) for line in (run/'pose_trace.jsonl').read_text().splitlines()]

@@ -1,10 +1,12 @@
 # Midterm01 Track3 GPU 定位
 
-這個專案把每幀相機重建的 3D 點雲對齊 LiDAR 地圖，估計相機位置、方向與尺度。目前版本為 **v8.1**（`track3_cuda_v8.1_committed_anchor_scale_transaction`）保留 GPU Monte Carlo 局部幾何搜尋並取消 Kalman filter：每幀只在上一個已輸出 pose／scale 周圍提出新候選，將通過配準的結果作下一幀錨點。候選分數和 ESS 只用於當幀排序及集中程度診斷，不代表校準機率，也不是跨幀 Bayesian posterior。
+這個專案把每幀相機重建的 3D 點雲對齊 LiDAR 地圖，估計相機位置、方向與尺度。目前版本為 **v8.1**（`track3_cuda_v8.1_committed_anchor_stationary_gyro_bias_kalman`）：保留 GPU Monte Carlo 局部幾何搜尋，並只在已確認靜止時用 Kalman filter 估計 gyro bias。它不融合 map pose，也不積分 accelerometer。每幀仍從上一個已輸出 pose／scale 附近提出候選，通過配準的結果成為下一幀錨點；候選分數和 ESS 只描述當幀搜尋，不代表校準機率或跨幀 Bayesian posterior。
 
-**目前狀態：**唯讀檢視 v8 full（3142 幀）發現只有 637 幀接受 map 更新，最後一次在 idx 2440，最後 701 幀沒有 map 接受；idx 416 曾出現 10.564 m／0.036 s 的 pose 跳動。尺度在 idx 479 降至 1 以下，idx 521 起記錄點雲支援不足。退化在長停車段前已開始，細節與限制見[本次 v8 失敗診斷和 v8.1 機制說明](doc/61_V8_1_V8_FAILURE_AND_COMMITTED_SEARCH_20261025.md)及[唯讀診斷圖表](outputs/run/track00_test_2610252220/analysis/README.md)。
+**目前診斷：**加入 bias filter 前的 v8.1 full 已完成 3142 幀，1023 幀接受 map 更新，最後一次在 idx 2221；因此加入 gyro-bias filter 尚不能宣稱解決後段定位退化。v8 原始失敗特徵與 v8.1 局部搜尋修正見[診斷說明](doc/61_V8_1_V8_FAILURE_AND_COMMITTED_SEARCH_20261025.md)及[唯讀圖表](outputs/run/track00_test_2610252220/analysis/README.md)。新 Kalman 機制、可復核的首幀核對與 IMU replay 限制見[本輪說明](doc/62_V8_1_STATIONARY_GYRO_BIAS_KALMAN_20261026.md)。
 
-v8.1 已套用；完整合成／CUDA 回歸套件 178 passed／263.91 s，涵蓋長停車後恢復與 25 幀人工地圖配準。尚未執行 v8.1 真實短段或 full，也沒有真實精度改善證據。v8 的原始 run、輸出與 metadata 保持原樣；`result_3.csv` 的既有 SHA 與同 run `result_3_monte.csv` 完全相符。你啟動的 [v7 full](outputs/run/track03_full_2610251548/test_info.json) 已自然完成 3142 幀；這份 v7 結果不作為真值。
+首幀流程仍保留 v7 的四個候選各自完整配準、再以共同非地面點幾何分數選擇的作法。唯讀比較 v7 與 v8.1 的歷史 full，兩者都選候選 2，位置差約 0.0354 m；候選選擇相同不代表精度已證明。更多數值及成績來源限制見 [本輪說明](doc/62_V8_1_STATIONARY_GYRO_BIAS_KALMAN_20261026.md)。
+
+本次新實作已通過 **192 項生成資料／CUDA／輸出契約回歸檢查（257.59 s）**；另唯讀重播 11,305 筆既有 IMU，首筆 bias 更新在 idx 929。尚未執行加入 filter 後的真實定位，不能宣稱成績改善。[本輪圖表與數值](outputs/run/track00_test_2610261414/analysis/README.md)。
 
 完整定位由你手動啟動，固定命令如下。
 
@@ -40,11 +42,11 @@ cd /home/ricky/sdc_ros2/midterm01_gpu
 ./scripts/run.sh --max-frames 30
 ```
 
-v8.1 局部搜尋的粒子數、seed 與 diffusion 標準差入口在 [track3/monte_carlo_parameters.py](track3/monte_carlo_parameters.py)；IMU→PLY 固定軸 XYZ `IMU_RPY_DEG`、平移 `IMU_XYZ_M` 與 gyro noise 在 [track3/imu_parameters.py](track3/imu_parameters.py)。這些仍是未標定假設，不是精度保證；每輪有效設定以凍結的 `parameters.json` 為準。尺度候選和配準都參照當幀因果預測尺度，隨機候選不改寫輸出的 prior。算法步驟與限制見 [doc61](doc/61_V8_1_V8_FAILURE_AND_COMMITTED_SEARCH_20261025.md)。只有在既有 full 結束後才由使用者啟動新的 full，並比較相同場景及相同幀數；不要依 Public Leaderboard 分數反推隱藏真值。
+v8.1 局部搜尋的粒子數、seed 與 diffusion 標準差入口在 [track3/monte_carlo_parameters.py](track3/monte_carlo_parameters.py)；IMU→PLY 固定軸 XYZ `IMU_RPY_DEG`、平移 `IMU_XYZ_M`、gyro noise 及靜止 gyro-bias filter 開關 `GYRO_BIAS_KALMAN_ENABLED` 在 [track3/imu_parameters.py](track3/imu_parameters.py)。這些仍是未標定假設，不是精度保證；每輪有效設定以凍結的 `parameters.json` 為準。尺度候選和配準都參照當幀因果預測尺度，隨機候選不改寫輸出的 prior。算法步驟與限制見 [doc61](doc/61_V8_1_V8_FAILURE_AND_COMMITTED_SEARCH_20261025.md)。只有在既有 full 結束後才由使用者啟動新的 full，並比較相同場景及相同幀數；不要依 Public Leaderboard 分數反推隱藏真值。
 
 影像尺度與靜止判斷門檻集中在 [track3/motion_parameters.py](track3/motion_parameters.py)；這些門檻使用目前及過去 image／gyro 證據，不是外參標定。frame 950 長靜止與 frame 2400 轉彎的歷史診斷、v5 尺度規則見 [doc53](doc/53_V5_SCALE_STATIONARY_TURN_20261025.md)。
 
-[doc52](doc/52_V5_IMU_EKF_20261025.md) 的 Kalman／ESKF 內容是 v5 歷史版本說明；v8.1 不使用 Kalman filter。若要預覽外參轉換後的加速度／角速度表與對照圖，使用 [IMU 各軸外參預覽](doc/54_IMU_EXTRINSIC_PREVIEW.md)。
+[doc52](doc/52_V5_IMU_EKF_20261025.md) 說明的是 v5 歷史 pose ESKF；目前 v8.1 只有靜止 gyro-bias Kalman，詳見 [doc62](doc/62_V8_1_STATIONARY_GYRO_BIAS_KALMAN_20261026.md)。若要預覽外參轉換後的加速度／角速度表與對照圖，使用 [IMU 各軸外參預覽](doc/54_IMU_EXTRINSIC_PREVIEW.md)。
 
 環境檢查和合成測試使用新的跨 Track run，並在容器執行：
 
@@ -63,7 +65,7 @@ RUN_PATH="/workspace/midterm01_gpu/outputs/run/$(basename "$RUN_DIR")"
 
 資料檢查只讀 PLY 時序、map XYZ、初始姿態與來源 SHA，不做定位、不讀 IMU bag。容器以唯讀方式掛載共用資料，只允許寫入 GPU 專案的 `outputs/`。
 
-v8.1 的因果 gyro／PnP 錨點和局部 Monte Carlo 搜尋見[診斷與修正說明](doc/61_V8_1_V8_FAILURE_AND_COMMITTED_SEARCH_20261025.md)；[doc52](doc/52_V5_IMU_EKF_20261025.md)的 Kalman 模型屬歷史版本。
+v8.1 的因果 gyro／PnP 錨點和局部 Monte Carlo 搜尋見[診斷與修正說明](doc/61_V8_1_V8_FAILURE_AND_COMMITTED_SEARCH_20261025.md)；靜止 gyro-bias Kalman 見[doc62](doc/62_V8_1_STATIONARY_GYRO_BIAS_KALMAN_20261026.md)。
 
 ## RViz 與 run 輸出
 
@@ -77,7 +79,7 @@ RViz 發布 `/track3/map`、`/track3/submap`、`/track3/current_cloud`、`/track
 | `poses.txt` | 每幀 row-major 3×4 矩陣，共 12 值，不含 timestamp |
 | `timings.csv` | `idx,original_idx,timestamp_ns,backend,load_ms,registration_ms,total_ms,map_accepted,scale` |
 | `frame_manifest.csv` | 本輪索引、原始索引、整數奈秒時間戳、PLY 路徑與 SHA256 |
-| `observations.jsonl` | 配準 stages、coverage、收斂、尺度、品質閘門、preprocessing、initializer、camera mask、因果預測、當幀候選分數／ESS、commit／rollback、motion constraints 與失敗診斷；不含 Kalman update 或跨幀 posterior |
+| `observations.jsonl` | 配準 stages、coverage、收斂、尺度、品質閘門、preprocessing、initializer、camera mask、因果預測、當幀候選分數／ESS、commit／rollback、motion constraints 與失敗診斷；另於 inertial.prediction 記錄因果 gyro-bias Kalman 更新，map pose 不做 Kalman 融合，也不保留跨幀 particle posterior |
 | `gpu_memory.jsonl` | 此版本在初始化、map/submap 與逐幀結束等檢查點的 CuPy pool 和整卡顯存抽樣 |
 | `pose_trace.jsonl` | predicted/registered/final 4×4 pose、尺度、接受狀態、原因與候選相對 prior 的 Δ；另記當幀 Monte Carlo 和 motion constraints 診斷 |
 | `input_sources.json` | map、`init_guess.txt` 與設定檔的來源 SHA256 |
@@ -148,7 +150,7 @@ doc50 的 v4 最終 35 項合成／數值／CUDA／ROS 檢查通過，紀錄於 
 <details>
 <summary>v4–v6 的結果、IMU 流程與首段診斷</summary>
 
-以下保留 v4–v8 當時的版本紀錄；目前研究候選與 v8 故障診斷請先看本文開頭和 [doc61](doc/61_V8_1_V8_FAILURE_AND_COMMITTED_SEARCH_20261025.md)。v7 首幀流程保留於 [v7 首幀說明](doc/59_V7_STARTUP_HYPOTHESES_20261025.md)。
+以下保留 v4–v8 當時的版本紀錄；目前研究候選與 v8 故障診斷請先看本文開頭和 [doc61](doc/61_V8_1_V8_FAILURE_AND_COMMITTED_SEARCH_20261025.md)、[doc62](doc/62_V8_1_STATIONARY_GYRO_BIAS_KALMAN_20261026.md)。v7 首幀流程保留於 [v7 首幀說明](doc/59_V7_STARTUP_HYPOTHESES_20261025.md)。
 
 v6 的歷史生成資料與 CUDA regression 測試為 **136 passed**，耗時 46.26 s，另有既有 Matplotlib Axes3D warning；紀錄見 [測試 run](outputs/run/track00_test_2610251412/pytest.xml)。使用者之後執行的 [v6 短段](outputs/run/track03_test_2610251424/test_info.json) 已完成 1257 幀，並非 full，也沒有成績證據。下方 v4／v5 成績與診斷均為歷史紀錄。
 

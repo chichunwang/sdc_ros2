@@ -78,7 +78,7 @@ def main():
     try:
         cfg=json.loads(a.config.read_text()); info['version']=cfg['version']; info['source']='official_front_camera_ply'
         if cfg['prediction']=='imu_eskf':
-            raise ValueError('v8 runner has removed the Kalman path; use the preserved v7 snapshot for ESKF')
+            raise ValueError('Pose ESKF is historical; use the preserved v7 snapshot. Current Kalman scope is stationary gyro bias only')
         info['imu_used']=cfg['prediction']=='gpu_monte_carlo'; info['prediction']=cfg['prediction']
         if info['imu_used']:
             if cfg['registration'].get('solver_device')!='cuda' or cfg['registration'].get('initializer',{}).get('solver_device')!='cuda':
@@ -86,7 +86,9 @@ def main():
             cfg['imu']=resolve_imu_config(resolve_motion_config(cfg['imu']))
             from track3.monte_carlo_parameters import resolve_config
             cfg['monte_carlo']=resolve_config()
-            info['kalman_used']=False
+            info['kalman_used']=cfg['imu']['gyro_bias_filter']['enabled']
+            info['kalman_scope']='stationary_gyro_bias_only_no_pose_fusion'
+            info['pose_kalman_used']=False
             info['monte_carlo_mode']='causal_local_search_not_calibrated_posterior'
             info['accelerometer_translation_used']=False
         if info['imu_used'] and cfg.get('motion_constraints',False):
@@ -123,7 +125,8 @@ def main():
                 extrinsic_status=icfg['extrinsic_status'],T_ply_imu=icfg['T_ply_imu'],
                 gravity_map_mps2=icfg['gravity_map_mps2'],
                 noise_source=icfg['noise_source'],orientation_used=False,gnss_used=False,
-                accelerometer_translation_used=False,kalman_used=False,
+                accelerometer_translation_used=False,kalman_used=icfg['gyro_bias_filter']['enabled'],
+                kalman_scope='stationary_gyro_bias_only_no_pose_fusion',pose_kalman_used=False,
                 motion_model='gyro_orientation; causal_visual_translation; velocity_random_walk_without_visual'))
             state=MonteCarloState(T,cfg['initial_scale'],icfg,cfg['monte_carlo'],cfg['registration']['scale_bounds'],motion_limits=cfg['visual_prior'])
             imu_reader=ImuReader(bag,icfg['topic'],icfg['frame_id'])

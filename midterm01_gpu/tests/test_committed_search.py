@@ -107,10 +107,14 @@ def test_pnp_is_evaluated_when_preliminary_rest_is_rejected_by_depth(tmp_path):
     assert diag['visual_velocity']['accepted'] and mon.visual_motion is not None
 
 
-def test_generated_geometry_straight_stop_scale_change_and_turn_resume(tmp_path):
+@pytest.mark.parametrize('bias_filter',[False,True])
+def test_generated_geometry_straight_stop_scale_change_and_turn_resume(tmp_path,bias_filter):
     from test_core import CFG,cloud
     from track3.gpu import Registration
-    s=state(128);cfg=json.loads(json.dumps(CFG['registration']))
+    from test_monte_carlo import config
+    from track3.imu_parameters import resolve_motion_config
+    icfg=resolve_motion_config(config());icfg['gyro_bias_filter']['enabled']=bias_filter
+    s=state(128,icfg);cfg=json.loads(json.dumps(CFG['registration']))
     cfg['stages']=[dict(mode='ndt',voxel_m=2.,iterations=40),dict(mode='icp',voxel_m=1.,iterations=40)]
     m=cloud();reg=Registration(m,cfg);truth=np.eye(4);rows=[]
     for i in range(25):

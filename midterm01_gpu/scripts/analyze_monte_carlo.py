@@ -66,17 +66,36 @@ def analyze(run):
     ax.plot(x,mc,lw=.7,label='particle cloud likelihood')
     ax.plot(x,pred,lw=.7,label='motion prediction')
     ax.set_xlabel('Elapsed bag time (s)');ax.set_ylabel('Wall time (ms)');ax.legend();save(fig,'03_particle_timing')
+    bias_filter=bool(info.get('kalman_used'))
+    bias_updates=0
+    if bias_filter:
+        if info.get('kalman_scope')!='stationary_gyro_bias_only_no_pose_fusion' or info.get('pose_kalman_used') is not False:
+            raise ValueError('Unsupported Kalman scope')
+        diagnostics=[r['inertial']['prediction']['gyro_bias_filter'] for r in rows]
+        bias=np.array([d['bias_radps'] for d in diagnostics]);std=np.array([d['bias_std_radps'] for d in diagnostics])
+        bias_updates=sum(d['updated'] for d in diagnostics)
+        fig,ax=plt.subplots(3,1,figsize=(10,7),sharex=True)
+        for j,label in enumerate(('IMU X','IMU Y','IMU Z')):
+            ax[0].plot(x,bias[:,j],lw=.8,label=label)
+            ax[1].plot(x,std[:,j],lw=.8,label=label)
+        ax[0].set_ylabel('Gyro bias (rad/s)');ax[0].legend()
+        ax[1].set_ylabel('Bias model std (rad/s)');ax[1].set_yscale('log')
+        ax[2].step(x,[d['updated'] for d in diagnostics],where='post',lw=.8)
+        ax[2].set_ylabel('Stationary bias update');ax[2].set_xlabel('Elapsed bag time (s)')
+        fig.suptitle('Causal gyro-bias Kalman only; no pose Kalman or accuracy truth');save(fig,'04_gyro_bias')
     metrics=dict(frames=len(rows),particles=n,mode='causal_local_search' if local_search else 'v8_particle_filter',scores_are_probabilities=False,attempted_cloud_updates=sum(c['applied'] for c in clouds),
                  committed_cloud_updates=sum(c.get('committed',c['applied'] and u['measurement_accepted']) for c,u in zip(clouds,updates)),
                  resampling_frames=sum(u['resampled'] for u in updates),
                  cloud_wall_ms_median=float(np.median(mc)),cloud_wall_ms_p95=float(np.percentile(mc,95)),
-                 accuracy_claim=False,kalman_used=False)
+                 accuracy_claim=False,kalman_used=bias_filter,pose_kalman_used=False,gyro_bias_update_frames=bias_updates)
     (out/'metrics.json').write_text(json.dumps(metrics,indent=2)+'\n');files.append(out/'metrics.json')
     if before!={name:digest(run/name) for name in names}:raise RuntimeError('Source evidence changed during analysis')
     explanation=('v8.1 每幀從已提交狀態產生新的局部候選，不跨幀攜帶 posterior，也沒有重採樣步驟。'
                  'ESS／最大權重僅描述當幀搜尋分數集中程度，不是機率校準或精度。'
                  if local_search else
                  'v8 ESS 是嘗試更新後、重採樣前的值；配準拒絕時會回復權重。')
+    if bias_filter:
+        explanation+='另圖記錄靜止時的 gyro-bias Kalman 更新；std 是未校正模型的不確定性，不是實際誤差。它不再融合 map pose。'
     (out/'README.md').write_text('# Monte Carlo 診斷\n\n'
         '這些圖檢查候選集中、覆蓋、更新及耗時；沒有 ground truth，不能當成精度證明。'
         '空白區表示該幀未評估 cloud score（包含首幀、靜止及候選支持不足）。'+explanation+'\n\n'

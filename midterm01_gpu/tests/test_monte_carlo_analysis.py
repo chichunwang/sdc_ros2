@@ -66,3 +66,22 @@ def test_v8_1_local_search_analysis_does_not_require_resampling_parameters(tmp_p
     assert (tmp_path/'analysis/monte_carlo/02_support_updates.png').exists()
     readme=(tmp_path/'analysis/monte_carlo/README.md').read_text()
     assert '沒有重採樣步驟' in readme and 'posterior' in readme
+
+
+def test_bias_kalman_plots_are_separate_from_geometric_map_update(tmp_path,monkeypatch):
+    fixture(tmp_path);m=module();monkeypatch.setattr(m,'FRAME_COUNT',3)
+    p=tmp_path/'test_info.json';info=json.loads(p.read_text())
+    info.update(monte_carlo_mode='causal_local_search_not_calibrated_posterior',kalman_used=True,
+                kalman_scope='stationary_gyro_bias_only_no_pose_fusion',pose_kalman_used=False)
+    obs=tmp_path/'observations.jsonl';rows=[json.loads(l) for l in obs.read_text().splitlines()]
+    for i,row in enumerate(rows):
+        row['inertial']=dict(prediction=dict(gyro_bias_filter=dict(updated=i>0,
+            bias_radps=[0.,0.,.001*i],bias_std_radps=[.05/(i+1)]*3)))
+    obs.write_text(''.join(json.dumps(r)+'\n' for r in rows))
+    info['output_sha256']['observations.jsonl']=m.digest(obs);p.write_text(json.dumps(info))
+    before={p.name:p.read_bytes() for p in tmp_path.iterdir()}
+    metrics=m.analyze(tmp_path)
+    assert metrics['kalman_used'] and not metrics['pose_kalman_used']
+    assert metrics['gyro_bias_update_frames']==2
+    assert (tmp_path/'analysis/monte_carlo/04_gyro_bias.png').exists()
+    for name,data in before.items():assert (tmp_path/name).read_bytes()==data
