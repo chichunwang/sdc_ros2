@@ -1,23 +1,29 @@
-# HW4 EKF 設計與 Discussion 準備
+# HW4｜EKF 模型與 Discussion
 
-本文件說明已實作模型，未填入真實 bag 精度。先用 `scripts/dev.sh inspect` 取得感測器實際 covariance，再補上觀察與討論。
+本作業要把 radar odometry 的運動增量和 GPS 位置放進延伸卡爾曼濾波器（EKF）。兩者頻率不同，所以程式依訊息的 header timestamp 對齊。老師提供的 `/gt_odom` 只用來檢查估計結果，不輸入 EKF、不初始化 state，也不拿來調 covariance。
 
-## 狀態與 radar 控制
+狀態是車輛平面位置與航向：
 
-平面車體狀態是 $\mathbf{x}=[x,y,\psi]^T$，單位為 m、m、rad。
-相鄰 radar pose 位於同一個 global frame。先求 global 位移，再用上一個 **radar yaw** 轉到車體局部座標：
+$$
+\mathbf{x}=[x,y,\psi]^T,
+$$
+
+其中 $x,y$ 的單位為公尺，$\psi$ 以弧度表示。GPS 只量 $x,y$；radar odometry 提供位置與方向。
+
+## Discussion 1：狀態、運動模型和觀測矩陣
+
+radar 的相鄰 pose 都以共同地圖座標表示。先求兩個 global position 的差，再用上一個 **radar yaw** 旋轉回上一個 radar pose 的局部座標，得到控制量：
 
 $$
 \begin{bmatrix}u_x\\u_y\end{bmatrix}
-=\operatorname{Rot}(-\psi^{radar}_{k-1})
+=R(-\psi^{radar}_{k-1})
 \begin{bmatrix}x^{radar}_k-x^{radar}_{k-1}\\y^{radar}_k-y^{radar}_{k-1}\end{bmatrix},
-\quad u_\psi=\operatorname{wrap}(\psi^{radar}_k-\psi^{radar}_{k-1}).
+\qquad u_\psi=\operatorname{wrap}(\psi^{radar}_k-\psi^{radar}_{k-1}).
 $$
 
-不要用「校正後 EKF yaw」去反轉原始 radar 的 global 位移；兩個方向已可能不同。
-例如車朝北，global 位移 $(0,1)$ m，反轉後局部位移為向前 $(1,0)$ m。
+使用 radar 的 heading 還原其自己的局部位移，避免把已被 GPS 校正過的 EKF heading 誤當成 radar 座標系。假如車頭朝北，地圖向前位移 $(0,1)$ m，轉回車體 frame 後控制量為 $(1,0)$ m。
 
-EKF 用自己的 yaw 旋轉局部控制，得到非線性運動模型：
+EKF 再用目前自己的 heading 旋轉局部控制量，推進位置：
 
 $$
 f(\mathbf{x},\mathbf{u})=
@@ -28,76 +34,66 @@ y+\sin\psi\,u_x+\cos\psi\,u_y\\
 \end{bmatrix}.
 $$
 
-狀態 Jacobian 與控制 Jacobian：
+對 state 的 Jacobian $A$ 與對 radar control 的 Jacobian $B$ 為：
 
 $$
-A=\begin{bmatrix}1&0&-\sin\psi\,u_x-\cos\psi\,u_y\\0&1&\cos\psi\,u_x-\sin\psi\,u_y\\0&0&1\end{bmatrix},
-\quad B=\begin{bmatrix}\cos\psi&-\sin\psi&0\\\sin\psi&\cos\psi&0\\0&0&1\end{bmatrix}.
+A=\begin{bmatrix}
+1&0&-\sin\psi\,u_x-\cos\psi\,u_y\\
+0&1&\cos\psi\,u_x-\sin\psi\,u_y\\
+0&0&1
+\end{bmatrix},
+\quad
+B=\begin{bmatrix}
+\cos\psi&-\sin\psi&0\\
+\sin\psi&\cos\psi&0\\
+0&0&1
+\end{bmatrix}.
 $$
 
-程式延用老師模板命名：$S$ 是 state covariance，$R$ 是局部 radar control covariance，$Q$ 是 GPS measurement covariance。
-部分課本用相反的 Q/R 符號，閱讀時以定義為準。
-預測為 $S^-=ASA^T+BRB^T$，不能將局部 covariance 未旋轉就直接加到 global state。
-
-## GPS 觀測與更新
-
-GPS 只量測位置，$\mathbf{z}=[x_{gps},y_{gps}]^T$：
+預測 state covariance 為：
 
 $$
-h(\mathbf{x})=C\mathbf{x},\quad C=\begin{bmatrix}1&0&0\\0&1&0\end{bmatrix}.
+S^-=AS A^T+B R B^T.
 $$
 
-$C$ 是 **2×3**，GPS covariance $Q$ 是 **2×2**。GPS orientation 不作 yaw 量測。
-Kalman gain 與更新：
+這個 repo 延續課堂模板命名：$S$ 表示 state covariance，$R$ 表示 radar control covariance，$Q$ 表示 GPS measurement covariance。部分課本會把過程與量測雜訊的 $Q/R$ 對調，請依這裡的定義閱讀。
+
+GPS 只觀測位置，量測模型及觀測矩陣為：
 
 $$
-K=S^-C^T(CS^-C^T+Q)^{-1},\quad
-\mathbf{x}^+=\mathbf{x}^-+K(\mathbf{z}-C\mathbf{x}^-).
+\mathbf{z}=h(\mathbf{x})+\mathbf{v}=C\mathbf{x}+\mathbf{v},\qquad
+C=\begin{bmatrix}1&0&0\\0&1&0\end{bmatrix}.
 $$
 
-實作以 `numpy.linalg.solve` 代替顯式 inverse，covariance 使用 Joseph form：
+因此 $C$ 是 **2×3**，GPS $Q$ 是 **2×2**；GPS orientation 不當成航向量測。EKF 以 innovation $\mathbf{z}-C\mathbf{x}^-$ 求增益，再修正 state。程式用線性方程求解而非明確計算反矩陣，並使用 Joseph covariance update：
+
+$$
+K=S^-C^T(CS^-C^T+Q)^{-1},\qquad
+\mathbf{x}^+=\mathbf{x}^-+K(\mathbf{z}-C\mathbf{x}^-),
+$$
 
 $$
 S^+=(I-KC)S^-(I-KC)^T+KQK^T.
 $$
 
-雖然 GPS 不直接測 yaw，運動後形成的位置／yaw cross covariance 可以間接校正 yaw；靜止或不足運動時方向的可觀測性有限。
-初始化 yaw 由第一個 radar quaternion 取得，即使 GPS 先到，也不直接假設 yaw=0。
+GPS 沒有直接觀測 yaw，但轉彎和運動期間的位置誤差與 yaw 誤差會形成交叉 covariance，GPS position update 因而可能間接修正 heading。初始 yaw 取第一筆 radar yaw；若 GPS 先到，先等待 radar，不假設車頭朝東。
 
-## covariance 從哪裡來
+### 兩個 topic 頻率不同時如何融合
 
-ROS pose covariance 是 6×6，索引順序 `[x,y,z,roll,pitch,yaw]`，由 36 個 row-major 數值表示。
-GPS 取索引 `[0,1]` 的完整子矩陣，radar 取 `[0,1,5]`，保留 off-diagonal。
-對角線是 variance：位置 m²、yaw rad²；位置與 yaw 的交叉項為 m·rad。標準差是 variance 開平方，不能把標準差直接當 variance。
+GPS 先放進時間佇列。下一筆 radar 到達後，程式以 header timestamp 的整數奈秒求該 GPS 在兩筆 radar 之間的比例，對 radar 平面位置線性插值、對 yaw 沿最短角度差插值；先將 EKF 推進到 GPS 時刻並 update，再繼續推進到 radar 時刻。這最多等一個 radar interval，因此 output 有一小段對齊延遲。
 
-假如 GPS $Q=\operatorname{diag}(9,9)$，代表 x/y 標準差各 3 m；**這是教學例子，不是尚未讀取的 bag 實際數值**。
-在相同 state covariance 下，GPS variance 越小，更新越信任 GPS；radar process noise 越大，預測後的不確定性增長越多。
+GPS 到達時若其時間早於 EKF 已處理時間，程式不回頭改舊 pose，並記錄 `late_gps`。重複或倒序的 radar timestamp 也會略過並計數。分段時把該 radar interval 的 control covariance 按時間比例分配；這只是過程雜訊近似，不會因插值而創造新的量測。
 
-radar 訊息給的是 absolute pose covariance，並不是相鄰位移的 covariance。
-`relative_covariance()` 對局部控制分別計算兩端 pose 的 Jacobian $J_a,J_b$，以
-$R\approx J_a\Sigma_aJ_a^T+J_b\Sigma_bJ_b^T$ 傳遞。
-這裡假設兩端誤差獨立；累積里程計通常有時間相關，bag 沒有 cross covariance，故此近似可能高估或錯估噪聲，**不能當成精確校準**。若未來有 increment covariance 或相關模型，應取代這一近似。
+## Discussion 2：GPS 與 radar covariance 的意義
 
-只有感測器選取的 covariance **全部為零** 時使用有警告的 fallback：GPS std=3 m、radar position std=0.1 m、radar yaw std=1°（程式內轉 rad）。
-這些是尚無 covariance 時可執行的起始假設，不是由資料估計、不是作業指定數值、也沒有經 GT 調參。要在報告揭露 fallback 次數，並依感測器規格或量測分析修訂。
-非有限、不對稱或明顯負特徵值的 covariance 會拒絕訊息並計數；極小浮點數誤差才會數值修正。
+ROS 的 pose covariance 是 6×6、row-major，索引順序 `[x,y,z,roll,pitch,yaw]`。位置 variance 的單位為 $m^2$、yaw variance 為 $rad^2$；位置與 yaw 的 off-diagonal 項單位為 $m\cdot rad$。標準差是 variance 平方根，不可把 covariance 的對角線直接當標準差。
 
-輸出 `/pred` 的 x/y/yaw covariance 填回 6×6 對應位置；未估計的 z/roll/pitch 設大 variance，RViz 預設關閉融合結果的 3D covariance 顯示，只比較平面軌跡。
+本程式從 GPS 取 `[x,y]` 的完整 2×2 子矩陣；從 radar 取 `[x,y,yaw]` 的完整 3×3 子矩陣，保留 off-diagonal。GPS covariance 小，update 會較信任 GPS；radar control covariance 大，predict 後的 state 不確定性會增加。
 
-## 不同頻率與時間
+題目要求報告實際 bag 的 covariance；數值會由 `scripts/dev.sh inspect` 及本輪 `covariance_statistics.json` 記錄，目前沒有真實 bag 可供填入，因此不在此編造 GPS 或 radar 數字。若某感測器被選取的 covariance 全為零，程式才用 fallback：GPS 標準差 3 m、radar position 標準差 0.1 m、radar yaw 標準差 1°。這些是程式為全零 covariance 準備的工程假設，並非題目給定或實測標定值；需檢查並在報告標明實際使用次數。非有限、非對稱或明顯非半正定的 covariance 會拒絕訊息，而不是靜默套用另一種雜訊。
 
-GPS 暫存到有 radar bracket 後，以 header timestamp 的時間比例對 radar global 位置做線性插值、yaw 用最短角差插值，在 GPS 時刻先 predict、再 update、最後推進到 radar 時刻。
-例如 radar 在 0 s 與 0.1 s、GPS 在 0.05 s：先推到 0.05 s 校正，再推到 0.1 s。使用未來一筆 radar，輸出延遲最多一個 radar interval，並非零延遲即時融合。
-interval 的控制噪聲按時間比例分給各子段、轉入子段局部 frame，是 piecewise motion/noise 近似；插值不會產生額外獨立感測資訊。
+Radar topic 的 covariance 描述各時刻的 absolute pose；由相鄰 pose 算出的局部 motion covariance 另外用兩端 pose 的 Jacobian 傳遞。bag 沒有提供相鄰兩筆 odometry 的 cross-covariance，程式的傳遞近似將兩端誤差視為獨立。累積 odometry 可能具有時間相關，所以它是具體但未校準的 process-noise 近似，不代表精確的增量誤差。
 
-timestamp 先保持整數 ns，只在相減後計算比例，避免大 epoch 浮點數精度損失。
-角度差與更新後 yaw 一律透過 `atan2(sin(angle), cos(angle))` 包回 ±π。
-已處理時間之前才送達的 GPS 不回溯更新，另計 late_gps；倒序／重複 radar 被拒絕。大量 late_gps 代表需再調查 header/record 時間與傳輸順序。
+## 實驗結果怎麼寫
 
-## 如何驗證與寫報告
-
-1. 跑 `inspect`，記下三個 topic 的 frame、頻率、實際 covariance，回答 Discussion 第 2 題，勿使用上方假設值冒充資料。
-2. 完整播放後，確認 `summary.json` 的 GPS 更新數、有效估計及 GT 筆數、拒絕與 fallback 計數。
-3. 看同 frame 的 radar/GPS/estimate/GT 軌跡，討論 radar 漂移與 GPS 擾動如何互補；不預設融合必定優於每個 sensor。
-4. 若要計算 RMSE，先對齊相同 timestamp／重疊區間再比較。此版本只存 CSV 與疊圖，不用不同頻率 callback 當下的最新 pose 冒充時間對齊精度。
-5. GT callback 只存圖表資料，沒有任何路徑進入 EKF。合成測試驗證 Jacobian、角度、噪聲權重與時間邏輯，不等於真實定位測試。
+先確認 bag frame、時間範圍、實際 covariance、fallback 次數和晚到訊息，再看 radar、GPS、估計軌跡與 GT。若以 GT 檢查位置誤差，須在有效的共同時間區間對齊 estimate 和 GT，並說明插值及單位；不同頻率的 CSV 不能逐列直接相減。程式會以圖和時間對齊分析留存本輪結果。所有精度結論要等真實 bag 完成後再寫；本機離線合成檢查只驗證數學、時序及 ROS stub 輸出，不是 ROS 執行或實測定位精度。本輪檢查項目與紀錄見 [README 驗證紀錄](../README.md#來源與驗證紀錄)。

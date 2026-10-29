@@ -1,2 +1,3 @@
 colcon_ws/result/*
 !colcon_ws/result/.gitkeep
+output/

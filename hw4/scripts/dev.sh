@@ -39,7 +39,7 @@ case "$command_name" in
     ;;
   deps)
     "${compose[@]}" exec --user root ros2_dev bash -c \
-      'apt-get update && apt-get install -y python3-numpy python3-matplotlib python3-colcon-common-extensions'
+      'apt-get update && apt-get install -y python3-numpy python3-matplotlib python3-reportlab fonts-arphic-uming python3-colcon-common-extensions'
     ;;
   shell) "${compose[@]}" exec ros2_dev bash ;;
   build)
@@ -50,6 +50,9 @@ case "$command_name" in
     # 在主機建立可讀目錄，每次執行保留不同結果。
     run_dir="$(mktemp -d "$hw4_dir/colcon_ws/result/run_$(TZ=Asia/Taipei date +%y%m%d_%H%M%S)_XXXX")"
     chmod 755 "$run_dir"
+    git -C "$hw4_dir/.." rev-parse HEAD > "$run_dir/commit.txt"
+    git -C "$hw4_dir/.." status --short > "$run_dir/git_status.txt"
+    git -C "$hw4_dir/.." diff --binary HEAD -- hw4 hw2/docker-compose.yml > "$run_dir/source_changes.patch"
     printf 'Ubuntu 結果位置：%s\n' "$run_dir"
     "${compose[@]}" exec ros2_dev bash -c \
       'source /opt/ros/humble/setup.bash && cd /ros_ws/hw4 && source install/setup.bash && exec ros2 launch fusion EKF_fusion.launch.py "result_dir:=$1" "${@:2}"' \
@@ -72,12 +75,15 @@ case "$command_name" in
     ;;
   test)
     "${compose[@]}" exec -T ros2_dev bash -c \
-      'source /opt/ros/humble/setup.bash && cd /ros_ws/hw4 && source install/setup.bash && PYTHONPATH="/ros_ws/hw4/install/fusion/lib/fusion${PYTHONPATH:+:$PYTHONPATH}" python3 -' \
-      < "$hw4_dir/tests/test_ekf.py"
+      'source /opt/ros/humble/setup.bash && cd /ros_ws/hw4 && source install/setup.bash && exec python3 -m unittest discover -s /ros_ws/hw4_tools/tests -v'
+    ;;
+  report)
+    "${compose[@]}" exec ros2_dev bash -c \
+      'cd /ros_ws/hw4_tools && exec python3 scripts/prepare_submission.py'
     ;;
   status) "${compose[@]}" ps ;;
   help)
-    echo '用法：bash scripts/dev.sh {recreate|deps|build|launch|info|inspect|play|test|shell|status}'
+    echo '用法：bash scripts/dev.sh {recreate|deps|build|launch|info|inspect|play|test|report|shell|status}'
     echo 'info/inspect/play 可附上 data 內含 metadata.yaml 的 Ubuntu 主機目錄。'
     echo 'launch 可加 use_rviz:=false；預設開 RViz2。'
     ;;

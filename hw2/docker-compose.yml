@@ -31,6 +31,8 @@ services:
       - ./workspace:/ros_ws/workspace
       # HW4 EKF workspace, using the same Humble environment.
       - ../hw4/colcon_ws:/ros_ws/hw4
+      # HW4 report settings, evidence and PDF/ZIP generation in the same container.
+      - ../hw4:/ros_ws/hw4_tools
 
     # rviz2 runs fine WITHOUT a GPU: Mesa falls back to software rendering
     # (llvmpipe) and still holds the 30 Hz frame cap on this dataset.
