@@ -90,10 +90,12 @@ ROS 的 pose covariance 是 6×6、row-major，索引順序 `[x,y,z,roll,pitch,y
 
 本程式從 GPS 取 `[x,y]` 的完整 2×2 子矩陣；從 radar 取 `[x,y,yaw]` 的完整 3×3 子矩陣，保留 off-diagonal。GPS covariance 小，update 會較信任 GPS；radar control covariance 大，predict 後的 state 不確定性會增加。
 
-題目要求報告實際 bag 的 covariance；數值會由 `scripts/dev.sh inspect` 及本輪 `covariance_statistics.json` 記錄，目前沒有真實 bag 可供填入，因此不在此編造 GPS 或 radar 數字。若某感測器被選取的 covariance 全為零，程式才用 fallback：GPS 標準差 3 m、radar position 標準差 0.1 m、radar yaw 標準差 1°。這些是程式為全零 covariance 準備的工程假設，並非題目給定或實測標定值；需檢查並在報告標明實際使用次數。非有限、非對稱或明顯非半正定的 covariance 會拒絕訊息，而不是靜默套用另一種雜訊。
+題目要求報告實際 bag 的 covariance。2026-10-29 實測 run `run_261029_231926_g9rH` 中，GPS 原始 covariance 對角為 `(3, 3) m²`；radar 實際選用 covariance 對角統計最小值為 `[0, 0, 0]`、最大值為 `[9.380944161956033e-05, 6.072459584673981e-05, 0.0006405714870086814]`。若某感測器被選取的 covariance 全為零，程式才用 fallback：GPS 標準差 3 m、radar position 標準差 0.1 m、radar yaw 標準差 1°。這些是程式為全零 covariance 準備的工程假設，並非題目給定或實測標定值；該 run GPS fallback 0 次、radar fallback 1 次。非有限、非對稱或明顯非半正定的 covariance 會拒絕訊息，而不是靜默套用另一種雜訊。
 
 Radar topic 的 covariance 描述各時刻的 absolute pose；由相鄰 pose 算出的局部 motion covariance 另外用兩端 pose 的 Jacobian 傳遞。bag 沒有提供相鄰兩筆 odometry 的 cross-covariance，程式的傳遞近似將兩端誤差視為獨立。累積 odometry 可能具有時間相關，所以它是具體但未校準的 process-noise 近似，不代表精確的增量誤差。
 
 ## 實驗結果怎麼寫
 
-先確認 bag frame、時間範圍、實際 covariance、fallback 次數和晚到訊息，再看 radar、GPS、估計軌跡與 GT。若以 GT 檢查位置誤差，須在有效的共同時間區間對齊 estimate 和 GT，並說明插值及單位；不同頻率的 CSV 不能逐列直接相減。程式會以圖和時間對齊分析留存本輪結果。所有精度結論要等真實 bag 完成後再寫；本機離線合成檢查只驗證數學、時序及 ROS stub 輸出，不是 ROS 執行或實測定位精度。本輪檢查項目與紀錄見 [README 驗證紀錄](../README.md#來源與驗證紀錄)。
+先前 80 秒驗證 run（`run_261029_231926_g9rH`）收到 radar 973、GPS 64、GPS update 64、estimate 1037、GT 7544；bag 原有 7714 筆 GT，best effort 接收少 170 筆。另一次錄影輪（`run_261029_232220_oYEV`）收到 radar 961、GPS 63、estimate 1024、GT 6648；bag 原有 radar 973、GPS 64、GT 7714，分別少 12、1、1066 筆。該輪 GPS update 63、late GPS、invalid message、non-increasing radar、pending GPS 均為 0。首末雷達時間跨度 79.615616084 s 與 bag 相符，但 player log 沒有明確自然播畢訊息，因此不宣稱所有訊息均收到或自然播畢。兩輪 radar／GPS／GT 的 header.frame_id 均為 `origin`，bag 含 `/clock`。GT 原始時間有 1526 筆非遞增（包含重複）；評估依整數 timestamp 去重並保留最後值，再線性插值且不外推。GT 僅用於結果評估。
+
+驗證 run 記錄 RMSE：radar 34.30278999808334 m、GPS 0.46098894599053886 m、estimate 1.0322084968142409 m。錄影輪記錄 RMSE：radar 34.346932618594955 m、GPS 0.4634891799869087 m、estimate 1.035346041665754 m，estimate P95 為 1.665499907427702 m；GT 去重後 5340 筆，最大線性插值跨距 0.14985 s。各來源時間戳樣本不完全相同，故數字不能解讀成嚴格同樣本比較，也不能據此說 EKF 比 GPS 更準。程式會以圖和時間對齊分析留存結果；本機較早的離線合成檢查只驗證數學、時序及 ROS stub 輸出，不是 ROS 執行或實測定位精度，見 [README 驗證紀錄](../README.md#來源與驗證紀錄)。

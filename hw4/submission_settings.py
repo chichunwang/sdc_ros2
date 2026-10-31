@@ -2,6 +2,6 @@
 
 STUDENT_ID = '112611054'
 # 跑完後貼上 dev.sh launch 印出的完整 result/run_* 路徑。
-RUN_DIR = ''
-TERMINAL_SCREENSHOT = ''
-VIDEO_URL = ''
+RUN_DIR = 'colcon_ws/result/run_261029_232220_oYEV'
+TERMINAL_SCREENSHOT = 'output/evidence/ubuntu_2610292317/06_terminal_recording_identity.png'
+VIDEO_URL = 'https://youtu.be/nmfKO3pA5y8'

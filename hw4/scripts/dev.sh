@@ -39,7 +39,7 @@ case "$command_name" in
     ;;
   deps)
     "${compose[@]}" exec --user root ros2_dev bash -c \
-      'apt-get update && apt-get install -y python3-numpy python3-matplotlib python3-reportlab fonts-arphic-uming python3-colcon-common-extensions'
+      'apt-get update && apt-get install -y python3-numpy python3-matplotlib python3-reportlab fonts-arphic-uming fonts-arphic-ukai fonts-liberation python3-colcon-common-extensions'
     ;;
   shell) "${compose[@]}" exec ros2_dev bash ;;
   build)

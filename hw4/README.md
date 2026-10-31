@@ -2,7 +2,23 @@
 
 這份作業用 Extended Kalman Filter（延伸卡爾曼濾波器，EKF）融合 radar odometry 的平面運動與 GPS 的平面位置，在 RViz2 顯示估計軌跡。`/gt_odom` 只作結果檢查，不可參與狀態初始化或濾波更新。
 
-程式位於 `hw4/colcon_ws/src/fusion/scripts/`，沿用 HW2 的 ROS 2 Humble Docker。原 `EKF.py` 核心算法未在本輪更改；加入了 run 來源快照、實際 covariance 紀錄和 GT 時間對齊評估。本機離線合成檢查涵蓋 EKF 數學／時序、ROS stub 輸出整合及四檔 ZIP，詳見文末驗證紀錄；這不是 ROS 或真實 bag 驗證。目前沒有真實 bag 執行結果、RViz 截圖或錄影，也尚未確認實測精度。學號已設定為 `112611054`。
+程式位於 `hw4/colcon_ws/src/fusion/scripts/`，沿用 HW2 的 ROS 2 Humble Docker。原 `EKF.py` 核心算法未在本輪更改；加入了 run 來源快照、實際 covariance 紀錄和 GT 時間對齊評估。Ubuntu/HW2 ROS 2 Humble 實測與 RViz 錄影已完成，YouTube 影片為 <https://youtu.be/nmfKO3pA5y8>；PDF 已依使用者紅線刪除兩段說明並完成打包，`output/112611054_hw4.zip` 內四檔已核對；E3 尚未上傳。學號已設定為 `112611054`。
+
+### Ubuntu 實測紀錄（2026-10-29）
+
+- 容器 `ros2_container` 已以目前 worktree 掛載重新建立；舊 image `104f7d...` 已恢復 `sdc_hw2_ros2` 標籤。相依安裝成功，colcon build 成功（1.06 s），ROS Humble 容器內 17 項測試通過（1.360 s）。
+- 官方 README bag 解壓至 `hw4/colcon_ws/data/sdc_hw5_ros2/`，保留原名稱。ZIP 為 1,223,510,833 bytes，SHA256 `5b20e6c453812d848f1e71ce4282f0079c41a1c993cd947b498dc7264acf8488`；DB3 為 1,790,959,616 bytes。
+- 完整 80 秒 run：`hw4/colcon_ws/result/run_261029_231926_g9rH/`。Radar 973、GPS 64、GPS update 64、late GPS 0、invalid 0、non-increasing radar 0、estimate 1037、GT 實收 7544；原 bag 有 7714 筆 GT，best effort 接收少 170 筆，故不表示全部收到。GPS fallback 0、radar fallback 1。radar／GPS／GT 的 header.frame_id 均為 `origin`，bag 有 `/clock`。
+- GPS 原始 covariance 對角為 `(3, 3) m²`。radar 實際選用 covariance 對角統計最小值全為 0，最大值為 `[9.380944161956033e-05, 6.072459584673981e-05, 0.0006405714870086814]`。結果比較依各 topic 實際時間戳處理；GT 原始時間有 1526 筆非遞增（包含重複），評估對整數 timestamp 去重並保留最後值，再線性插值、不外推。
+- 記錄的 RMSE：radar 34.30278999808334 m、GPS 0.46098894599053886 m、estimate 1.0322084968142409 m。三者時間戳樣本不完全相同，不能解讀為嚴格同樣本比較，也不能據此宣稱 EKF 比 GPS 更準；GT 僅用於結果評估。
+- 聚合證據在 `../midterm01_gpu/outputs/run/track00_test_2610292317/`；較早驗證輪的 Ubuntu 截圖在 `hw4/output/evidence/ubuntu_2610292317/`。該輪完成後曾停在 RViz 等待錄影；錄影已於下方獨立一輪完成。
+
+### 錄影與 PDF 輪（2026-10-29）
+
+- 審閱用 PDF 對應新 run `hw4/colcon_ws/result/run_261029_232220_oYEV/`，與上方先前實測 run 分開保存。影片：https://youtu.be/nmfKO3pA5y8；終端身分截圖為該 run 的 `06_terminal_recording_identity.png`。
+- 新 run 計數：radar 961、GPS 63、estimate 1024、GT 6648；bag 原有 radar 973、GPS 64、GT 7714，因此分別少 12、1、1066 筆。GPS update 63、late GPS 0、non-increasing radar 0、invalid 0、pending GPS 0。雷達首末時間與 bag 跨度 79.615616084 s 吻合；fusion 收到 Ctrl+C 後 clean exit 0，player shell exit 0，但 log 沒有明確自然播畢訊息，不能宣稱完整收到所有訊息或自然播畢。
+- RMSE：radar 34.346932618594955 m、GPS 0.4634891799869087 m、estimate 1.035346041665754 m；estimate P95 為 1.665499907427702 m。GT timestamp 去重後 5340 筆，最大線性插值跨距 0.14985 s；各資料時間戳樣本不完全相同，不作嚴格同樣本比較，也不據此宣稱 EKF 比 GPS 更準。GT 僅作評估。
+- GPS covariance 對角為 `(3, 3) m²`、GPS fallback 0 次、radar fallback 1 次。run source manifest SHA 核對相符。PDF 共 5 頁，已依使用者標記刪除兩段文字、重新完成視覺 QA，並依授權打包。ZIP 內 PDF 與最終報告 bytes 相同，結果圖與兩份程式的 SHA 保持原 run 版本。
 
 ## 在 Ubuntu 執行
 
@@ -72,9 +88,9 @@ bag 播放結束後，在終端機 1 按 `Ctrl+C`。每輪會保存在不同的 
 
 ## 提交
 
-官方 HackMD 頁仍顯示 `10/28 23:59`；你提供的 E3 作業頁截圖顯示 **2026-10-29 23:59**，本專案文件依截圖標記最新 E3 時間。請以 E3 實際提交頁為準。壓縮檔內需有四個檔案：`112611054_hw4.pdf`、實測 `result.png`、`fusion.py` 和 `EKF.py`；PDF 要回答兩題 Discussion、放實測圖、本人終端身分截圖與 RViz2 YouTube 連結。錄影、E3 上傳由本人完成。
+官方 HackMD 頁仍顯示 `10/28 23:59`；E3 作業頁截圖顯示 **2026-10-29 23:59**，請以 E3 實際提交頁為準。壓縮檔內需有四個檔案：`112611054_hw4.pdf`、實測 `result.png`、`fusion.py` 和 `EKF.py`；PDF 要回答兩題 Discussion、放實測圖、本人終端身分截圖與 RViz2 YouTube 連結。錄影、影片 URL 與 PDF 已完成；使用者指定刪文並授權打包後，已建立四檔正式 ZIP。E3 尚未上傳。
 
-在 Ubuntu 主機的 `hw4` 目錄執行 `bash scripts/dev.sh report` 產生報告；設定檔、證據和四檔 ZIP 流程見[交付手冊](doc/SUBMISSION.md)。目前沒有 bag 實測結果或錄影，因此此工作區還沒有可提交的完整 PDF／ZIP。
+報告設定檔、PDF 審閱與四檔 ZIP 流程見[交付手冊](doc/SUBMISSION.md)。最終 5 頁 PDF 與四檔 ZIP 已完成；ZIP 內 PDF bytes 與刪文後檢查的版本一致。檔案為 `output/pdf/112611054_hw4.pdf`、`output/112611054_hw4.zip`，核對紀錄為 `output/submission_manifest.json`。E3 尚未上傳。
 
 ## 來源與驗證紀錄
 
@@ -82,6 +98,6 @@ bag 播放結束後，在終端機 1 按 `Ctrl+C`。每輪會保存在不同的 
 
 離線檢查與合成輸出保存於分支的 `midterm01_gpu/outputs/run/`，不隨 Git 同步；其合成圖表不供作業繳交。原有 10 項數學／時序檢查保留，新測試核對 GT 隔離、整數 epoch 時間對齊、來源 SHA、拒絕覆寫與 ZIP 四檔契約。
 
-本輪最終 17 項離線測試通過（10 項數學／時序、7 項 ROS stub／輸出／交付機制），unittest 計時 3.106 秒。紀錄：[unittest.log](../midterm01_gpu/outputs/run/track00_test_2610291901/unittest.log)；合成圖表與打包 fixture：[analysis](../midterm01_gpu/outputs/run/track00_test_2610291901/analysis/)。Python 語法、package XML、Compose YAML、兩個掛載及 shell 語法檢查通過。未執行 Ubuntu colcon、ROS node 或真實 bag。
+較早階段的本機離線檢查有 17 項通過（10 項數學／時序、7 項 ROS stub／輸出／交付機制），unittest 計時 3.106 秒。紀錄：[unittest.log](../midterm01_gpu/outputs/run/track00_test_2610291901/unittest.log)；合成圖表與打包 fixture：[analysis](../midterm01_gpu/outputs/run/track00_test_2610291901/analysis/)。該階段未執行 Ubuntu colcon、ROS node 或真實 bag；其後已另完成上方所列 Ubuntu build、ROS 測試及真實 bag run。Python 語法、package XML、Compose YAML、掛載及 shell 語法檢查屬較早的靜態／離線檢查。
 
-本機提供 `output/112611054_hw4_source_update.zip` 供同步程式：它包含 `hw4/` 的程式／文件和 `hw2/docker-compose.yml`，沒有 bag 或實測結果。若 Ubuntu checkout 仍在 `/home/ricky/sdc_ros2`，先確認工作樹已備份且沒有 HW2 程序，再將程式更新包解壓到該 checkout 根目錄。這是來源更新包，作業交付仍依上面的四檔規則產生。
+較早交接階段曾產生 `output/112611054_hw4_source_update.zip` 供同步程式（忽略輸出不隨 Git 同步，本 Ubuntu checkout 未提供此包）：它包含 `hw4/` 的程式／文件和 `hw2/docker-compose.yml`，沒有 bag 或實測結果。若 Ubuntu checkout 仍在 `/home/ricky/sdc_ros2`，先確認工作樹已備份且沒有 HW2 程序，再將程式更新包解壓到該 checkout 根目錄。這是來源更新包，作業交付仍依上面的四檔規則產生。
