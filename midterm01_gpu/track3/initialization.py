@@ -52,9 +52,10 @@ def plane_basis(n):
     return np.column_stack([x,np.cross(n,x),n])
 
 
-def transform4(u,x):
+def transform4(u,x,*,jacobian=True):
     c,s=np.cos(x[2]),np.sin(x[2]);R=cp.array([[c,-s,0],[s,c,0],[0,0,1]],dtype=cp.float64)
     v=u@R.T*cp.exp(x[3]);q=v+cp.array([x[0],x[1],0.])
+    if not jacobian:return q,None
     J=cp.zeros((len(u),3,4),dtype=cp.float64)
     J[:,0,0]=1;J[:,1,1]=1;J[:,0,2]=-v[:,1];J[:,1,2]=v[:,0];J[:,:,3]=v
     return q,J

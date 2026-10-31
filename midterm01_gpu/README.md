@@ -1,6 +1,10 @@
 # Midterm01 GPU 定位
 
-**Track2 現行程式（2026-10-29）：**`track2_causal_metric_correction_memory_v4` 保留逐幀 GNSS／IMU prior、當幀地面尺度／傾斜與非地面配準，並以有不確定度的因果 XY／yaw 修正狀態處理短暫失敗和配準跳動。運動候選比較與濾波預測 NIS 分開；當幀 correction 增量另有限幅。現行機制通過 29 項合成檢查（10.30 秒；[pytest.xml](outputs/run/track00_test_2610290341/pytest.xml)）；888 幀唯讀舊候選對照見[frame 428](outputs/run/track00_test_2610290340_0002/analysis/01_frame_0428_correction_replay.png)與[frame 653](outputs/run/track00_test_2610290340_0002/analysis/01_frame_0653_correction_replay.png)。這些不代表真實定位精度。v3 full 已停止於 1689 幀；歷史 metadata 仍標 `running`，保留不改，細節見 [67｜因果地圖修正記憶](doc/67_TRACK2_CAUSAL_CORRECTION_MEMORY_20261029.md)。操作見 [Track2 README](track2/README.md)；[66](doc/66_TRACK2_METRIC_SCALE_20261029.md) 是 v3 尺度歷史，[65](doc/65_TRACK2_5839746C_CAUSAL.md) 是固定尺度 v2 歷史。Track2 會自動開啟 RViz。下方 Track3 程式與入口維持原樣.
+**Track2 現行程式（2026-10-29）：**live 版本為 `track2_causal_dual_heading_bias_v5_2`；沿用 v5.1 map registration，新增 GNSS `PoseStamped` orientation 與 IMU 的因果雙 bias 融合。[58 項合成／CUDA／runner 檢查](outputs/run/track00_test_2610291602/pytest.xml)全數通過（14.402 秒，僅既有 `Axes3D` warning）；[套用 SHA 收據](outputs/run/track00_test_2610291602/apply_receipt.json)可追溯 live source。v5 與 v5.1 已有 full，使用者回報數值為 0.53683 與 0.51617；非因果 CSV 回報 0.30488，只作唯讀比較、不用來調參。三個分數已由使用者確認為同一 Track2 競賽的 Kaggle Public Score；v5.2 尚無真實 full 或分數證據，也不保證達到 0.30488。[1527 分析索引](outputs/run/track00_test_2610291527/analysis/README.md)與[1602 驗證圖表索引](outputs/run/track00_test_2610291602/analysis/README.md)已提供 PNG／PDF 與唯讀數據。下一次 full 由使用者手動啟動。操作與參數見 [Track2 README](track2/README.md)，模型、測試與限制見 [72｜GNSS 航向因果融合](doc/72_TRACK2_GNSS_ORIENTATION_CAUSAL_20261029.md)。
+
+**作者 Track3 CPU 本機對照：**已建立獨立研究入口 `./scripts/run_external_track3.sh --check`／`--full`，22 項作者合成測試與 4 項包裝器檢查通過。Track3 原始資料尚未準備，未執行真實定位；只有執行副本的兩處 I/O 相容修正，作者原檔保留。[資料位置、執行命令與驗證範圍](doc/70_EXTERNAL_TRACK3_LOCAL_VALIDATION.md)。完整執行仍由使用者啟動。
+
+**作者流程也支援 Track1／2：**使用 `./scripts/run_external_track1.sh --full` 或 `./scripts/run_external_track2.sh --full`，由使用者依序啟動。兩條 `--check` 均通過 22 項作者測試與 9 項跨 Track 契約檢查，輸入為各自 `raw_ply/`、3011／3299 幀；Track2 binary 地圖另以 XYZ-only 介面讀取。尚無本次移植的真實定位或精度結果。[Track1／2 操作與設定](doc/71_EXTERNAL_TRACK12_LOCAL_VALIDATION.md)。
 
 ## Track3 原有入口
 

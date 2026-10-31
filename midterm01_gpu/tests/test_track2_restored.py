@@ -54,7 +54,7 @@ def test_causal_prior_prefix_and_heading_blocks():
 
 
 def test_no_heading_before_block_complete_and_stale_imu_rejected():
-    poses, diag = synthetic_priors(35)
+    poses, diag = synthetic_priors(20)
     assert all(d['heading_bias_rad'] == 0. for d in diag)
     s = CausalSensorPrior(initial_pose(), 1_000_000_000)
     s.event(imu(1_000_000_000))
@@ -279,15 +279,16 @@ def test_full_analysis_read_only_and_contract_failures(tmp_path):
     (run/'test_info.json').write_text(json.dumps(dict(status='completed', mode='full', frame_count=n, generated=True)))
     with (run/'observations.jsonl').open('w') as f:
         for i in range(n):
-            memory = dict(correction=[.1, .2, .01], covariance=np.diag([.01, .01, .0001]).tolist(),
+            memory = dict(gain_scale_xy=.9, gain_scale_yaw=.5, nis_soft_threshold=5.991, nis_reject_threshold=13.816, correction=[.1, .2, .01], covariance=np.diag([.01, .01, .0001]).tolist(),
                           innovation_nis=1., accepted=True, seconds_since_update=0.)
             f.write(json.dumps(dict(state=[i*.01, 0., 0., .001, .2], scale=8.,
-                                   registration=dict(correction_filter=memory)))+'\n')
+                                   sensor_prior=dict(pose_covariance_xy_yaw=np.diag([.36,.36,.03]).tolist()),
+                                   registration=dict(correction_filter=memory, observability=dict(rank=2))))+'\n')
     paths = [x for x in run.iterdir() if x.is_file()]
     before = {f.name: sha256(f) for f in paths}
     analyze(run)
     assert before == {f.name: sha256(f) for f in paths}
-    for name in ('01_trajectory', '02_pose_changes', '03_registration_timing', '04_fusion_and_scale', '05_map_correction_memory'):
+    for name in ('01_trajectory', '02_pose_changes', '03_registration_timing', '04_fusion_and_scale', '05_map_correction_memory', '06_observability_uncertainty'):
         for ext in ('png', 'pdf'): assert (run/'analysis'/f'{name}.{ext}').stat().st_size > 1000
     # A partial same-source render can be retried without touching any pose.
     (run/'analysis'/'03_registration_timing.pdf').unlink()

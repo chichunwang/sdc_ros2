@@ -1,6 +1,6 @@
 """唯讀 SQLite / CDR。每次僅傳回已抵達且量測時間不晚於影像的事件。
 
-ROS 反序列化沿用既有容器；GNSS 不內插、不讀 quaternion，遲到事件不回修。
+ROS 反序列化沿用既有容器；保留 GNSS XYZ 與有效 quaternion；遲到事件不回修。
 """
 from pathlib import Path
 import sqlite3
@@ -56,12 +56,19 @@ class SensorStream:
                 if not np.isfinite(quat).all() or abs(np.linalg.norm(quat)-1.) > .02:
                     raise ValueError('Invalid IMU orientation quaternion')
                 row.update(quaternion=quat, gyro=[m.angular_velocity.x, m.angular_velocity.y, m.angular_velocity.z],
-                           accel=[m.linear_acceleration.x, m.linear_acceleration.y, m.linear_acceleration.z])
+                           accel=[m.linear_acceleration.x, m.linear_acceleration.y, m.linear_acceleration.z],
+                           orientation_covariance=list(m.orientation_covariance),
+                           gyro_covariance=list(m.angular_velocity_covariance))
             else:
                 if m.header.frame_id != self.gnss_frame:
                     raise ValueError('Unexpected GNSS frame; verify map transform before use')
                 row['xy'] = [m.pose.position.x, m.pose.position.y]
                 row['z'] = m.pose.position.z
+                q = [m.pose.orientation.x, m.pose.orientation.y, m.pose.orientation.z, m.pose.orientation.w]
+                valid_heading = bool(np.isfinite(q).all() and abs(np.linalg.norm(q)-1.) <= .02)
+                # Invalid orientation must not discard valid GNSS XYZ.
+                row['heading_quaternion'] = q if valid_heading else None
+                row['heading_status'] = 'available_unknown_covariance' if valid_heading else 'invalid_orientation'
             values = row['gyro']+row['accel'] if kind == 'imu' else row['xy']+[row['z']]
             if not np.isfinite(values).all():
                 raise ValueError('Nonfinite sensor data')

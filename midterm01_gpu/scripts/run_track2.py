@@ -72,8 +72,8 @@ def execute(run, max_frames=None, publish_rviz=False):
                   for name in ('map.pcd', 'init_guess.txt', 'Track2.db3')}
         write_json(run/'input_sources.json', dict(sources=inputs, map_fields_used=['x', 'y', 'z'],
             pose_convention='T_map_ply, camera FLU, metres; yaw atan2(R10,R00) radians',
-            gnss_policy='forward XY CV Kalman sigma=0.3m; latest altitude only for first-frame height; empty frame assumed map; zero lever uncalibrated',
-            imu_policy='original guided model: latest IMU quaternion + causal gyro extrapolation; compatible axes/zero lever assumed'))
+            gnss_policy='forward XY CV Kalman and current quaternion with unknown GNSS heading bias; unknown GNSS frame assumed map; lever mean and uncertainty from Python parameters; altitude not a height calibration',
+            imu_policy='arrived orientation + causal gyro; joint IMU/GNSS heading biases; past observable course anchors common bias; body small-angle covariance and IMU-to-PLY extrinsic assumptions logged per frame'))
         warm = time.perf_counter()
         (cp.eye(3) @ cp.eye(3)).sum().item()
         info['warmup_seconds'] = time.perf_counter()-warm
@@ -114,14 +114,21 @@ def execute(run, max_frames=None, publish_rviz=False):
                     if event['kind'] == 'gnss':
                         sensor_updates.append(dict(event, update=decision))
                 prior, prior_diag = state.for_frame(camera_ns, previous_height)
-                masked, camera_diag = camera.apply(load_ply(row['path']))
+                sensor_done = time.perf_counter()
+                cloud = load_ply(row['path'])
+                ply_done = time.perf_counter()
+                masked, camera_diag = camera.apply(cloud)
                 raw = cp.asarray(masked)
-                source_sha = sha256(row['path'])
                 cp.cuda.get_current_stream().synchronize()
+                mask_done = time.perf_counter()
+                source_sha = sha256(row['path'])
                 load_ms = (time.perf_counter()-tick)*1000
                 reg_tick = time.perf_counter()
                 final, scale, reg_diag = registration.refine(raw, prior, camera_ns,
-                    speed_mps=float(np.linalg.norm(state.position[2:])))
+                    speed_mps=float(np.linalg.norm(state.position[2:])),
+                    prior_covariance=np.asarray(prior_diag['pose_covariance_xy_yaw']),
+                    rotation_delta_rad=prior_diag['gyro_rotation_since_frame_rad'],
+                    reference_delta=prior_diag['calibration_delta_xy_yaw'])
                 cp.cuda.get_current_stream().synchronize()
                 reg_seconds = time.perf_counter()-reg_tick
                 registration_seconds += reg_seconds
@@ -130,23 +137,33 @@ def execute(run, max_frames=None, publish_rviz=False):
                 previous_height = float(final[2, 3])
                 if not valid_pose(final) or not np.isfinite(state.position).all() or not np.isfinite(state.cov).all():
                     raise ValueError('Nonfinite or invalid emitted pose/filter')
+                display_tick = time.perf_counter()
                 if visualizer is not None:
                     if registration.nn is not None:
                         visualizer.publish_submap(cp.asnumpy(registration.nn.points), stamp)
-                    visualizer.publish_frame(cp.asnumpy(raw), final, scale, stamp,
+                    # Keep the full point transform on CUDA. ROS still needs
+                    # host float32 message bytes; this is the only display copy.
+                    display_cloud = raw @ cp.asarray(final[:3, :3]).T*scale+cp.asarray(final[:3, 3])
+                    visualizer.publish_frame(cp.asnumpy(display_cloud.astype(cp.float32)), final, scale, stamp,
                         accepted=map_decision['accepted'], reason=map_decision['reason'],
                         scale_validated=reg_diag['scale_validated'],
-                        speed_mps=float(np.linalg.norm(state.position[2:])))
+                        speed_mps=float(np.linalg.norm(state.position[2:])), cloud_in_map=True)
+                display_ms = (time.perf_counter()-display_tick)*1000
                 total_ms = (time.perf_counter()-tick)*1000
                 yaw = float(np.arctan2(final[1, 0], final[0, 0]))
                 result.writerow([idx, f'{final[0,3]:.9f}', f'{final[1,3]:.9f}', f'{yaw:.11f}'])
                 files['poses.txt'].write(' '.join(f'{v:.12f}' for v in final[:3].ravel())+'\n')
-                timings.writerow([idx, row['original_idx'], stamp, 'cuda_metric_scale', f'{load_ms:.6f}',
+                timings.writerow([idx, row['original_idx'], stamp, 'cuda_observable_plane', f'{load_ms:.6f}',
                                   f'{reg_seconds*1000:.6f}', f'{total_ms:.6f}', str(map_decision['accepted']).lower(), f'{scale:.12f}'])
                 manifest.writerow([idx, row['original_idx'], stamp, camera_ns, str(row['path']), source_sha])
                 observation = dict(idx=idx, original_idx=row['original_idx'], timestamp_ns=stamp,
                     camera_timestamp_ns=camera_ns, elapsed_seconds=time.perf_counter()-tlocal,
                     registration=reg_diag, map_update=map_decision, gnss=sensor_updates,
+                    phase_timings_ms=dict(sensor_prior=(sensor_done-tick)*1000,
+                        ply_read=(ply_done-sensor_done)*1000, camera_mask_cuda=(mask_done-ply_done)*1000,
+                        source_sha256=load_ms-(mask_done-tick)*1000,
+                        registration=reg_seconds*1000, rviz=display_ms,
+                        clock='synchronized wall time; CPU/GPU overlap is not separated'),
                     scale=scale, camera_mask=camera_diag, sensor_prior=prior_diag,
                     state=[float(final[0,3]), float(final[1,3]), yaw, state.bias, float(np.linalg.norm(state.position[2:]))],
                     position_covariance_diag=np.diag(state.cov).tolist(),
@@ -165,6 +182,7 @@ def execute(run, max_frames=None, publish_rviz=False):
                 write_json(run/'test_info.json', info)
                 print(f"idx={row['original_idx']} map={map_decision['accepted']} scale={scale:.4f} "
                       f"xy=({final[0,3]:.3f},{final[1,3]:.3f}) "
+                      f"rank={0 if reg_diag.get('observability') is None else reg_diag['observability']['rank']} "
                       f"scale_valid={reg_diag['scale_validated']} v={np.linalg.norm(state.position[2:]):.3f} bias={np.degrees(state.bias):.4f}deg elapsed={time.perf_counter()-tlocal:.1f}s", flush=True)
         info['status'] = 'completed'
     except BaseException as exc:

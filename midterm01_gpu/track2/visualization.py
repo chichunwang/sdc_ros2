@@ -39,9 +39,10 @@ class Track2RvizPublisher:
         self.submap_pub.publish(cloud_message(points, timestamp_ns))
 
     def publish_frame(self, raw, T, scale, timestamp_ns, *, accepted, reason, stationary=False,
-                      speed_mps=None, gyro_bias_radps=None, scale_validated=None):
+                      speed_mps=None, gyro_bias_radps=None, scale_validated=None, cloud_in_map=False):
         color = (70, 235, 100) if accepted else (255, 160, 40)
-        self.current_cloud_pub.publish(cloud_message(raw, timestamp_ns, T, scale, color=color))
+        self.current_cloud_pub.publish(cloud_message(raw, timestamp_ns,
+            None if cloud_in_map else T, scale, color=color))
         pose = PoseStamped(); pose.header.frame_id = 'map'
         pose.header.stamp.sec, pose.header.stamp.nanosec = divmod(int(timestamp_ns), 1_000_000_000)
         pose.pose.position.x, pose.pose.position.y, pose.pose.position.z = map(float, T[:3, 3])

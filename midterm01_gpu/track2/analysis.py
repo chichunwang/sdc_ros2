@@ -56,6 +56,7 @@ def analyze(run):
     obs = [json.loads(line) for line in (run/'observations.jsonl').read_text().splitlines()]
     has_memory = (len(obs) == len(result) and
                   all('correction_filter' in o.get('registration', {}) for o in obs))
+    has_observability = (has_memory and all('pose_covariance_xy_yaw' in o.get('sensor_prior', {}) for o in obs))
     names = ['result_2.csv', 'poses.txt', 'timings.csv', 'frame_manifest.csv', 'observations.jsonl', 'test_info.json']
     sources = {n: sha256(run/n) for n in names}
     output = run/'analysis'
@@ -64,6 +65,8 @@ def analyze(run):
     stems = ('01_trajectory', '02_pose_changes', '03_registration_timing', '04_fusion_and_scale')
     if has_memory:
         stems += ('05_map_correction_memory',)
+    if has_observability:
+        stems += ('06_observability_uncertainty',)
     recognized = {'manifest.json', 'README.md'} | {f'{s}.{ext}' for s in stems for ext in ('png', 'pdf')}
     if any(f.name not in recognized for f in output.iterdir()):
         raise FileExistsError('Unrecognized analysis artifacts preserved')
@@ -116,8 +119,8 @@ def analyze(run):
         nis = [np.nan if d['innovation_nis'] is None else d['innovation_nis'] for d in memory]
         axes[2].plot(idx, nis, lw=.8)
         from . import parameters as p
-        axes[2].axhline(p.CORRECTION_NIS_SOFT, color='tab:orange', ls='--', label='Soft gate')
-        axes[2].axhline(p.CORRECTION_NIS_REJECT, color='tab:red', ls='--', label='Hard gate')
+        axes[2].plot(idx, [np.nan if d.get('nis_soft_threshold', p.CORRECTION_NIS_SOFT) is None else d.get('nis_soft_threshold', p.CORRECTION_NIS_SOFT) for d in memory], color='tab:orange', ls='--', label='Soft gate (current DOF)')
+        axes[2].plot(idx, [np.nan if d.get('nis_reject_threshold', p.CORRECTION_NIS_REJECT) is None else d.get('nis_reject_threshold', p.CORRECTION_NIS_REJECT) for d in memory], color='tab:red', ls='--', label='Hard gate (current DOF)')
         axes[2].set(ylabel='Innovation NIS', yscale='symlog'); axes[2].legend()
         age = np.array([np.nan if d['seconds_since_update'] is None else d['seconds_since_update'] for d in memory])
         axes[3].plot(idx, age, label='Age of last used map update')
@@ -126,6 +129,22 @@ def analyze(run):
         axes[3].set(xlabel='Frame idx', ylabel='Age [s]'); axes[3].legend()
         for ax in axes: ax.grid(alpha=.3)
         save(fig, '05_map_correction_memory')
+    if has_observability:
+        fig, axes = plt.subplots(4, 1, figsize=(11, 10), sharex=True)
+        prior_std = np.sqrt(np.array([np.diag(o['sensor_prior']['pose_covariance_xy_yaw']) for o in obs]))
+        for j, label in enumerate(('Prior X', 'Prior Y')):
+            axes[0].plot(prior_std[:, j], label=label)
+        axes[0].set_ylabel('Prior sigma [m]'); axes[0].legend()
+        axes[1].plot(np.degrees(prior_std[:, 2]), label='Current prior yaw sigma')
+        axes[1].set_ylabel('Yaw sigma [deg]'); axes[1].legend()
+        ranks = [0 if o['registration'].get('observability') is None else o['registration']['observability']['rank'] for o in obs]
+        axes[2].step(np.arange(len(obs)), ranks, where='post', label='Observable map pose directions')
+        axes[2].set(ylabel='Rank', ylim=(-.1, 3.1), yticks=[0, 1, 2, 3]); axes[2].legend()
+        for key, label in (('gain_scale_xy', 'XY gain limit'), ('gain_scale_yaw', 'Yaw gain limit')):
+            axes[3].plot([o['registration']['correction_filter'].get(key, 1.) for o in obs], label=label, alpha=.8)
+        axes[3].set(xlabel='Frame idx', ylabel='Gain multiplier', ylim=(-.05, 1.05)); axes[3].legend()
+        for ax in axes: ax.grid(alpha=.3)
+        save(fig, '06_observability_uncertainty')
     # Never change input files while plotting, including info used as evidence.
     if sources != {n: sha256(run/n) for n in names}:
         raise RuntimeError('Input changed during analysis')
@@ -134,6 +153,7 @@ def analyze(run):
         caveat='Acceptance and residuals are not localization accuracy'))
     (output/'README.md').write_text('# Track2 因果定位唯讀圖表\n\n軌跡、相鄰 pose 變化、耗時及融合狀態；沒有獨立真值。\n\n'
         +('05 顯示 world XY/yaw 修正、模型不確定度、innovation NIS 及有效配準的失聯時間；不確定度尚未經真值校準。\n\n' if has_memory else '')
+        +('06 顯示逐幀 prior 標準差、scale 邊際化後的 map 可觀測維度及 XY/yaw 分別限幅。\n\n' if has_observability else '')
         +'GNSS 是融合輸入，不是真值；接受率與殘差不能證明精度。來源 SHA 見 manifest.json。\n')
 
 
