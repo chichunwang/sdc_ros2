@@ -321,12 +321,26 @@ class MetricRegistration:
             # reference is NOT a full -I data-only observation response.
             J = self.correction_jacobian(x)
             candidate_sensitivity = np.eye(3)-J @ np.linalg.solve(final['H'], J.T @ self.prior_precision)
+        validator = None
+        if p.V511_ENABLED and p.VALIDATE_EMITTED_MAP_PROPOSAL and geometry_accepted:
+            radius, robust, _ = p.METRIC_STAGES[-1]
+            emitted_scale = candidate_scale if scale_std <= p.MAX_SCALE_LOG_STD else float(np.exp(self.seed[3]))
+            baseline = self.state_for_correction(prior, self.correction_filter.predicted_mean, float(np.exp(self.seed[3])))
+            baseline_loss = self.evaluate(baseline,radius,robust,include_prior=False,association=final['association'],diagnostics=False)['data_cost']
+            def validator(proposal):
+                trial = self.state_for_correction(prior,proposal,emitted_scale)
+                valid = self.valid(trial)
+                cost = self.evaluate(trial,radius,robust,include_prior=False,association=final['association'],diagnostics=False)['data_cost'] if valid else None
+                ok = bool(cost is not None and np.isfinite(cost) and cost <= baseline_loss+1e-12)
+                return dict(accepted=ok,reason='posterior_fixed_plane_loss_not_increased' if ok else 'posterior_fixed_plane_loss_increased' if valid else 'posterior_outside_search',
+                    baseline_data_cost=baseline_loss,proposal_data_cost=cost,
+                    comparison='actual emitted pose/scale vs prediction on same final associations; no rematching or discarded points')
         correction, temporal = self.correction_filter.update(
             pose_correction(candidate_T, prior) if geometry_accepted else None,
             covariance if geometry_accepted else None,
             observation_matrix=observation if geometry_accepted else None,
             missing_reason='unobservable_map_geometry' if quality_ok else 'geometry_rejected',
-            candidate_sensitivity=candidate_sensitivity)
+            candidate_sensitivity=candidate_sensitivity,proposal_validator=validator)
         accepted = temporal['accepted']
         scale = candidate_scale if accepted and scale_std <= p.MAX_SCALE_LOG_STD else float(np.exp(self.seed[3]))
         emitted_x = self.state_for_correction(prior, correction, scale)
@@ -362,6 +376,7 @@ class MetricRegistration:
             feature_quality_scope='unfiltered_geometry_candidate', emitted_feature_quality=self.score_pose(T, scale),
             ground_normal_difference_before_deg=float(np.degrees(np.arccos(np.clip(self.nm @ (prior[:3,:3] @ self.ns),-1,1)))),
             model='v52_point_to_plane_with_directional_correction_memory', elapsed_seconds=time.perf_counter()-started)
+        diag['candidate_selection'] = getattr(self,'candidate_selection',None)
         diag['fusion_profile'] = p.FUSION_PROFILE
         diag['height_variance_after_m2'] = float(self.height_variance)
         cp.cuda.get_current_stream().synchronize()
@@ -403,43 +418,9 @@ class MetricRegistration:
                 height_update['reason'] = 'height_unobservable'
         return height, variance, height_update, height_likelihood
 
-    def refine(self, raw, prior, timestamp_ns, *, prior_covariance, speed_mps=None, rotation_delta_rad=None, reference_delta=None):
-        started = time.perf_counter()
-        if self.last_stamp is not None and timestamp_ns <= self.last_stamp:
-            raise ValueError('Metric registration timestamps must strictly increase')
-        dt = 0. if self.last_stamp is None else (timestamp_ns-self.last_stamp)*1e-9
-        self.height_variance += p.CAMERA_HEIGHT_RW_M_SQRT_S**2*dt
-        self.last_stamp = int(timestamp_ns)
-        predicted_correction = self.correction_filter.predict(prior, timestamp_ns, speed_mps,
-            prior_covariance=prior_covariance, rotation_delta_rad=rotation_delta_rad, reference_delta=reference_delta)
-        try:
-            planes = self.prepare(raw, prior, prior_covariance)
-        except GroundInitializationError as error:
-            correction, temporal = self.correction_filter.update(missing_reason='ground_support_failed')
-            T = prior.copy(); T[:2, 3] += correction[:2]
-            T[:3, :3] = Rotation.from_euler('z', correction[2]).as_matrix() @ prior[:3, :3]
-            return T, self.last_scale, dict(accepted=False, geometry_accepted=False, reason='ground_support_failed',
-                failure=str(error), scale_validated=False, scale_source='previous_or_unverified_seed',
-                ground_support=getattr(error, 'diagnostic', None),
-                candidate_pose=None, correction_filter=temporal,
-                elapsed_seconds=time.perf_counter()-started)
-        cp.cuda.get_current_stream().synchronize()
-        prepared = time.perf_counter()
-        x = self.seed.copy(); stages = []
-        # Search from the predicted *world-frame* correction only if its
-        # current-frame objective is better. Output fusion occurs below,
-        # inside localization and before the only emission of this frame.
-        carry = self.state_for_correction(prior, predicted_correction, np.exp(self.seed[3]))
-        radius0, robust0, _ = p.METRIC_STAGES[0]
-        seeds = [x, carry]
-        if self.correction_filter.last_update is None:
-            sigma = np.sqrt(self.prior_covariance[2, 2])
-            bound = self.yaw_search_bound
-            for multiple in p.MAP_STARTUP_YAW_SEED_SIGMAS:
-                c = np.array([0., 0., np.clip(multiple*sigma, -bound, bound)])
-                seeds.append(self.state_for_correction(prior, c, np.exp(self.seed[3])))
-        eligible = [(self.evaluate(seed_x, radius0, robust0, diagnostics=False)['cost'], seed_x) for seed_x in seeds if self.valid(seed_x)]
-        x = min(eligible, key=lambda pair: pair[0])[1].copy()
+    def _solve_candidate(self, x):
+        """Complete all stages on one current-frame hypothesis; no filter commit."""
+        x = x.copy(); stages = []
         for radius, robust, iterations in p.METRIC_STAGES:
             converged = False; reason = 'iteration_limit'; count = 0
             for it in range(iterations):
@@ -472,7 +453,6 @@ class MetricRegistration:
                                converged=converged, reason=reason, feature_cost=end['feature_cost'], coverage=end['coverage']))
         final = self.evaluate(x, radius, robust, derivatives=True)
         seed = self.evaluate(self.seed, radius, robust, association=final['association'])
-        optimized = time.perf_counter()
         eig = np.linalg.eigvalsh(final['data_H'])
         quality_ok = bool(self.valid(x) and final['matches'] >= p.MIN_METRIC_MATCHES
             and final['median_plane_residual_m'] <= p.MAX_PLANE_MEDIAN_M
@@ -486,6 +466,95 @@ class MetricRegistration:
             and final['angular_support'] >= support_required)
         scale_info = 0. if observable is None else observable['scale_information']
         scale_std = 1/np.sqrt(max(scale_info, 1e-20))
+        return dict(x=x, stages=stages, final=final, seed=seed, eig=eig, quality_ok=quality_ok, observation=observation, covariance=covariance, observable=observable, support_required=support_required, geometry_accepted=geometry_accepted, scale_info=scale_info, scale_std=scale_std)
+
+    def _select_current_candidates(self, prior, carry):
+        enabled = p.V511_ENABLED and p.uses_v52_fusion()
+        startup = self.correction_filter.last_update is None
+        seeds = [self.seed.copy(), carry.copy()]
+        if startup:
+            sigma = np.sqrt(self.prior_covariance[2, 2])
+            for multiple in p.MAP_STARTUP_YAW_SEED_SIGMAS:
+                seeds.append(self.state_for_correction(prior, [0.,0.,np.clip(multiple*sigma,-self.yaw_search_bound,self.yaw_search_bound)], np.exp(self.seed[3])))
+        radius0, robust0, _ = p.METRIC_STAGES[0]
+        if not enabled:
+            eligible = [(self.evaluate(x,radius0,robust0,diagnostics=False)['cost'],x) for x in seeds if self.valid(x)]
+            return self._solve_candidate(min(eligible,key=lambda pair:pair[0])[1])
+        if startup:
+            yaw_offsets = []
+            if p.STARTUP_INCLUDE_GIVEN_YAW:
+                yaw_offsets.append(wrap(yaw(self.initial_pose)-yaw(prior)))
+            if p.STARTUP_INCLUDE_MAP_AXIS:
+                covariance = cp.cov(self.feature_nn.points[:,:2].T)
+                axis = cp.asnumpy(cp.linalg.eigh(covariance)[1][:,-1])
+                axis_yaw = float(np.arctan2(axis[1],axis[0]))
+                current = self.seed[2]
+                offset = wrap(axis_yaw+np.pi*round((current-axis_yaw)/np.pi)-current)
+                yaw_offsets.append(offset)
+            for delta in yaw_offsets:
+                seeds.append(self.state_for_correction(prior,[0.,0.,delta],np.exp(self.seed[3])))
+            # Height hypotheses are seeds inside the SAME objective and bounds,
+            # never independent height observations or fixed metric calibration.
+            originals = [x.copy() for x in seeds]
+            for x in originals:
+                for multiple in p.STARTUP_HEIGHT_SEED_SIGMAS:
+                    height = self.height+multiple*np.sqrt(self.height_variance)
+                    if p.CAMERA_HEIGHT_BOUNDS_M[0] < height < p.CAMERA_HEIGHT_BOUNDS_M[1]:
+                        trial = x.copy(); trial[3] = np.log(height/self.ds); seeds.append(trial)
+        unique=[]; invalid=0
+        for x in seeds:
+            if not self.valid(x): invalid+=1;continue
+            # Same tolerances used by the solver's convergence test.
+            if any(np.linalg.norm(x[:2]-v[:2])<.002 and abs(wrap(x[2]-v[2]))<.0002 and abs(x[3]-v[3])<.0002 for v in unique):continue
+            unique.append(x)
+        initial = [(self.evaluate(x,radius0,robust0,diagnostics=False)['cost'],x) for x in unique]
+        first = min(initial,key=lambda row:(row[0],tuple(row[1])))[1]
+        trials=[self._solve_candidate(first)]
+        if startup or (p.TRACKING_RETRY_ON_GEOMETRY_FAILURE and not trials[0]['geometry_accepted']):
+            for x in unique:
+                if np.array_equal(x,first):continue
+                trials.append(self._solve_candidate(x))
+        for trial in trials:
+            T, scale = self.pose(trial['x'])
+            trial['common_score'] = self.score_pose(T,scale)['feature_cost']
+        eligible = [t for t in trials if t['geometry_accepted']]
+        chosen = min(eligible or trials,key=lambda t:(t['common_score'],tuple(t['x'])))
+        chosen['selection'] = dict(startup=startup,fully_refined=len(trials),invalid_seeds=invalid,
+            selected_index=next(i for i,t in enumerate(trials) if t is chosen),
+            candidates=[dict(geometry_accepted=t['geometry_accepted'],rank=0 if t['observable'] is None else t['observable']['rank'],
+                common_feature_cost=t['common_score'],candidate_state=t['x'].tolist(),selected=t is chosen) for t in trials],
+            policy='complete each startup hypothesis before common raw-sample comparison; qualified candidates first; one temporal commit')
+        return chosen
+
+    def refine(self, raw, prior, timestamp_ns, *, prior_covariance, speed_mps=None, rotation_delta_rad=None, reference_delta=None):
+        started = time.perf_counter()
+        if self.last_stamp is not None and timestamp_ns <= self.last_stamp:
+            raise ValueError('Metric registration timestamps must strictly increase')
+        dt = 0. if self.last_stamp is None else (timestamp_ns-self.last_stamp)*1e-9
+        self.height_variance += p.CAMERA_HEIGHT_RW_M_SQRT_S**2*dt
+        self.last_stamp = int(timestamp_ns)
+        predicted_correction = self.correction_filter.predict(prior, timestamp_ns, speed_mps,
+            prior_covariance=prior_covariance, rotation_delta_rad=rotation_delta_rad, reference_delta=reference_delta)
+        try:
+            planes = self.prepare(raw, prior, prior_covariance)
+        except GroundInitializationError as error:
+            correction, temporal = self.correction_filter.update(missing_reason='ground_support_failed')
+            T = prior.copy(); T[:2, 3] += correction[:2]
+            T[:3, :3] = Rotation.from_euler('z', correction[2]).as_matrix() @ prior[:3, :3]
+            return T, self.last_scale, dict(accepted=False, geometry_accepted=False, reason='ground_support_failed',
+                failure=str(error), scale_validated=False, scale_source='previous_or_unverified_seed',
+                ground_support=getattr(error, 'diagnostic', None),
+                candidate_pose=None, correction_filter=temporal,
+                elapsed_seconds=time.perf_counter()-started)
+        cp.cuda.get_current_stream().synchronize()
+        prepared = time.perf_counter()
+        carry = self.state_for_correction(prior, predicted_correction, np.exp(self.seed[3]))
+        candidates = self._select_current_candidates(prior, carry)
+        x, stages, final, seed, eig, quality_ok, observation, covariance, observable, support_required, geometry_accepted, scale_info, scale_std = (
+            candidates[name] for name in ('x','stages','final','seed','eig','quality_ok','observation','covariance','observable','support_required','geometry_accepted','scale_info','scale_std'))
+        self.candidate_selection = candidates.get('selection')
+        optimized = time.perf_counter()
+        radius, robust, _ = p.METRIC_STAGES[-1]
         if p.uses_v52_fusion():
             return self._finish_v52(x, prior, final, seed, stages, planes, eig,
                 quality_ok, observation, covariance, observable, support_required,

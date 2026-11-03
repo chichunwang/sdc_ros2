@@ -15,10 +15,11 @@ YZ = np.array([[0., 1., 0.], [0., 0., 1.]])
 @pytest.fixture(autouse=True)
 def retained_v57_heading_contract(monkeypatch):
     monkeypatch.setattr(p, 'V510_ENABLED', False)
+    monkeypatch.setattr(p, 'V511_ENABLED', False)
 
 
 def test_production_profile_and_unknown_profile_fails(monkeypatch):
-    assert p.VERSION == 'track2_v57_course_heading_budget_v5_10_perf2'
+    assert p.VERSION == 'track2_startup_candidates_current_validation_v5_11_1_perf2'
     assert p.uses_v52_fusion()
     monkeypatch.setattr(p, 'FUSION_PROFILE', 'typo')
     with pytest.raises(ValueError, match='Unknown Track2 fusion profile'):

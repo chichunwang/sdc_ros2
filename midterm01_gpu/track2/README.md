@@ -1,18 +1,20 @@
-# Track2：v5.7 基線上的航向資訊預算 v5.10 + perf2
+# Track2：啟動候選與首筆 map 交接修正 v5.11.1 + perf2
 
-版本為 `track2_v57_course_heading_budget_v5_10_perf2`，基準是 v5.7 full `track02_full_2611031204_0002`。本次只加兩半 GNSS course 方向一致性／可觀測性檢查，以及 heading likelihood 資訊分數與同影格校正量預算；影像速度、尺度配準和 visual update 採回 v5.7 版本。完整原因、殘差與流程見[86｜v5.10：v5.7 航向觀測預算](../doc/86_TRACK2_V510_V57_HEADING_20261103.md)。
+版本已套用，為 `track2_startup_candidates_current_validation_v5_11_1_perf2`，基準是 v5.10 full `track02_full_2611031941`：3299 幀完成，使用者回報 Public Score `0.42699`。它保留 v5.11 的 v5.10 course／heading 檢查、startup 候選完整配準、幾何失敗時 alternate retry，以及固定 final associations 下有限 gain posterior pose+scale data-cost 驗收；另修正首次 map update 在 prior-only 輸出之後到達時略過既有限幅。使用者標記的 frame 只作視覺檢查，不當作真值，也不加入逐幀座標修正。算法原因、驗證範圍與限制見[87｜v5.11.1 啟動交接修正](../doc/87_TRACK2_V511_STARTUP_VALIDATION_20261103.md)。
 
-**狀態：**v5.10 已套用。Track2 GPU regression **201 passed**，1 項既有 Matplotlib `Axes3D` warning，26.53 秒（[XML](../outputs/run/track00_test_2611031923/pytest_gpu_0002.xml)、[log](../outputs/run/track00_test_2611031923/pytest_gpu_0002.log)）；116 個凍結 Python 來源 SHA 一致。核對包含 v5.7 恢復的 `image_speed.py`、`metric_registration.py`、`visual_update.py` 等模組；v5.7 參數除版本字串外相同，另加 v5.10 開關與 metadata。合成停車起步案例拒絕前半無可觀測方向的整窗；300 幀生成輸出核對 v5.7 baseline equivalence。run metadata 記錄真實定位與 PnP 均為 0 幀、`score=null`，沒有 v5.10 full 或新成績（[run 記錄](../outputs/run/track00_test_2611031923/test_info.json)）。v5.7 full 的使用者回報 Public Score `0.44296` 仍是已知最低分；v5.9 full 的 `0.44917` 是歷史整體結果，不能當作 v5.10 效果證明。此前參照 CSV 僅供差異診斷，不作真值或 pose 回修依據。合成圖表：[heading 預算](../outputs/run/track00_test_2611031923/analysis/01_generated_heading_budget.png)、[course 半段檢查](../outputs/run/track00_test_2611031923/analysis/02_generated_course_guard.png)。
+**狀態：**v5.11.1 GPU Track2 suite **214 passed**、1 項既有 Matplotlib `Axes3D` warning、44.80 秒；118 個凍結 Python SHA 一致（[JUnit XML](../outputs/run/track00_test_2611032103/pytest_gpu_0002.xml)、[log](../outputs/run/track00_test_2611032103/pytest_gpu_0002.log)）。首輪為 213 passed、1 failed；唯一失敗是新測試 assertion 將 2D XY 和 3D correction 相加，已用 `[:2]` 修正測試並完整重跑，原 gain gate 沒有調整（[首輪 XML](../outputs/run/track00_test_2611032103/pytest_gpu.xml)、[log](../outputs/run/track00_test_2611032103/pytest_gpu.log)）。新增的 7 個生成 handoff cases 全數通過。關閉修正的 31 幀與 frame 0 即可接受 map 的 31 幀都與 v5.11 逐項相同；延遲首筆 map 的合成 correction 從 1.344392 m 降至 0.020000 m，恰與該場景 40 ms／0 speed／0 gyro 的既有預算相符。這是生成機制檢查，不能宣稱真實定位精度或 Y 字已在真實 full 消失。handoff 圖與數值見[圖表](../outputs/run/track00_test_2611032103/analysis/01_generated_handoff.png)／[PDF](../outputs/run/track00_test_2611032103/analysis/01_generated_handoff.pdf)及[JSON](../outputs/run/track00_test_2611032103/analysis/generated_handoff_checks.json)。
 
-**執行命令（v5.10 已套用）：**完整定位仍由使用者手動啟動：
+v5.11.1 已套用，程式與本文件的來源 SHA 已核對。尚未有 v5.11.1 真實定位、PnP 幀或成績。前一版 v5.11 full `track02_full_2611032051` 由使用者停止於 351 幀（idx 0–350），`score=null`；run metadata 的 `running` 狀態與 185 個 source SHA 均原樣保留（[run metadata](../outputs/run/track02_full_2611032051/test_info.json)）。目前最低的已知完整版本成績仍是 v5.10 full 的使用者回報 `0.42699`。
+
+**執行命令：**完整定位仍由使用者手動啟動：
 
 ```bash
 ./scripts/run_track2.sh --full
 ```
 
-v5.10 的設定位於 [`parameters.py`](parameters.py)。主要 heading/course 參數、每筆 likelihood 資訊分數與每幀 `0.5°` 校正預算見[86](../doc/86_TRACK2_V510_V57_HEADING_20261103.md)。
+v5.11.1 的生效參數位於 [`parameters.py`](parameters.py)。首次接受 map update 前的 startup 多候選、tracking alternate retry、finite-gain data-cost 驗收，以及 prior-only 啟動後首筆 map update 的 gain 限制見[87](../doc/87_TRACK2_V511_STARTUP_VALIDATION_20261103.md)；v5.10 的 course／heading 預算仍見[86](../doc/86_TRACK2_V510_V57_HEADING_20261103.md)。
 
-下方 v5.3–v5.5 參數和機制保留作歷史說明。v5.10 以 v5.7 完整版本為基線，特意不帶入 v5.8／v5.9 的影像追蹤、距離範圍、高度或路面平移改動。
+下方 v5.3–v5.5 參數和機制保留作歷史說明。v5.11.1 從 v5.10 延續 v5.7 的 EPNP 影像速度、固定 40 m feature range、MAP height 與 visual update；不帶入 v5.8／v5.9 的 IPPE／逐影格 LK、多 range、data-only height 或 gyro 約束路面平移。
 
 ## 現況
 
@@ -35,14 +37,16 @@ perf2 於 2026-11-02 完成套用，僅改讀檔與顯示訊息的資料處理�
 | v5.7 + perf2 `track02_full_2611031204_0002` | 0.44296 | 使用者回報，3299 幀完成；僅 4 次移動影像速度量測通過 |
 | v5.8 + perf2 | 0.45341 | 使用者回報；3299 幀 full，定位1650.03秒 |
 | v5.9 + perf2 `track02_full_2611031629` | 0.44917 | 使用者回報；3299 幀 full 已完成 |
-| v5.10 + perf2 | — | 已套用；GPU regression 201 passed；無真實定位與 Public Score |
+| v5.10 + perf2 [`track02_full_2611031941`](../outputs/run/track02_full_2611031941/test_info.json) | 0.42699 | 使用者回報；3299 幀 full 已完成；v5.11 基準 |
+| v5.11 + perf2 | — | 首版 full 由使用者停止於 351 幀；score null；不算完整成績 |
+| v5.11.1 + perf2 | — | GPU suite 214 passed；生成 handoff 機制檢查通過；無真實定位或新成績 |
 | 使用者目標值 | 0.30488 | 目標 CSV `doc/analysis doc/result_2_0.30488.csv` 僅作 hash／provenance 紀錄；核對見 [target reference](../outputs/run/track00_test_2611021349/target_reference.json) |
 
 所有 full 分數都由使用者回報，來自不同版本，不應歸因於 perf2。使用者目標值為 `0.30488`；參照 CSV 用於同索引差異診斷，不作逐幀真值或回修 pose 的依據。no-accel 前五幀真實 A/B 與五個生成場景輸出一致，但不能推論整段相同。
 
 參照 CSV 是非因果輸出，只作同索引差異診斷；不從榜分反推隱藏真值、不擬合軌跡轉換或時間差，也不保證任何版本能達到目標 `0.30488`。五個 full 共用相同 input SHA 和 frame-manifest SHA，詳細結果／輸出 hash／分數來源見[版本證據](../outputs/run/track00_test_2611021839/version_evidence.json)。
 
-v5.6 的 map／heading 基線與方向記憶見 [82](../doc/82_TRACK2_V56_V52_BASELINE_20261102.md)；v5.7 在此基礎上新增前視影像地面速度，見 [83](../doc/83_TRACK2_V57_IMAGE_GROUND_SPEED_20261102.md)。v5.8、v5.9 是後續實驗版本，其結果和變更分別保存在 [84](../doc/84_TRACK2_V58_PLANAR_IMAGE_TRACKS_20261103.md) 與 [85](../doc/85_TRACK2_V59_CAUSAL_QUALITY_20261103.md)；v5.10 明確以 v5.7 為基底，只取回兩項 GNSS course／heading 更新檢查。下方 fix1／fix2 章節只記錄模型沿革。
+v5.6 的 map／heading 基線與方向記憶見 [82](../doc/82_TRACK2_V56_V52_BASELINE_20261102.md)；v5.7 在此基礎上新增前視影像地面速度，見 [83](../doc/83_TRACK2_V57_IMAGE_GROUND_SPEED_20261102.md)。v5.8、v5.9 為後續實驗版本；v5.10 恢復到 v5.7 影像速度、尺度配準與 visual update，並加入 course／heading 更新檢查。v5.11 以 v5.10 完整版為基準增加 startup 候選與 map proposal data-cost 驗收；v5.11.1 延續這些機制並修正 prior-only 啟動後首筆 map 更新的有限 gain handoff，細節見 [87](../doc/87_TRACK2_V511_STARTUP_VALIDATION_20261103.md)。下方 fix1／fix2 章節只記錄模型沿革。
 
 ### fix1 的三項模型修正
 
@@ -59,7 +63,7 @@ cd /home/ricky/sdc_ros2/midterm01_gpu
 ./scripts/run_track2.sh --full
 ```
 
-v5.10 不新增 full 專用旗標；完整定位仍由使用者手動啟動。驗證範圍與合成分析見 [86](../doc/86_TRACK2_V510_V57_HEADING_20261103.md)。
+v5.11.1 不新增 full 專用旗標；完整定位仍由使用者手動啟動。驗證範圍與限制見 [87](../doc/87_TRACK2_V511_STARTUP_VALIDATION_20261103.md)。
 
 入口會啟動 Track2 RViz（`/track2/*`，TF `map → track2_camera`），設定在 [`config/track2.rviz`](../config/track2.rviz)。Track1／2／3 共用 GPU lock；另一 Track 正執行時，runner 會拒絕並行配準。Full 輸出在新的 `outputs/run/track02_full_YYMMDDHHmm/`。
 
@@ -111,11 +115,17 @@ b = [b_{\mathrm{IMU}}, b_{\mathrm{GNSS}}]^T,\quad P_b=\operatorname{Cov}(b)
 | 過去 GNSS course 視窗與方向不確定度門檻 | `HEADING_MIN_WINDOW_S`、`HEADING_MAX_WINDOW_S`、`HEADING_MAX_COURSE_STD_DEG` | `1–8 s`、`3°` |
 | v5.10 course 半段一致性門檻 | `HEADING_MIN_SAMPLES`、`CORRECTION_NIS_REJECT_BY_DOF[0]` | 每半至少 `5` 筆；1 DoF NIS `10.828` |
 | v5.10 同影格 heading bias 更新預算 | `HEADING_MAX_UPDATE_DEG` | 合計最多 `0.5°`；首幀 bootstrap 除外 |
-| v5.10 開關與基準紀錄 | `V510_ENABLED`、`BASELINE_RUN_ID` | `True`；`track02_full_2611031204_0002` |
+| 保留 v5.10 course／heading 保護 | `V510_ENABLED` | `True` |
+| v5.11.1 開關與比較基準 | `V511_ENABLED`、`BASELINE_RUN_ID` | `True`；`track02_full_2611031941` |
+| v5.11 startup 高度 seeds | `STARTUP_HEIGHT_SEED_SIGMAS` | `(-1, 0, 1)` 個 prior 標準差 |
+| v5.11 yaw seeds | `STARTUP_INCLUDE_GIVEN_YAW`、`STARTUP_INCLUDE_MAP_AXIS` | `True`；`True` |
+| v5.11 tracking alternate retry | `TRACKING_RETRY_ON_GEOMETRY_FAILURE` | `True` |
+| v5.11 map proposal data-cost 驗收 | `VALIDATE_EMITTED_MAP_PROPOSAL` | `True` |
+| v5.11.1 prior-only 後首筆 map gain 限制 | `STARTUP_BOUND_AFTER_FIRST_FRAME` | `True` |
 | 航向 pair 轉向拒絕條件與最大差異 | `HEADING_MAX_TURN_RATE_DEGPS`、`GNSS_HEADING_MAX_PAIR_DIFFERENCE_DEG` | `2°/s`、`30°` |
 | GNSS frame 契約 | `GNSS_EXPECTED_FRAME` | `''`（frame 仍需依資料座標定義核定） |
 
-初始 10°、random walk 0.12°/√s 及 observation 3° 都不是感測器精度保證或外參標定結果。GNSS quaternion 的座標語意、GNSS／IMU／PLY 外參與 lever arm 仍未獨立標定。`V510_ENABLED=False` 只供生成資料核對 v5.7 基線等價，不是日常調參建議；`0.5°` 是 bias calibration 更新限額，不是車身轉動限制或每幀 pose yaw 限制。course split 只作整筆觀測的品質閘門，不會額外生成第二筆 heading measurement。參數意義與 covariance 更新方式見 [86](../doc/86_TRACK2_V510_V57_HEADING_20261103.md) 及 [72](../doc/72_TRACK2_GNSS_ORIENTATION_CAUSAL_20261029.md)。
+初始 10°、random walk 0.12°/√s 及 observation 3° 都不是感測器精度保證或外參標定結果。GNSS quaternion 的座標語意、GNSS／IMU／PLY 外參與 lever arm 仍未獨立標定。`V510_ENABLED=False` 只供生成資料核對 v5.7 基線等價；v5.11.1 的 height/yaw 候選也只改求解初始值，MAP height objective 與原 search bound 不變，PCA 軸沒有正負方向語意。`0.5°` 是 bias calibration 更新限額，不是車身轉動限制或每幀 pose yaw 限制。course split 只作整筆觀測的品質閘門，不會額外生成第二筆 heading measurement。v5.11.1 的 startup、有限 gain handoff 與 data-cost gate 見 [87](../doc/87_TRACK2_V511_STARTUP_VALIDATION_20261103.md)；v5.10 航向模型見 [86](../doc/86_TRACK2_V510_V57_HEADING_20261103.md)，v5.2 雙 bias 模型見 [72](../doc/72_TRACK2_GNSS_ORIENTATION_CAUSAL_20261029.md)。
 
 ## fix1 生成驗證與歷史 regression
 

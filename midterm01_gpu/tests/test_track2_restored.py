@@ -251,7 +251,7 @@ def test_generated_output_runner(tmp_path, monkeypatch, cuda):
     assert info['base_commit'] == p.BASE_COMMIT
     assert not (run/'analysis').exists()
     scope = json.loads((run/'algorithm_scope.json').read_text())
-    assert scope['baseline_run'] == 'track02_full_2611031204_0002'
+    assert scope['baseline_run'] == 'track02_full_2611031941'
     assert scope['heading_enabled'] and len(scope['excluded_v59']) == 4
     obs = [json.loads(line) for line in (run/'observations.jsonl').read_text().splitlines()]
     traces = [json.loads(line) for line in (run/'pose_trace.jsonl').read_text().splitlines()]
@@ -296,7 +296,8 @@ def test_full_analysis_read_only_and_contract_failures(tmp_path):
     with (run/'observations.jsonl').open('w') as f:
         for i in range(n):
             memory = dict(gain_scale_xy=.9, gain_scale_yaw=.5, nis_soft_threshold=5.991, nis_reject_threshold=13.816, correction=[.1, .2, .01], covariance=np.diag([.01, .01, .0001]).tolist(),
-                          innovation_nis=1., accepted=True, seconds_since_update=0.)
+                          innovation_nis=1., accepted=True, seconds_since_update=0.,
+                          proposal_validation=dict(accepted=True,baseline_data_cost=1.,proposal_data_cost=.9))
             f.write(json.dumps(dict(state=[i*.01, 0., 0., .001, .2], scale=8.,
                                    sensor_prior=dict(pose_covariance_xy_yaw=np.diag([.36,.36,.03]).tolist(),
                                        heading_information_policy='fractional_likelihood_budget_v510',
@@ -305,18 +306,23 @@ def test_full_analysis_read_only_and_contract_failures(tmp_path):
                                        heading_information_updates=[dict(heading_factor_id=i//10, information_fraction=1.)] if i % 10 == 0 else []),
                                    image_ground_speed=dict(kind='stationary' if i % 10 == 0 else 'speed',
                                        speed_mps=.2, filter_accepted=i % 5 == 0, innovation_nis=.5),
-                                   registration=dict(correction_filter=memory, observability=dict(rank=2))))+'\n')
+                                   registration=dict(correction_filter=memory, observability=dict(rank=2),
+                                       candidate_selection=dict(startup=i<4,fully_refined=2 if i<4 else 1))))+'\n')
     paths = [x for x in run.iterdir() if x.is_file()]
     before = {f.name: sha256(f) for f in paths}
     analyze(run)
     assert before == {f.name: sha256(f) for f in paths}
-    for name in ('01_trajectory', '02_pose_changes', '03_registration_timing', '04_fusion_and_scale', '05_map_correction_memory', '06_observability_uncertainty', '07_image_ground_speed', '08_heading_information'):
+    for name in ('01_trajectory', '02_pose_changes', '03_registration_timing', '04_fusion_and_scale', '05_map_correction_memory', '06_observability_uncertainty', '07_image_ground_speed', '08_heading_information', '09_candidate_validation'):
         for ext in ('png', 'pdf'): assert (run/'analysis'/f'{name}.{ext}').stat().st_size > 1000
     image_summary = json.loads((run/'analysis/image_speed_summary.json').read_text())
     assert image_summary['accepted_frames'] == list(range(0, n, 5))
     heading_summary = json.loads((run/'analysis/heading_information_summary.json').read_text())
     assert heading_summary['post_bootstrap_budget_exceedances'] == 0
     assert heading_summary['maximum_factor_fraction'] == 1.
+    selection_summary=json.loads((run/'analysis/candidate_validation_summary.json').read_text())
+    assert selection_summary['maximum_complete_solves']==2
+    assert selection_summary['startup_frames']==[0,1,2,3]
+    assert not selection_summary['proposal_reject_frames']
     # A partial same-source render can be retried without touching any pose.
     (run/'analysis'/'03_registration_timing.pdf').unlink()
     analyze(run)

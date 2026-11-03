@@ -58,6 +58,7 @@ def analyze(run):
                   all('correction_filter' in o.get('registration', {}) for o in obs))
     has_observability = (has_memory and all('pose_covariance_xy_yaw' in o.get('sensor_prior', {}) for o in obs))
     has_quality = len(obs) == len(result) and any('range_selection' in o.get('registration', {}) for o in obs)
+    has_candidates = len(obs) == len(result) and any(o.get('registration',{}).get('candidate_selection') is not None for o in obs)
     has_heading = len(obs) == len(result) and any(o.get('sensor_prior', {}).get('heading_information_policy') == 'fractional_likelihood_budget_v510' for o in obs)
     has_images = len(obs) == len(result) and any('image_ground_speed' in o for o in obs)
     names = ['result_2.csv', 'poses.txt', 'timings.csv', 'frame_manifest.csv', 'observations.jsonl', 'test_info.json']
@@ -77,11 +78,14 @@ def analyze(run):
         stems += ('08_quality_models',)
     if has_heading:
         stems += ('08_heading_information',)
+    if has_candidates:
+        stems += ('09_candidate_validation',)
     recognized = {'manifest.json', 'README.md'} | {f'{s}.{ext}' for s in stems for ext in ('png', 'pdf')}
     if has_images:
         recognized.add('image_speed_summary.json')
     if has_quality: recognized.add('quality_models_summary.json')
     if has_heading: recognized.add('heading_information_summary.json')
+    if has_candidates: recognized.add('candidate_validation_summary.json')
     if any(f.name not in recognized for f in output.iterdir()):
         raise FileExistsError('Unrecognized analysis artifacts preserved')
     if any(output.iterdir()):
@@ -247,6 +251,26 @@ def analyze(run):
             post_bootstrap_budget_exceedances=int(np.sum(budget[1:] > limit[1:]+1e-9)),
             course_decisions=dict(Counter(d.get('reason', 'unknown') for _, d in decisions.values())),
             caveat='One factor may be split across future CURRENT updates; total fraction <=1; first emitted frame may bootstrap; never rewrites past poses'))
+    if has_candidates:
+        selections = [o.get('registration',{}).get('candidate_selection') or {} for o in obs]
+        validations = [(o.get('registration',{}).get('correction_filter') or {}).get('proposal_validation') or {} for o in obs]
+        counts = [d.get('fully_refined',0) for d in selections]
+        rejected = [i for i,d in enumerate(validations) if d and not d['accepted']]
+        changes = [100.*(d['proposal_data_cost']-d['baseline_data_cost'])/max(abs(d['baseline_data_cost']),1e-12)
+                   if d.get('proposal_data_cost') is not None else np.nan for d in validations]
+        fig,axes=plt.subplots(2,1,figsize=(11,7),sharex=True)
+        axes[0].step(np.arange(len(obs)),counts,where='post');axes[0].set(ylabel='Complete solves',title='Current-frame hypotheses and posterior checks; not ground truth')
+        axes[1].plot(changes,label='Posterior vs prediction, same final planes')
+        axes[1].axhline(0.,color='k',lw=.7)
+        if rejected:axes[1].scatter(rejected,[changes[i] for i in rejected],color='tab:red',s=10,label='Proposal rejected')
+        axes[1].set(xlabel='Frame idx',ylabel='Fixed-plane data-loss change [%]');axes[1].legend()
+        for ax in axes:ax.grid(alpha=.3)
+        save(fig,'09_candidate_validation')
+        write_json(output/'candidate_validation_summary.json',dict(
+            maximum_complete_solves=max(counts,default=0),
+            startup_frames=[i for i,d in enumerate(selections) if d.get('startup')],
+            proposal_reject_frames=rejected,
+            caveat='Candidate quality/consistency only; no future poses or accuracy truth; every frame commits once'))
     # Never change input files while plotting, including info used as evidence.
     if sources != {n: sha256(run/n) for n in names}:
         raise RuntimeError('Input changed during analysis')
@@ -257,6 +281,7 @@ def analyze(run):
         +('05 顯示 world XY/yaw 修正、模型不確定度、innovation NIS 及有效配準的失聯時間；不確定度尚未經真值校準。\n\n' if has_memory else '')
         +('06 顯示逐幀 prior 標準差、scale 邊際化後的 map 可觀測維度及 XY/yaw 分別限幅。\n\n' if has_observability else '')
         +('07 顯示影像速度量測、實際採用影格、velocity innovation 與讀圖／ground model 耗時；image_speed_summary.json 列出採用的 frame，不能當精度證據。\n\n' if has_images else '')
+        +('09_candidate_validation 顯示完整候選數及實際posterior固定平面損失檢查；不是定位精度。\n\n' if has_candidates else '')
         +('08_heading_information 顯示共用航向預算、已消費資訊及 course 決策；不修改定位輸出。\n\n' if has_heading else '')
         +('08 顯示當幀選用範圍、影像共識支持、gyro零偏和獨立高度更新；quality_models_summary.json保存統計。\n\n' if has_quality else '')
         +'GNSS 是融合輸入，不是真值；接受率與殘差不能證明精度。來源 SHA 見 manifest.json。\n')

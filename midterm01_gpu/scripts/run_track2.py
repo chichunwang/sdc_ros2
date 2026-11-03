@@ -99,9 +99,10 @@ def execute(run, max_frames=None, publish_rviz=False):
             gnss_to_ply_lever_body_m=p.GNSS_TO_PLY_LEVER_BODY_M,
             imu_to_ply_rpy_deg=p.IMU_TO_PLY_RPY_DEG, author_track1_offsets_applied=False,
             limitation='official scoring frame/lever and physical sensor latency are not established by timestamp pairing'))
-        write_json(run/'algorithm_scope.json', dict(version=p.VERSION, baseline_run=p.BASELINE_RUN_ID,
-            baseline_score=0.44296, baseline_score_source='user_report',
-            numerical_changes=['past course split-half observability/consistency', 'one-likelihood heading information budget'],
+        write_json(run/'algorithm_scope.json', dict(version=p.VERSION, baseline_run='track02_full_2611031941',
+            baseline_score=0.42699, baseline_score_source='user_report',
+            numerical_changes=['complete startup hypotheses before common scoring', 'geometry-failure hypothesis retry', 'actual posterior fixed-plane data-loss validation', 'delayed first map anchor uses current-frame gain budget after prior-only output'],
+            startup_bound_after_first_frame=bool(p.V511_ENABLED and p.STARTUP_BOUND_AFTER_FIRST_FRAME and p.uses_v52_fusion()),
             retained_v57=['EPNP image speed', '40m feature range', 'MAP height fusion', 'directional map correction memory'],
             excluded_v59=['adaptive feature ranges', 'data-only height update', 'gyro-constrained road translation', 'stationary gyro bias learning'],
             heading_enabled=p.v510_heading_enabled(),

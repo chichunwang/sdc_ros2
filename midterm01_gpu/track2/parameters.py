@@ -3,7 +3,7 @@
 直接改此檔。GNSS noise 延續原模型，正式配準改用逐幀 covariance 與
 可觀測平面量測。GNSS 空 frame、IMU/PLY 外參及 lever 仍未獨立標定。
 """
-VERSION = 'track2_v57_course_heading_budget_v5_10_perf2'
+VERSION = 'track2_startup_candidates_current_validation_v5_11_1_perf2'
 # 正式入口固定採 v5.2 融合，只移植方向性記憶。另一值僅供歷史機制 regression。
 FUSION_PROFILE = 'v52_directional_memory'
 
@@ -180,10 +180,19 @@ CORRECTION_NIS_REJECT_BY_DOF = (10.828, 13.816, 16.266)
 
 # ===== v5.10：只在 v5.7 上移植 course 檢查與航向資訊預算 =====
 V510_ENABLED = True  # False 僅供生成資料核對 v5.7 原行為
-BASELINE_RUN_ID = 'track02_full_2611031204_0002'
+BASELINE_RUN_ID = 'track02_full_2611031941'
 OUTPUT_REFERENCE = 'camera_ply'
 REFERENCE_CONTRACT_STATUS = 'official scoring reference point not specified; preserve camera PLY pose'
 EXTRINSIC_CALIBRATION_STATUS = 'GNSS/IMU to camera uncalibrated; identity/zero means with declared covariance'
 
 def v510_heading_enabled():
     return V510_ENABLED and uses_v52_fusion()
+
+# ===== v5.11：首筆 map anchor 完整比較候選；追蹤只在幾何失敗時恢復 =====
+V511_ENABLED = True
+STARTUP_HEIGHT_SEED_SIGMAS = (-1., 0., 1.)  # 沿用初始高度 covariance 的一個標準差
+STARTUP_INCLUDE_GIVEN_YAW = True
+STARTUP_INCLUDE_MAP_AXIS = True  # 無向主軸僅為 seed；仍須完整配準及既有 gate
+TRACKING_RETRY_ON_GEOMETRY_FAILURE = True
+VALIDATE_EMITTED_MAP_PROPOSAL = True
+STARTUP_BOUND_AFTER_FIRST_FRAME = True  # 僅真正首幀可自由初始化；延遲首筆 map 也用當幀 gain 預算

@@ -218,6 +218,8 @@ class CausalCorrectionFilter:
         body = np.array([[np.cos(angle), -np.sin(angle), 0.],
                          [np.sin(angle), np.cos(angle), 0.], [0., 0., 1.]])
         gain_scale_longitudinal = gain_scale_lateral = 1.
+        delayed_first_anchor = bool(p.V511_ENABLED and p.STARTUP_BOUND_AFTER_FIRST_FRAME
+            and p.uses_v52_fusion() and self.last_update is None and self.previous_stamp is not None)
         age = (0. if self.last_update is None else (self.last_stamp-self.last_update)*1e-9)
         pos_limit = (p.CORRECTION_POSITION_GATE_BASE_M+p.CORRECTION_POSITION_RATE_MPS*age
                      +p.CORRECTION_SPEED_FRACTION*self.distance_since_update
@@ -288,12 +290,15 @@ class CausalCorrectionFilter:
                 # Exclude data-null directions even when old cross covariance
                 # would otherwise couple them into this current-frame update.
                 K = state_projector @ K
-                if self.last_update is not None:
+                if self.last_update is not None or delayed_first_anchor:
                     # Reacquisition has a wider *candidate* gate after an
                     # outage, but must not merely postpone the jump to the
                     # next accepted frame. Limit influence using THIS frame's
                     # motion/time budget. Use the same scaled gain in Joseph
                     # covariance; never clip only the mean and claim full info.
+                    # Only frame zero can establish a free initial anchor.
+                    # A first map update AFTER a prior-only output is already
+                    # tracking: use this frame's budget, not the outage length.
                     increment = K @ innovation
                     if p.uses_v52_fusion():
                         gain_scale_xy = min(1., step_xy_limit/max(np.linalg.norm(increment[:2]), 1e-30))
@@ -348,6 +353,8 @@ class CausalCorrectionFilter:
                     reason = 'downweighted_update' if inflation > 1 or min(gain_scale_xy, gain_scale_yaw, gain_support_scale) < 1 else 'measurement_update'
                     accepted = True
         diag = dict(accepted=accepted, reason=reason, frame='map XY metres, world yaw radians',
+            delayed_first_anchor_budget_required=delayed_first_anchor,
+            delayed_first_anchor_budget_applied=bool(delayed_first_anchor and accepted),
             proposal_validation=proposal_validation,
             local_linear_likelihood=bool(local_linear_likelihood),
             reference_response_constraint=self.reference_response_diagnostic,
