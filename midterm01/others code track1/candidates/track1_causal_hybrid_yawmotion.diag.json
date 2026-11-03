@@ -1,0 +1,142 @@
+{
+ "frames": 3011,
+ "causal": true,
+ "shape": "gyro",
+ "moving_frames": 2703,
+ "still_frames": 0,
+ "gyro_bias_degps": -0.1480394146167448,
+ "still_blocks": 63,
+ "motion_minus_out_deg": {
+  "rms": 1.1849185220541267,
+  "p90": 1.941362866757249
+ },
+ "offset_deg_range": [
+  132.86124792675722,
+  137.229366237296
+ ],
+ "new_minus_old_yaw_deg": {
+  "mean": 0.08219873230028192,
+  "rms": 0.5886506521269878,
+  "max": 2.0524114832534437
+ },
+ "ekf": {
+  "frames": 3011,
+  "updates": 2997,
+  "rejected": 0,
+  "forced_accepts": 0,
+  "still_frames": 0,
+  "bias_degps_final": -0.1480394146167448,
+  "bias_sigma_degps_final": 0.05877589063832869,
+  "gyro_dt": 0.0,
+  "lever": [
+   0.7086,
+   -0.5995
+  ],
+  "cam_yaw_offset_deg": -0.4455
+ },
+ "vs_I_ns": {
+  "frames": 3011,
+  "all": {
+   "xy_rmse": 0.5489525450993145,
+   "xy_median": 0.3977366356123886,
+   "xy_max": 1.7576023209595,
+   "yaw_rmse_deg": 0.7338637407757433,
+   "yaw_mean_deg": -0.11020213991200312,
+   "score": 0.6957252932544631
+  },
+  "first30": {
+   "xy_rmse": 0.46317204798165307,
+   "xy_median": 0.352248902184327,
+   "xy_max": 1.298155959732421,
+   "yaw_rmse_deg": 0.9717086711322055,
+   "yaw_mean_deg": -0.2812228125584488,
+   "score": 0.6575137822080942
+  },
+  "blocks": {
+   "0-499": {
+    "xy_rmse": 0.5562651367399476,
+    "xy_median": 0.4980580930539019,
+    "xy_max": 1.298155959732421,
+    "yaw_rmse_deg": 1.14769335549471,
+    "yaw_mean_deg": -0.8953268177350622,
+    "score": 0.7858038078388896
+   },
+   "500-999": {
+    "xy_rmse": 0.3273221643613852,
+    "xy_median": 0.20426639700621835,
+    "xy_max": 0.8748655016086562,
+    "yaw_rmse_deg": 0.6687082411687009,
+    "yaw_mean_deg": 0.4867597521093737,
+    "score": 0.4610638125951254
+   },
+   "1000-1499": {
+    "xy_rmse": 0.6371667885198485,
+    "xy_median": 0.5589289337181461,
+    "xy_max": 1.3284456166261693,
+    "yaw_rmse_deg": 0.7730164615806998,
+    "yaw_mean_deg": -0.6497057099113381,
+    "score": 0.7917700808359885
+   },
+   "1500-1999": {
+    "xy_rmse": 0.4580771976739605,
+    "xy_median": 0.31776014584418855,
+    "xy_max": 1.5433313351592262,
+    "yaw_rmse_deg": 0.30814375910890807,
+    "yaw_mean_deg": 0.07806281647563987,
+    "score": 0.5197059494957421
+   },
+   "2000-2499": {
+    "xy_rmse": 0.5141634582007474,
+    "xy_median": 0.3827011823338749,
+    "xy_max": 1.3765442076975236,
+    "yaw_rmse_deg": 0.44420186574481074,
+    "yaw_mean_deg": -0.3822366574133187,
+    "score": 0.6030038313497095
+   },
+   "2500-2999": {
+    "xy_rmse": 0.7073674544653206,
+    "xy_median": 0.4045585750892555,
+    "xy_max": 1.7576023209595,
+    "yaw_rmse_deg": 0.7673118083541426,
+    "yaw_mean_deg": 0.6966197089727975,
+    "score": 0.8608298161361491
+   },
+   "3000-3010": {
+    "xy_rmse": 0.8945121045294164,
+    "xy_median": 0.8884159999425416,
+    "xy_max": 0.9202972589483943,
+    "yaw_rmse_deg": 0.10083446284272254,
+    "yaw_mean_deg": 0.09952822508295672,
+    "score": 0.914678997097961
+   }
+  },
+  "vs_other": {
+   "file": "track1_T3c_gyro.csv",
+   "all": {
+    "xy_rmse": 0.46376288405158783,
+    "xy_median": 0.37311382209343774,
+    "xy_max": 1.4445492910876676,
+    "yaw_rmse_deg": 0.751203291131459,
+    "yaw_mean_deg": -0.03488230488664679,
+    "score": 0.6140035422778797
+   },
+   "other_vs_ref": {
+    "xy_rmse": 0.3979737145844816,
+    "xy_median": 0.3007521415135904,
+    "xy_max": 1.1797975011028532,
+    "yaw_rmse_deg": 0.19539903275793424,
+    "yaw_mean_deg": -0.07531983502535632,
+    "score": 0.43705352113606843
+   }
+  }
+ },
+ "pipeline": [
+  "scale_from_height --causal (track1_scale_hc.npy)",
+  "track_sequential --backfill 0 --gnss (GNSS speed + sigma 1 m position prior, causal)",
+  "register_all single-frame 12/15/18/25 m, init = causal track",
+  "merge_regs --min-xy-info 2.0 (hybrid only)",
+  "build_causal --gyro-dt 0 --lever 0.7086,-0.5995 --cam-yaw-offset-deg -0.4455",
+  "yaw_from_motion --causal --bias-file"
+ ],
+ "uses_future_frames": "none"
+}

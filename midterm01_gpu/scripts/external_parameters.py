@@ -5,11 +5,22 @@ PROCESSES = 2
 # H=1.573 與 nominal=8.6 沿用作者假設，並非本次標定值。
 TRACKS = {
     1: dict(data_relative="midterm01/data/Track1", expected_frames=3011,
-            init_search=False, gyro_dt_s=0.0, map_reader="author_ascii"),
+            author_source="midterm01/others code track1", author_entrypoint="run_track1_causal.sh",
+            init_search=False, gyro_dt_s=0, map_reader="author_ascii", gnss_tracking=True,
+            lever_m=(0.7086, -0.5995), cam_yaw_offset_deg=-0.4455,
+            output_reference="author Track1 vehicle reference point",
+            calibration_status="author Track1 estimated lever/yaw; not independently calibrated here"),
     2: dict(data_relative="midterm01/data/Track2", expected_frames=3299,
-            init_search=False, gyro_dt_s=0.0, map_reader="binary_xyz_adapter"),
+            author_source="midterm01/others code track1", author_entrypoint="run_track1_causal.sh",
+            init_search=False, gyro_dt_s=0, map_reader="binary_xyz_adapter", gnss_tracking=True,
+            lever_m=(0.7086, -0.5995), cam_yaw_offset_deg=-0.4455,
+            output_reference="transferred author Track1 vehicle reference point assumption",
+            calibration_status="Track1 lever/yaw transferred to Track2; target-frame contract not independently verified"),
     3: dict(data_relative="midterm01/data/Track3", expected_frames=3142,
-            init_search=True, gyro_dt_s=0.14, map_reader="author_ascii"),
+            author_source="midterm01/others code track3", author_entrypoint="run_track3_causal.sh",
+            init_search=True, gyro_dt_s=0.14, map_reader="author_ascii", gnss_tracking=False,
+            lever_m=(0., 0.), cam_yaw_offset_deg=0., output_reference="author Track3 camera",
+            calibration_status="author Track3 defaults; not calibrated here"),
 }
 
 
@@ -18,10 +29,12 @@ def get_parameters(track=3):
         raise ValueError("Track 必須是 1、2 或 3")
     value = deepcopy(TRACKS[track])
     value.update(track=track, bag_name=f"Track{track}.db3", processes=PROCESSES,
-                 result_name=f"result_{track}.csv", author_output_name=f"track{track}_cam_causal.csv",
+                 result_name=f"result_{track}.csv", author_output_name=(f"track{track}_causal_hybrid_yawmotion.csv"
+                    if track in (1, 2) else "track3_cam_causal.csv"),
                  height_m=1.573, nominal_scale=8.6, ranges_m=[12, 15, 18, 25],
                  min_xy_info=2.0, backfill=0, author_algorithm_modified=False,
-                 gnss_used_for_estimation=False, ply_subdir="raw_ply",
+                 gnss_used_for_estimation=value["gnss_tracking"], gnss_sigma_m=1.0,
+                 gnss_lever_m=value["lever_m"], ply_subdir="raw_ply",
                  height_status="author transferred fixed-height assumption; not calibrated here",
                  gyro_dt_status="author Track3 override" if track == 3 else "author CLI default; not clock calibration",
                  io_compatibility_fix="unbuffered input in ply.py and convert_map.py",

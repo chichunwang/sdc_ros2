@@ -11,7 +11,8 @@ import time
 import traceback
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
-from track3.io import frames, load_ply, sha256, write_json
+from track3.io import frames, sha256, write_json
+from track2.ply_io import load_ply
 from track3.geometry import valid_pose
 from track2 import parameters as p
 
@@ -31,18 +32,22 @@ def verify_snapshot(run):
 
 def execute(run, max_frames=None, publish_rviz=False):
     verify_snapshot(run)
+    if not p.uses_v52_fusion():
+        raise ValueError('Historical fusion profile is restricted to component regressions')
+    if p.OUTPUT_REFERENCE != 'camera_ply':
+        raise ValueError('Only camera_ply output is implemented; unverified body relabeling is prohibited')
     if (run/'test_info.json').exists():
         raise FileExistsError('Run already used')
     start = time.perf_counter()
     info = dict(status='running', version=p.VERSION, track=2, frame_count=0,
                 mode='full' if max_frames is None else 'test', expected_frames=p.EXPECTED_FRAMES,
                 score=None, score_source=None, graph_seconds=0.,
-                causality='forward GNSS heading prior + current-frame metric scale/ground + causal correction-state filter',
+                causality='forward GNSS heading prior + disjoint past/current image speed + current-frame metric scale/ground + causal correction-state filter',
                 base_commit=p.BASE_COMMIT,
                 timing_clock='camera header; availability cutoff=PLY bag timestamp')
     write_json(run/'test_info.json', info)
     write_json(run/'parameters.json', {k: v for k, v in vars(p).items() if k.isupper()})
-    sensors = clock = visualizer = None
+    sensors = clock = visualizer = image_speed = None
     tlocal = None
     registration_seconds = 0.
     accepted_count = 0
@@ -83,7 +88,25 @@ def execute(run, max_frames=None, publish_rviz=False):
                     map_voxel_points=len(xyz), gpu_device=cp.cuda.runtime.getDeviceProperties(0)['name'].decode())
         registration = MetricRegistration(xyz, initial)
         camera = FrontMask(data)
+        if p.IMAGE_GROUND_SPEED_ENABLED:
+            from track2.image_speed import CausalGroundSpeed
+            image_speed = CausalGroundSpeed(data, camera)
+        info['image_ground_speed_enabled'] = bool(p.IMAGE_GROUND_SPEED_ENABLED)
         write_json(run/'camera_sources.json', camera.sources)
+        write_json(run/'reference_contract.json', dict(output=p.OUTPUT_REFERENCE,
+            pose='T_map_ply, FLU, metres, yaw atan2(R10,R00) radians',
+            status=p.REFERENCE_CONTRACT_STATUS, calibration_status=p.EXTRINSIC_CALIBRATION_STATUS,
+            gnss_to_ply_lever_body_m=p.GNSS_TO_PLY_LEVER_BODY_M,
+            imu_to_ply_rpy_deg=p.IMU_TO_PLY_RPY_DEG, author_track1_offsets_applied=False,
+            limitation='official scoring frame/lever and physical sensor latency are not established by timestamp pairing'))
+        write_json(run/'algorithm_scope.json', dict(version=p.VERSION, baseline_run=p.BASELINE_RUN_ID,
+            baseline_score=0.44296, baseline_score_source='user_report',
+            numerical_changes=['past course split-half observability/consistency', 'one-likelihood heading information budget'],
+            retained_v57=['EPNP image speed', '40m feature range', 'MAP height fusion', 'directional map correction memory'],
+            excluded_v59=['adaptive feature ranges', 'data-only height update', 'gyro-constrained road translation', 'stationary gyro bias learning'],
+            heading_enabled=p.v510_heading_enabled(),
+            modules={name:sha256(Path(__file__).resolve().parents[1]/name) for name in
+                ('track2/image_speed.py','track2/metric_registration.py','track2/visual_update.py','track2/causal_prior.py','track2/parameters.py')}))
         if publish_rviz:
             from track2.visualization import Track2RvizPublisher
             visualizer = Track2RvizPublisher()
@@ -121,7 +144,17 @@ def execute(run, max_frames=None, publish_rviz=False):
                 raw = cp.asarray(masked)
                 cp.cuda.get_current_stream().synchronize()
                 mask_done = time.perf_counter()
+                image_observation = dict(accepted=False, filter_accepted=False, reason='disabled')
+                image_started = time.perf_counter()
+                if image_speed is not None:
+                    from track2.visual_update import fuse_visual_speed
+                    measured = image_speed.observe(stamp, camera_ns, prior_diag['gyro_rotation_since_frame_rad'])
+                    prior, prior_diag, image_observation = fuse_visual_speed(
+                        state, prior, prior_diag, measured, float(np.linalg.norm(state.gyro)))
+                image_done = time.perf_counter()
+                image_ms = (image_done-image_started)*1000
                 source_sha = sha256(row['path'])
+                sha_done = time.perf_counter()
                 load_ms = (time.perf_counter()-tick)*1000
                 reg_tick = time.perf_counter()
                 final, scale, reg_diag = registration.refine(raw, prior, camera_ns,
@@ -133,6 +166,10 @@ def execute(run, max_frames=None, publish_rviz=False):
                 reg_seconds = time.perf_counter()-reg_tick
                 registration_seconds += reg_seconds
                 map_decision = dict(accepted=reg_diag['accepted'], reason=reg_diag['reason'])
+                store_started = time.perf_counter()
+                if image_speed is not None:
+                    image_speed.store(raw, scale, reg_diag)
+                image_store_ms = (time.perf_counter()-store_started)*1000
                 accepted_count += int(map_decision['accepted'])
                 previous_height = float(final[2, 3])
                 if not valid_pose(final) or not np.isfinite(state.position).all() or not np.isfinite(state.cov).all():
@@ -140,11 +177,11 @@ def execute(run, max_frames=None, publish_rviz=False):
                 display_tick = time.perf_counter()
                 if visualizer is not None:
                     if registration.nn is not None:
-                        visualizer.publish_submap(cp.asnumpy(registration.nn.points), stamp)
+                        visualizer.publish_submap(cp.asnumpy(registration.nn.points), camera_ns)
                     # Keep the full point transform on CUDA. ROS still needs
                     # host float32 message bytes; this is the only display copy.
                     display_cloud = raw @ cp.asarray(final[:3, :3]).T*scale+cp.asarray(final[:3, 3])
-                    visualizer.publish_frame(cp.asnumpy(display_cloud.astype(cp.float32)), final, scale, stamp,
+                    visualizer.publish_frame(cp.asnumpy(display_cloud.astype(cp.float32)), final, scale, camera_ns,
                         accepted=map_decision['accepted'], reason=map_decision['reason'],
                         scale_validated=reg_diag['scale_validated'],
                         speed_mps=float(np.linalg.norm(state.position[2:])), cloud_in_map=True)
@@ -161,15 +198,17 @@ def execute(run, max_frames=None, publish_rviz=False):
                     registration=reg_diag, map_update=map_decision, gnss=sensor_updates,
                     phase_timings_ms=dict(sensor_prior=(sensor_done-tick)*1000,
                         ply_read=(ply_done-sensor_done)*1000, camera_mask_cuda=(mask_done-ply_done)*1000,
-                        source_sha256=load_ms-(mask_done-tick)*1000,
+                        image_ground_speed=image_ms,
+                        image_ground_model_store=image_store_ms,
+                        source_sha256=(sha_done-image_done)*1000,
                         registration=reg_seconds*1000, rviz=display_ms,
                         clock='synchronized wall time; CPU/GPU overlap is not separated'),
-                    scale=scale, camera_mask=camera_diag, sensor_prior=prior_diag,
+                    scale=scale, camera_mask=camera_diag, sensor_prior=prior_diag, image_ground_speed=image_observation,
                     state=[float(final[0,3]), float(final[1,3]), yaw, state.bias, float(np.linalg.norm(state.position[2:]))],
                     position_covariance_diag=np.diag(state.cov).tolist(),
                     sensor_counts=sensors.summary())
                 files['observations.jsonl'].write(json.dumps(observation, allow_nan=False)+'\n')
-                trace = dict(idx=idx, timestamp_ns=stamp, predicted=prior.tolist(),
+                trace = dict(idx=idx, timestamp_ns=stamp, camera_timestamp_ns=camera_ns, predicted=prior.tolist(),
                     registered=reg_diag['candidate_pose'] if reg_diag['geometry_accepted'] else None,
                     final=final.tolist(), map_accepted=map_decision['accepted'], scale=scale,
                     geometry_accepted=reg_diag['geometry_accepted'],

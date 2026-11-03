@@ -33,6 +33,7 @@ class FrontMask:
         self.K = np.asarray(c['projection_matrix']['data']).reshape(3, 4)[:, :3].copy()
         size = (c['image_width'], c['image_height'])
         maps = cv2.fisheye.initUndistortRectifyMap(K, D, np.eye(3), self.K, size, cv2.CV_32FC1)
+        self.maps = maps
         mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
         if mask is None:
             raise ValueError('Missing Track2 official front mask')

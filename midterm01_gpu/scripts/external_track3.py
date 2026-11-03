@@ -23,14 +23,13 @@ from convert_external_map import read_pcd_header
 
 # 舊 Track3 import 的相容常數；實際執行一律由 parameters.json 決定。
 EXPECTED_FRAMES = 3142
-AUTHOR_SOURCE = "midterm01/others code"
-VERSION = "external_author_causal_cpu_multitrack_v2"
+VERSION = "external_author_track1_gnss_multitrack_v3"
 LIMITATIONS = [
     "作者 CPU 原始流程；不是現行 CUDA 算法的 CPU fallback。",
     "僅在執行副本修正兩處檔案 buffering=0，避免 Linux Polars 讀錯 buffered reader 位置；算法與參數不改。",
     "保留作者全段首個有效配準初始化與最後 yaw 覆換；Track3 另保留 gyro-dt=0.14，未確認符合競賽因果規則。",
-    "Track1/2 是移植作者無 GNSS 融合流程，不是作者另外提供或評分的 Track1/2 版本；高度與尺度假設未標定。",
-    "沒有獨立真值或作者已評分 CSV，輸出完整與合成測試不代表精度或作者成績已重現。",
+    "Track1/2 使用使用者提供的 Track1 包（含 GNSS 追蹤先驗、車體參考點轉換）；Track2 外參沿用 Track1，未獨立驗證。",
+    "本輪不把作者候選 CSV 當真值或評分輸入；輸出完整與合成測試不代表精度或作者成績已重現。",
     "原程式無逐幀耗時及最終完整 3D pose，不補造 timings.csv 或 poses.txt。",
 ]
 
@@ -73,8 +72,8 @@ def prepare(mode, track=3):
     root = Path(__file__).resolve().parents[1]
     repo = root.parent
     parameters = get_parameters(track)
-    author = repo / AUTHOR_SOURCE
-    if not (author / "run_track3_causal.sh").is_file():
+    author = repo / parameters["author_source"]
+    if not (author / parameters["author_entrypoint"]).is_file():
         raise FileNotFoundError(author)
     if mode == "--full":
         data = repo / parameters["data_relative"]
@@ -129,6 +128,8 @@ def prepare(mode, track=3):
         status="prepared", mode="full" if mode == "--full" else "check", version=VERSION,
         backend="author_original_cpu", track=track, frame_count=0, score=None, score_source=None,
         created_at=datetime.now(ZoneInfo("Asia/Taipei")).isoformat(timespec="seconds"),
+        author_source=parameters["author_source"], output_reference=parameters["output_reference"],
+        calibration_status=parameters["calibration_status"],
         limitations=LIMITATIONS))
     (run / "invocation.txt").write_text(f"scripts/run_external_track{track}.sh {mode}\n")
     print(run)
@@ -155,11 +156,17 @@ def inspect_data(data, parameters=None):
         import sqlite3
         with sqlite3.connect((data / parameters["bag_name"]).resolve().as_uri()+"?mode=ro", uri=True) as db:
             imu = db.execute("SELECT type,serialization_format FROM topics WHERE name='/imu/data'").fetchall()
+            gnss = db.execute("SELECT type,serialization_format FROM topics WHERE name='/localizer_node/gnss_pose'").fetchall()
+            gnss_count = db.execute("SELECT COUNT(*) FROM messages WHERE topic_id IN (SELECT id FROM topics WHERE name='/localizer_node/gnss_pose')").fetchone()[0]
+        gnss_ok = gnss == [("geometry_msgs/msg/PoseStamped", "cdr")] and gnss_count >= 2
         result.update(map_format=map_format, map_fields=fields, map_reader=parameters["map_reader"],
                       map_format_supported=format_ok, map_time_fields_used=False, bag_files=bags,
                       bag_unique=bags == [parameters["bag_name"]],
-                      imu_topic_valid=imu == [("sensor_msgs/msg/Imu", "cdr")])
-        result["ready"] = bool(result["frame_count_valid"] and format_ok and result["bag_unique"] and result["imu_topic_valid"])
+                      imu_topic_valid=imu == [("sensor_msgs/msg/Imu", "cdr")],
+                      gnss_required=parameters["gnss_tracking"], gnss_topic_valid=gnss_ok,
+                      gnss_messages=gnss_count)
+        result["ready"] = bool(result["frame_count_valid"] and format_ok and result["bag_unique"] and result["imu_topic_valid"]
+                               and (not parameters["gnss_tracking"] or gnss_ok))
     else:
         result["ready"] = False
     return result
@@ -177,13 +184,19 @@ def stage_commands(source, data, work, parameters=None):
         ("02_prepare_map", script("prepare_map.py", work / "map_xyzi.npy", work / "map_v020.npz", "--voxel", "0.2")),
         ("03_cache_plys", script("cache_plys.py", data / "raw_ply", work / "plys.npz")),
         ("04_scale", script("scale_from_height.py", "--plys", work / "plys", "--H", p["height_m"], "--nominal", p["nominal_scale"], "--causal", "--out", work / "scale_hc.npy")),
-        ("05_sequential", script("track_sequential.py", "--map", work / "map_v020.npz", "--plys", work / "plys", "--init-guess", data / "init_guess.txt", "--scale-file", work / "scale_hc.npy", *(["--init-search"] if p["init_search"] else []), "--backfill", p["backfill"], "--out", work / "track_causal.npz")),
+        ("05_sequential", script("track_sequential.py", "--map", work / "map_v020.npz", "--plys", work / "plys", "--init-guess", data / "init_guess.txt", "--scale-file", work / "scale_hc.npy", *(["--init-search"] if p["init_search"] else []), "--backfill", p["backfill"],
+            *(["--gnss", str(data)] if p["gnss_tracking"] else []),
+            *(["--gnss-lever", ",".join(map(str, p["gnss_lever_m"]))] if p["gnss_tracking"] and tuple(p["gnss_lever_m"]) != (0.7086, -0.5995) else []),
+            *(["--gnss-sigma", str(p["gnss_sigma_m"])] if p["gnss_tracking"] and p["gnss_sigma_m"] != 1.0 else []),
+            "--out", work / "track_causal.npz")),
     ]
     for radius in p["ranges_m"]:
         commands.append((f"06_register_r{radius}", script("register_all.py", "--map", work / "map_v020.npz", "--plys", work / "plys", "--prior", work / "track_causal.cam.csv", "--scale-file", work / "scale_hc.npy", "--init", work / "track_causal.npz", "--class-match", "--max-range", radius, "--frames", "all", "--procs", p["processes"], "--out", work / f"reg_causal_r{radius}.npz")))
     commands.extend([
         ("07_merge", script("merge_regs.py", "--out", work / "reg_causal_hybrid.npz", "--min-xy-info", p["min_xy_info"], *[work / f"reg_causal_r{r}.npz" for r in p["ranges_m"]])),
-        ("08_ekf", script("build_causal.py", data, "--reg", work / "reg_causal_hybrid.npz", "--gyro-dt", p["gyro_dt_s"], "--out", work / "ekf_causal.csv")),
+        ("08_ekf", script("build_causal.py", data, "--reg", work / "reg_causal_hybrid.npz", "--gyro-dt", p["gyro_dt_s"],
+            *(["--lever", ",".join(map(str, p["lever_m"])), "--cam-yaw-offset-deg", str(p["cam_yaw_offset_deg"])] if p["gnss_tracking"] else []),
+            "--out", work / "ekf_causal.csv")),
         ("09_yaw", script("yaw_from_motion.py", data, "--csv", work / "ekf_causal.csv", "--causal", "--bias-file", work / "ekf_causal.state.npz", "--out", work / p["author_output_name"])),
     ])
     return commands
@@ -260,6 +273,8 @@ def execute(run, mode):
         data = Path("/workspace") / parameters["data_relative"]
         data_check = inspect_data(data, parameters)
         write_json(run / "data_check.json", data_check)
+        write_json(run / "planned_commands.json", [dict(stage=n, argv=c)
+                   for n, c in stage_commands(source, data, run / "work", parameters)])
         with (run / "stage_timings.csv").open("x", newline="") as stream:
             csv.writer(stream).writerow(["stage", "elapsed_seconds", "returncode"])
         if mode == "--check":

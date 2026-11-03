@@ -84,7 +84,9 @@ def test_past_displacement_observability_initializes_below_old_five_mps_gate():
     assert accepted and accepted[0]['speed_mps'] < p.HEADING_MIN_SPEED_MPS
     assert accepted[0]['delivered_timestamp_ns'] < 1_000_000_000+8_000_000_000
     assert accepted[0]['std_deg'] <= p.HEADING_MAX_COURSE_STD_DEG
-    assert output[-1][1]['heading_bias_rad'] > np.deg2rad(2.)
+    assert 0 < output[-1][1]['heading_bias_rad'] <= np.deg2rad(3.)
+    # v5.5 limits each post-emission calibration gain, so initialization is
+    # observable below 5m/s without demanding an immediate multi-degree jump.
     for before, after in zip(accepted, accepted[1:]):
         assert before['end_timestamp_ns'] < after['start_timestamp_ns']
     for k, (_, d) in enumerate(output):
@@ -156,7 +158,10 @@ def test_geometry_analysis_respects_covariance_and_units_and_slope_scale_couplin
     _, _, c = geometry(information, centimetres @ J, centimetres @ C @ centimetres.T)
     np.testing.assert_allclose(d['normalized_eigenvalues'], c['normalized_eigenvalues'], rtol=1e-10)
     _, _, weak = geometry(np.diag([1., 1., 1., 100.]), C=np.diag([.01, .01, .01]))
-    assert weak['rank'] == 0  # data adds less information than the current sensor model
+    # Production v5.6 restores v5.2's information >= 1 threshold.
+    # Weak-positive fusion remains covered under the explicit historical profile.
+    assert weak['rank'] == 0 and weak['strong_rank'] == 0
+    # Positive weak modes retain large uncertainty; they are not exact nulls.
     assert np.linalg.eigvalsh(R).min() > 0 and H.shape == (3, 3)
 
 

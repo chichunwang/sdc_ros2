@@ -1,5 +1,6 @@
 """RViz publishers only; never alter localization poses or sensor inputs."""
 import json
+from array import array
 import numpy as np
 import rclpy
 from rclpy.context import Context
@@ -14,7 +15,7 @@ from tf2_ros import TransformBroadcaster
 from scipy.spatial.transform import Rotation
 
 
-def cloud_message(points, timestamp_ns, pose=None, scale=1., color=None):
+def cloud_message(points, timestamp_ns, pose=None, scale=1., color=None, *, array_payload=False):
     xyz = np.asarray(points, dtype=np.float64)
     if pose is not None:
         xyz = xyz @ np.asarray(pose)[:3,:3].T * scale + np.asarray(pose)[:3,3]
@@ -29,13 +30,22 @@ def cloud_message(points, timestamp_ns, pose=None, scale=1., color=None):
     msg.is_bigendian = False
     msg.is_dense = bool(np.isfinite(xyz).all())
     if color is None:
-        msg.point_step=12;msg.data=xyz.tobytes()
+        msg.point_step=12;payload=xyz
     else:
         packed=np.empty((len(xyz),4),dtype='<f4');packed[:,:3]=xyz
         rgb=(int(color[0])<<16)|(int(color[1])<<8)|int(color[2])
         packed[:,3]=np.asarray(rgb,dtype='<u4').view('<f4')
         msg.fields.append(PointField(name='rgb',offset=12,datatype=PointField.FLOAT32,count=1))
-        msg.point_step=16;msg.data=packed.tobytes()
+        msg.point_step=16;payload=packed
+    if array_payload:
+        # Humble's generated setter accepts a typed uint8 array directly.
+        # frombytes performs a native bulk copy; bytes assignment otherwise
+        # validates every byte as a Python int. Preserve identical PointCloud2.data bytes.
+        data = array('B')
+        data.frombytes(payload.tobytes())
+        msg.data = data
+    else:
+        msg.data = payload.tobytes()
     msg.row_step=msg.point_step*len(xyz)
     return msg
 

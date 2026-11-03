@@ -12,15 +12,15 @@ import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
-from external_track3 import EXPECTED_FRAMES, stage_commands, sha256, write_json, LIMITATIONS
+from external_track3 import EXPECTED_FRAMES, stage_commands, sha256, write_json, LIMITATIONS, inspect_data
 from analyze_external_track3 import validate_result, analyze
 from external_parameters import get_parameters
 from convert_external_map import convert
 
 
 def author_source():
-    source = SCRIPTS.parents[1] / "midterm01/others code"
-    return source if source.is_dir() else SCRIPTS.parents[1] / "external_source"
+    frozen = SCRIPTS.parents[1] / "external_source"
+    return frozen if frozen.is_dir() else SCRIPTS.parents[1] / get_parameters(1)["author_source"]
 
 
 def make_run(tmp_path, track=3):
@@ -88,9 +88,10 @@ def test_stage_arguments_match_author_shell_without_localization(tmp_path):
     data = tmp_path / "data"
     work = tmp_path / "output"
     env = dict(os.environ, PYTHON=str(fake), PROCS="2", ARGV_LOG=str(log))
-    subprocess.run(["bash", str(source / "run_track3_causal.sh"), str(data), str(work)], env=env, check=True, capture_output=True)
+    track = 1 if (source / "run_track1_causal.sh").is_file() else 3
+    subprocess.run(["bash", str(source / f"run_track{track}_causal.sh"), str(data), str(work)], env=env, check=True, capture_output=True)
     actual = [json.loads(line) for line in log.read_text().splitlines()]
-    planned = [argv[1:] for _, argv in stage_commands(source, data, work)]
+    planned = [argv[1:] for _, argv in stage_commands(source, data, work, get_parameters(track))]
     # 作者使用 scripts/ 相對路徑，包裝器使用相同檔案的絕對路徑。
     for rows in (actual, planned):
         for row in rows:
@@ -131,6 +132,44 @@ def test_multitrack_commands_do_not_copy_track3_overrides(tmp_path, track):
     assert "--init-search" not in commands["05_sequential"]
     assert commands["05_sequential"][commands["05_sequential"].index("--backfill")+1] == "0"
     ekf = commands["08_ekf"]
-    assert ekf[ekf.index("--gyro-dt")+1] == "0.0"
-    assert commands["09_yaw"][-1].endswith(f"track{track}_cam_causal.csv")
+    assert ekf[ekf.index("--gyro-dt")+1] == "0"
+    assert commands["05_sequential"][commands["05_sequential"].index("--gnss")+1] == str(tmp_path / f"Track{track}")
+    assert ekf[ekf.index("--lever")+1] == "0.7086,-0.5995"
+    assert ekf[ekf.index("--cam-yaw-offset-deg")+1] == "-0.4455"
+    assert commands["09_yaw"][-1].endswith(f"track{track}_causal_hybrid_yawmotion.csv")
     assert Path(commands["01_convert_map"][1]).name == ("convert_external_map.py" if track == 2 else "convert_map.py")
+
+
+def test_track2_parameter_changes_are_applied_to_author_gnss_arguments(tmp_path):
+    p = get_parameters(2)
+    p.update(gnss_lever_m=(.2, -.1), lever_m=(.2, -.1), cam_yaw_offset_deg=.3, gnss_sigma_m=1.5)
+    commands = dict(stage_commands(author_source(), tmp_path/'Track2', tmp_path/'work', p))
+    seq, ekf = commands['05_sequential'], commands['08_ekf']
+    assert seq[seq.index('--gnss-lever')+1] == '0.2,-0.1'
+    assert seq[seq.index('--gnss-sigma')+1] == '1.5'
+    assert ekf[ekf.index('--lever')+1] == '0.2,-0.1'
+    assert ekf[ekf.index('--cam-yaw-offset-deg')+1] == '0.3'
+
+
+def test_gnss_tracking_data_check_requires_a_usable_topic_and_two_fixes(tmp_path, monkeypatch):
+    import sqlite3
+    monkeypatch.syspath_prepend(str(author_source()/'src'))
+    p = get_parameters(1); p['expected_frames'] = 2
+    (tmp_path/'raw_ply').mkdir()
+    for i in range(2):
+        (tmp_path/'raw_ply'/f'{i:06d}_ts_{1_000_000_000+i*36_000_000}.ply').write_bytes(b'filename inventory only')
+    (tmp_path/'init_guess.txt').write_text('not parsed in environment inventory')
+    (tmp_path/'map.pcd').write_text('FIELDS x y z intensity\nSIZE 4 4 4 4\nTYPE F F F F\nCOUNT 1 1 1 1\nPOINTS 1\nDATA ascii\n0 0 0 0\n')
+    with sqlite3.connect(tmp_path/p['bag_name']) as db:
+        db.execute('CREATE TABLE topics(id INTEGER, name TEXT, type TEXT, serialization_format TEXT)')
+        db.execute('CREATE TABLE messages(topic_id INTEGER, timestamp INTEGER, data BLOB)')
+        db.execute("INSERT INTO topics VALUES(1,'/imu/data','sensor_msgs/msg/Imu','cdr')")
+    result = inspect_data(tmp_path, p)
+    assert not result['ready'] and result['gnss_required'] and not result['gnss_topic_valid']
+    with sqlite3.connect(tmp_path/p['bag_name']) as db:
+        db.execute("INSERT INTO topics VALUES(2,'/localizer_node/gnss_pose','geometry_msgs/msg/PoseStamped','cdr')")
+        db.execute("INSERT INTO messages VALUES(2,1000,x'')")
+    assert not inspect_data(tmp_path, p)['ready']
+    with sqlite3.connect(tmp_path/p['bag_name']) as db:
+        db.execute("INSERT INTO messages VALUES(2,2000,x'')")
+    assert inspect_data(tmp_path, p)['ready']

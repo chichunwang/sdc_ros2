@@ -152,7 +152,10 @@ def test_failed_ground_or_features_keep_world_correction_before_emission(cp,monk
     assert reg.height == height and d['height_update_gain'] == 0.
 
 
-def test_plane_normals_reject_line_and_do_not_invent_wall_tangent_support(cp):
+def test_plane_normals_reject_line_and_do_not_invent_wall_tangent_support(cp,monkeypatch):
+    # Isolate plane-only null-space behavior; v5.5 tests separately validate
+    # legitimate line landmarks instead of pretending the pole is a plane.
+    monkeypatch.setattr(p,'LINE_FEATURES_ENABLED',False)
     from track2.metric_registration import MetricRegistration
     from track2.observability import geometry_observation
     from track2.plane_geometry import PlaneGeometry

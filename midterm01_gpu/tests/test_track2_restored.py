@@ -197,6 +197,9 @@ def test_no_overlap_resets_correction_to_current_sensor_prior(cuda):
 
 
 def test_generated_output_runner(tmp_path, monkeypatch, cuda):
+    # This legacy fixture contains no images; the image-enabled runner has a
+    # separate generated end-to-end fixture.
+    monkeypatch.setattr(p, 'IMAGE_GROUND_SPEED_ENABLED', False)
     from plyfile import PlyData, PlyElement
     import track2.sensors as sm
     import track2.camera as camera_module
@@ -224,25 +227,38 @@ def test_generated_output_runner(tmp_path, monkeypatch, cuda):
         def close(self): pass
     class Clock:
         def __init__(self, *_): pass
-        def for_frame(self, t): return t
+        def for_frame(self, t): return t-7_000_000
         def close(self): pass
     class Camera:
         def __init__(self, *_): self.sources={'generated':'identity_for_synthetic_cloud'}
         def apply(self, raw): return raw, {'generated':True}
     monkeypatch.setattr(sm, 'SensorStream', Sensors); monkeypatch.setattr(cm, 'CameraClock', Clock)
     monkeypatch.setattr(camera_module, 'FrontMask', Camera)
+    import track2.visualization as visualization
+    display_stamps=[]
+    class Display:
+        def publish_map(self, *_): pass
+        def publish_submap(self, *_): pass
+        def publish_frame(self, raw, pose, scale, stamp, **kwargs): display_stamps.append(stamp)
+        def close(self): pass
+    monkeypatch.setattr(visualization, 'Track2RvizPublisher', Display)
     monkeypatch.setattr(p, 'DATA_DIR', str(data)); monkeypatch.setattr(p, 'EXPECTED_FRAMES', 5)
     run = tmp_path/'generated_run'; run.mkdir()
-    runner.execute(run, max_frames=3)
+    runner.execute(run, max_frames=3, publish_rviz=True)
     validate(run, expected=3)
     info = json.loads((run/'test_info.json').read_text())
     assert info['status'] == 'completed' and info['frame_count'] == 3
     assert info['base_commit'] == p.BASE_COMMIT
     assert not (run/'analysis').exists()
+    scope = json.loads((run/'algorithm_scope.json').read_text())
+    assert scope['baseline_run'] == 'track02_full_2611031204_0002'
+    assert scope['heading_enabled'] and len(scope['excluded_v59']) == 4
     obs = [json.loads(line) for line in (run/'observations.jsonl').read_text().splitlines()]
     traces = [json.loads(line) for line in (run/'pose_trace.jsonl').read_text().splitlines()]
+    assert display_stamps == [o['camera_timestamp_ns'] for o in obs]
     from track2.correction_filter import pose_correction
     for o, trace in zip(obs, traces):
+        assert trace['camera_timestamp_ns'] == o['camera_timestamp_ns'] == o['timestamp_ns']-7_000_000
         d = o['registration']; memory = d['correction_filter']
         assert d['accepted'] == memory['accepted'] == trace['map_accepted']
         np.testing.assert_allclose(memory['correction'],
@@ -282,14 +298,25 @@ def test_full_analysis_read_only_and_contract_failures(tmp_path):
             memory = dict(gain_scale_xy=.9, gain_scale_yaw=.5, nis_soft_threshold=5.991, nis_reject_threshold=13.816, correction=[.1, .2, .01], covariance=np.diag([.01, .01, .0001]).tolist(),
                           innovation_nis=1., accepted=True, seconds_since_update=0.)
             f.write(json.dumps(dict(state=[i*.01, 0., 0., .001, .2], scale=8.,
-                                   sensor_prior=dict(pose_covariance_xy_yaw=np.diag([.36,.36,.03]).tolist()),
+                                   sensor_prior=dict(pose_covariance_xy_yaw=np.diag([.36,.36,.03]).tolist(),
+                                       heading_information_policy='fractional_likelihood_budget_v510',
+                                       heading_update_budget_used_deg=.2 if i % 10 == 0 else 0.,
+                                       heading_update_budget_limit_deg=.5,
+                                       heading_information_updates=[dict(heading_factor_id=i//10, information_fraction=1.)] if i % 10 == 0 else []),
+                                   image_ground_speed=dict(kind='stationary' if i % 10 == 0 else 'speed',
+                                       speed_mps=.2, filter_accepted=i % 5 == 0, innovation_nis=.5),
                                    registration=dict(correction_filter=memory, observability=dict(rank=2))))+'\n')
     paths = [x for x in run.iterdir() if x.is_file()]
     before = {f.name: sha256(f) for f in paths}
     analyze(run)
     assert before == {f.name: sha256(f) for f in paths}
-    for name in ('01_trajectory', '02_pose_changes', '03_registration_timing', '04_fusion_and_scale', '05_map_correction_memory', '06_observability_uncertainty'):
+    for name in ('01_trajectory', '02_pose_changes', '03_registration_timing', '04_fusion_and_scale', '05_map_correction_memory', '06_observability_uncertainty', '07_image_ground_speed', '08_heading_information'):
         for ext in ('png', 'pdf'): assert (run/'analysis'/f'{name}.{ext}').stat().st_size > 1000
+    image_summary = json.loads((run/'analysis/image_speed_summary.json').read_text())
+    assert image_summary['accepted_frames'] == list(range(0, n, 5))
+    heading_summary = json.loads((run/'analysis/heading_information_summary.json').read_text())
+    assert heading_summary['post_bootstrap_budget_exceedances'] == 0
+    assert heading_summary['maximum_factor_fraction'] == 1.
     # A partial same-source render can be retried without touching any pose.
     (run/'analysis'/'03_registration_timing.pdf').unlink()
     analyze(run)

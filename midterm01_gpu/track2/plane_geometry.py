@@ -15,6 +15,9 @@ class PlaneGeometry:
         self.normal = cp.zeros((n, 3), dtype=cp.float64)
         self.center = cp.zeros((n, 3), dtype=cp.float64)
         self.thickness_variance = cp.zeros(n, dtype=cp.float64)
+        self.line_reliable = cp.zeros(n, dtype=cp.bool_)
+        self.line_direction = cp.zeros((n, 3), dtype=cp.float64)
+        self.line_confidence = cp.zeros(n, dtype=cp.float64)
 
     def ensure(self, ids):
         ids = cp.unique(ids[ids >= 0]); ids = ids[~self.done[ids]]
@@ -46,3 +49,14 @@ class PlaneGeometry:
         self.normal[ids] = vectors[:, :, 0]
         self.center[ids] = query+mean
         self.thickness_variance[ids] = values[:, 0]
+        # Line and plane classes are disjoint. A line has TWO transverse
+        # residuals; no residual is invented along its unobserved axis.
+        linearity = 1-values[:, 1]/cp.maximum(values[:, 2],1e-30)
+        direction = vectors[:, :, 2]
+        line = ((~reliable) & (count >= p.LINE_MIN_NEIGHBORS)
+            & (values[:, 2] >= p.LINE_MIN_VARIANCE_M2)
+            & (values[:, 1] <= p.LINE_MAX_SECOND_RATIO*values[:, 2])
+            & (cp.abs(direction[:, 2]) >= np.cos(np.deg2rad(p.LINE_MAX_VERTICAL_ANGLE_DEG))))
+        self.line_reliable[ids] = line
+        self.line_direction[ids] = direction
+        self.line_confidence[ids] = cp.clip(linearity,0.,1.)

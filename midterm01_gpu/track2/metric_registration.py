@@ -14,7 +14,9 @@ from track3.nearest import GpuNearest
 from . import parameters as p
 from .correction_filter import CausalCorrectionFilter, pose_correction, yaw
 from .plane_geometry import PlaneGeometry
-from .observability import checked_covariance, geometry_observation
+from .observability import checked_covariance, geometry_observation, likelihood_observation, height_observation
+from .height_filter import fuse_height
+from .ground_support import checked_ground
 
 
 def wrap(a):
@@ -73,11 +75,18 @@ class MetricRegistration:
             raise GroundInitializationError('Ground-height scale seed outside explicit bounds')
         if sd['mad']*scale_seed > p.MAX_SOURCE_GROUND_MAD_M:
             raise GroundInitializationError('Metric source ground thickness exceeds allowance')
+        fused_mad, ground_support = sd['mad'], None
+        if not p.uses_v52_fusion():
+            ns, ds, fused_mad, ground_support = checked_ground(
+                raw, ns, ds, sd, nm, prior[:3, :3], scale_seed)
+        scale_seed = self.height/ds
+        if not p.SCALE_BOUNDS[0] < scale_seed < p.SCALE_BOUNDS[1]:
+            raise GroundInitializationError('Sensor-supported ground scale outside explicit bounds')
         Bs, Bm = plane_basis(ns), plane_basis(nm)
         origin = prior[:3, 3]-nm*(nm @ prior[:3, 3]+dm)
         source = raw @ cp.asarray(Bs)
         source[:, 2] += ds
-        non_ground = source[:, 2] > max(p.MIN_SOURCE_FEATURE_HEIGHT_RAW, 6*sd['mad'])
+        non_ground = source[:, 2] > max(p.MIN_SOURCE_FEATURE_HEIGHT_RAW, 6*fused_mad)
         distance = cp.linalg.norm(raw, axis=1)*scale_seed
         features = source[non_ground & (distance <= p.FEATURE_MAX_RANGE_M)]
         if len(features) < 30:
@@ -111,6 +120,16 @@ class MetricRegistration:
         self.ds = ds; self.nm = nm; self.ns = ns; self.dm = dm
         self.feature_nn = GpuNearest(target, cell=1.5)
         self.geometry = PlaneGeometry(self.feature_nn)
+        self.source_line_good = None
+        if p.LINE_FEATURES_ENABLED and not p.uses_v52_fusion():
+            metric_sample = sample*scale_seed
+            source_nn = GpuNearest(metric_sample,cell=1.5)
+            source_geometry = PlaneGeometry(source_nn)
+            source_ids, _ = source_nn.query(metric_sample,1e-6)
+            source_geometry.ensure(source_ids)
+            safe_source = cp.maximum(source_ids,0)
+            self.source_line_good = (source_ids >= 0)&source_geometry.line_reliable[safe_source]
+            self.source_line_direction = source_geometry.line_direction[safe_source]
         # RViz presents the local XYZ map, rather than the ground-relative model.
         self.nn = type('DisplaySubmap', (), {'points': local})()
         self.center = prior[:3, 3].copy()
@@ -118,11 +137,15 @@ class MetricRegistration:
         yaw0 = float(np.arctan2(f[1], f[0]))
         self.seed = np.array([0., 0., yaw0, np.log(scale_seed)])
         self.seed = self.state_for_correction(prior, np.zeros(3), scale_seed)
-        return dict(source_ground=dict(normal=ns.tolist(), offset=ds, **sd),
+        return dict(source_ground=dict(**sd, normal=ns.tolist(), offset=ds,
+                        fitted_mad_raw=sd['mad'], fused_mad_raw=fused_mad,
+                        support_definition='inliers of original measured plane; fused normal and median offset used for pose'),
+                    ground_support=ground_support,
                     map_ground=dict(normal=nm.tolist(), offset=dm, **md),
                     scale_seed=scale_seed, height_prior_m=self.height,
                     height_std_m=float(np.sqrt(self.height_variance)),
                     source_features=len(sample), angular_cells=len(unique), map_features=len(target),
+                    source_line_features=0 if self.source_line_good is None else int(self.source_line_good.sum()),
                     feature_max_range_m=p.FEATURE_MAX_RANGE_M,
                     prior_covariance_xy_yaw=self.prior_covariance.tolist(),
                     prior_frame='map [x_m,y_m,yaw_rad] with full cross covariance',
@@ -174,6 +197,28 @@ class MetricRegistration:
         residual = cp.sum(normals*(q-self.geometry.center[safe]), axis=1)
         return ids, d2, good, normals, residual, self.geometry.confidence[safe]
 
+    def feature_association(self, q, radius, rotation):
+        """Disjoint plane OR source/target-validated vertical line constraints."""
+        ids,d2,good,normals,residual,confidence = self.plane_residuals(q,radius)
+        safe = cp.maximum(ids,0)
+        centers = self.geometry.center[safe]
+        association = dict(ids=ids,good=good,normals=normals,centers=centers,confidence=confidence)
+        if getattr(self,'source_line_good',None) is not None:
+            source_direction = self.source_line_direction @ cp.asarray(rotation).T
+            direction = self.geometry.line_direction[safe]
+            compatible = cp.abs(cp.sum(source_direction*direction,axis=1)) >= np.cos(np.deg2rad(p.LINE_MAX_DIRECTION_DIFFERENCE_DEG))
+            lines = (ids >= 0)&(~good)&self.source_line_good&self.geometry.line_reliable[safe]&compatible
+            if bool(lines.any()):
+                projector = cp.einsum('ni,nj->nij',normals,normals)
+                line_projector = cp.eye(3)[None,:,:]-cp.einsum('ni,nj->nij',direction,direction)
+                projector = cp.where(lines[:,None,None],line_projector,projector)
+                vector = cp.einsum('nij,nj->ni',projector,q-centers)
+                residual = cp.where(lines,cp.linalg.norm(vector,axis=1),residual)
+                confidence = cp.where(lines,self.geometry.line_confidence[safe],confidence)
+                good = good|lines
+                association.update(good=good,confidence=confidence,projector=projector,line_matches=lines)
+        return association,d2,residual
+
     def evaluate(self, x, radius, robust, *, derivatives=False, include_prior=True,
                  association=None, diagnostics=True):
         # Solver trials only consume cost, matches and H/g. Sorting residuals
@@ -181,15 +226,18 @@ class MetricRegistration:
         # and host synchronization at every line-search trial.
         q, J = transform4(self.source_features, x, jacobian=derivatives)
         if association is None:
-            ids, d2, good, normals, residual, confidence = self.plane_residuals(q, radius)
-            centers = self.geometry.center[cp.maximum(ids, 0)]
-            association = dict(ids=ids, good=good, normals=normals, centers=centers, confidence=confidence)
+            c,s = np.cos(x[2]),np.sin(x[2])
+            association,d2,residual = self.feature_association(q,radius,np.array([[c,-s,0.],[s,c,0.],[0.,0.,1.]]))
         else:
             ids = association['ids']; good = association['good']
             normals = association['normals']; confidence = association['confidence']
-            residual = cp.sum(normals*(q-association['centers']), axis=1)
+            if 'projector' in association:
+                residual = cp.linalg.norm(cp.einsum('nij,nj->ni',association['projector'],q-association['centers']),axis=1)
+            else:
+                residual = cp.sum(normals*(q-association['centers']), axis=1)
             if diagnostics:
                 d2 = cp.minimum(cp.sum((q-self.feature_nn.points[cp.maximum(ids, 0)])**2, axis=1), radius**2)
+        ids=association['ids'];good=association['good'];normals=association['normals'];confidence=association['confidence']
         w = self.weight
         unmatched = .5*robust**2*np.log1p(radius**2/robust**2)/p.FEATURE_STD_M**2
         loss = .5*robust**2*cp.log1p(residual**2/robust**2)/p.FEATURE_STD_M**2
@@ -198,11 +246,17 @@ class MetricRegistration:
         H = np.zeros((4, 4)); g = np.zeros(4)
         matches = int(good.sum()) if derivatives or diagnostics else None
         if derivatives and matches >= 20:
-            projected_J = cp.einsum('ni,nij->nj', normals[good], J[good])
             ww = w[good]*confidence[good]/(1+residual[good]**2/robust**2)/p.FEATURE_STD_M**2
-            H = cp.asnumpy(cp.einsum('ni,nj,n->ij', projected_J, projected_J, ww))
-            g = cp.asnumpy(cp.einsum('ni,n,n->i', projected_J, residual[good], ww))
-        data_H = H.copy()
+            if 'projector' in association:
+                projected_J = cp.einsum('nij,njk->nik',association['projector'][good],J[good])
+                vector = cp.einsum('nij,nj->ni',association['projector'][good],q[good]-association['centers'][good])
+                H = cp.asnumpy(cp.einsum('nki,nkj,n->ij',projected_J,projected_J,ww))
+                g = cp.asnumpy(cp.einsum('nki,nk,n->i',projected_J,vector,ww))
+            else:
+                projected_J = cp.einsum('ni,nij->nj', normals[good], J[good])
+                H = cp.asnumpy(cp.einsum('ni,nj,n->ij', projected_J, projected_J, ww))
+                g = cp.asnumpy(cp.einsum('ni,n,n->i', projected_J, residual[good], ww))
+        data_H = H.copy(); data_g = g.copy()
         prior_cost = 0.
         if include_prior:
             T, scale = self.pose(x)
@@ -215,15 +269,18 @@ class MetricRegistration:
             g += A.T @ self.prior_precision @ r
             H[3, 3] += h*h/hvar; g[3] += h*hr/hvar
         result = dict(cost=data_cost+prior_cost, data_cost=data_cost, prior_cost=prior_cost,
-                      matches=matches, association=association, H=H, data_H=data_H, g=g)
+                      matches=matches, association=association, H=H, data_H=data_H, g=g, data_g=data_g)
         if not diagnostics:
             return result
         coverage = float(cp.sum(w*good)/w.sum())
         plane_median = float(cp.median(cp.abs(residual[good]))) if bool(good.any()) else float(radius)
         result.update(feature_cost=2*data_cost*p.FEATURE_STD_M**2/float(w.sum()),
+                    line_matches=0 if 'line_matches' not in association else int(association['line_matches'].sum()),
+                    residual_model='disjoint point-to-plane or validated vertical point-to-line; no line-axis residual',
                     coverage=coverage, median_capped_distance_m=float(cp.median(cp.sqrt(d2))),
                     nn_coverage=float(cp.sum(w*(ids >= 0))/w.sum()),
                     median_plane_residual_m=plane_median,
+                    median_geometric_residual_m=plane_median,
                     angular_support=float(cp.sum(w*good)))
         return result
 
@@ -232,7 +289,9 @@ class MetricRegistration:
         q = self.raw_features @ cp.asarray(T[:3,:3]).T*scale+cp.asarray(T[:3,3])
         q = (q-cp.asarray(self.origin)) @ cp.asarray(self.Bm)
         radius, robust, _ = p.METRIC_STAGES[-1]
-        ids, d2, good, _, residual, confidence = self.plane_residuals(q, radius)
+        rotation = self.Bm.T @ T[:3,:3] @ self.Bs
+        association,d2,residual = self.feature_association(q,radius,rotation)
+        ids=association['ids'];good=association['good'];confidence=association['confidence']
         unmatched = robust**2*np.log1p(radius**2/robust**2)
         loss = robust**2*cp.log1p(residual**2/robust**2)
         loss = cp.where(good, unmatched-confidence*(unmatched-loss), unmatched)
@@ -240,7 +299,7 @@ class MetricRegistration:
                     coverage=float(cp.sum(self.weight*good)/self.weight.sum()),
                     median_capped_distance_m=float(cp.median(cp.sqrt(d2))),
                     median_plane_residual_m=float(cp.median(cp.abs(residual[good]))) if bool(good.any()) else float(radius),
-                    source_features=len(q), comparison='same_raw_features_and_map_point_to_plane_with_unmatched_penalty')
+                    source_features=len(q), comparison='same_raw_features_and_map_plane_or_validated_line_with_unmatched_penalty')
 
     def valid(self, x):
         if not np.isfinite(x).all():
@@ -250,6 +309,99 @@ class MetricRegistration:
             and np.linalg.norm(x[:2]-self.seed[:2]) <= p.METRIC_MAX_XY_CORRECTION_M
             and abs(wrap(x[2]-self.seed[2])) <= self.yaw_search_bound
             and abs(h-self.height) <= p.METRIC_MAX_HEIGHT_CHANGE_M)
+
+    def _finish_v52(self, x, prior, final, seed, stages, planes, eig,
+                    quality_ok, observation, covariance, observable, support_required,
+                    geometry_accepted, scale_info, scale_std, started, prepared, optimized):
+        """v5.2 fusion unchanged; directional expiry is the sole numerical change."""
+        candidate_T, candidate_scale = self.pose(x)
+        candidate_sensitivity = None
+        if geometry_accepted:
+            # Candidate is sensor-regularized. Its response to a changed prior
+            # reference is NOT a full -I data-only observation response.
+            J = self.correction_jacobian(x)
+            candidate_sensitivity = np.eye(3)-J @ np.linalg.solve(final['H'], J.T @ self.prior_precision)
+        correction, temporal = self.correction_filter.update(
+            pose_correction(candidate_T, prior) if geometry_accepted else None,
+            covariance if geometry_accepted else None,
+            observation_matrix=observation if geometry_accepted else None,
+            missing_reason='unobservable_map_geometry' if quality_ok else 'geometry_rejected',
+            candidate_sensitivity=candidate_sensitivity)
+        accepted = temporal['accepted']
+        scale = candidate_scale if accepted and scale_std <= p.MAX_SCALE_LOG_STD else float(np.exp(self.seed[3]))
+        emitted_x = self.state_for_correction(prior, correction, scale)
+        T, scale = self.pose(emitted_x)
+        # The seed is an independent current ground measurement with a past
+        # height anchor; it must be distinguished from feature-validated scale.
+        self.last_scale = scale
+        if accepted and scale_std <= p.MAX_SCALE_LOG_STD:
+            measured_height = scale*self.ds
+            measurement_var = max((measured_height*scale_std)**2, p.HEIGHT_OBSERVATION_FLOOR_M**2)
+            gain = self.height_variance/(self.height_variance+measurement_var)
+            self.height += gain*(measured_height-self.height)
+            self.height_variance = (1-gain)**2*self.height_variance+gain*gain*measurement_var
+        else:
+            gain = 0.
+        diag = {k:v for k,v in final.items() if k not in ('H','g','data_H','data_g','association')}
+        diag.update(accepted=accepted, geometry_accepted=geometry_accepted,
+            reason='feature_metric_update' if accepted else 'temporal_innovation_rejected' if geometry_accepted else 'ground_only_prior',
+            scale_validated=bool(accepted and scale_std <= p.MAX_SCALE_LOG_STD),
+            scale_source='current_features_and_ground' if accepted and scale_std <= p.MAX_SCALE_LOG_STD else 'current_ground_and_past_height',
+            scale=scale, scale_seed=planes['scale_seed'], scale_log_std=float(scale_std),
+            scale_information=scale_info, data_information_eigenvalues=eig.tolist(),
+            seed_feature_cost=seed['feature_cost'], stages=stages, planes=planes,
+            height_anchor_after_m=self.height, height_update_gain=float(gain),
+            correction_plane_xy_yaw=(emitted_x[:3]-self.seed[:3]).tolist(),
+            candidate_pose=candidate_T.tolist(), candidate_scale=candidate_scale,
+            candidate_correction_plane_xy_yaw=(x[:3]-self.seed[:3]).tolist(),
+            candidate_data_information=final['data_H'].tolist(), correction_filter=temporal,
+            observability=observable, angular_support_required=float(support_required),
+            association_policy='fixed inside line search; rematch at outer ICP iteration; seed compared on final identical planes',
+            prior_covariance_xy_yaw=self.prior_covariance.tolist(),
+            measurement_covariance_model='point-to-plane data-only Schur modes; current-prior whitening and error floors; uncalibrated',
+            feature_quality_scope='unfiltered_geometry_candidate', emitted_feature_quality=self.score_pose(T, scale),
+            ground_normal_difference_before_deg=float(np.degrees(np.arccos(np.clip(self.nm @ (prior[:3,:3] @ self.ns),-1,1)))),
+            model='v52_point_to_plane_with_directional_correction_memory', elapsed_seconds=time.perf_counter()-started)
+        diag['fusion_profile'] = p.FUSION_PROFILE
+        diag['height_variance_after_m2'] = float(self.height_variance)
+        cp.cuda.get_current_stream().synchronize()
+        finished = time.perf_counter()
+        diag['timing_components_ms'] = dict(preparation=(prepared-started)*1000,
+            optimization_and_final_diagnostics=(optimized-prepared)*1000,
+            fusion_and_emitted_diagnostics=(finished-optimized)*1000)
+        return T, scale, diag
+
+    def height_proposal(self, x, final, candidate_scale, scale_std, radius, robust, pose_eligible):
+        """Preview without state changes; commit together with a valid pose proposal."""
+        height, variance = self.height, self.height_variance
+        height_likelihood = None
+        height_update = dict(accepted=False, reason='pose_or_scale_untrusted', gain=0.)
+        if pose_eligible and scale_std <= p.MAX_SCALE_LOG_STD:
+            measured_height, measurement_var, height_likelihood = height_observation(
+                final['data_H'], final['data_g'], candidate_scale*self.ds, final)
+            if measured_height is not None:
+                physical = p.CAMERA_HEIGHT_BOUNDS_M[0] < measured_height < p.CAMERA_HEIGHT_BOUNDS_M[1]
+                profile = x.copy()
+                if physical:
+                    profile[:3] += np.asarray(height_likelihood['profiled_pose_step'])
+                    profile[3] = np.log(measured_height/self.ds)
+                within_bounds = bool(physical and self.valid(profile))
+                height_loss = (self.evaluate(profile, radius, robust, include_prior=False,
+                    association=final['association'], diagnostics=False) if within_bounds else None)
+                loss_valid = bool(height_loss is not None and np.isfinite(height_loss['data_cost'])
+                    and height_loss['data_cost'] <= final['data_cost']+1e-12)
+                height_likelihood.update(within_existing_search_bounds=within_bounds,
+                    candidate_data_cost=final['data_cost'],
+                    profiled_data_cost=None if height_loss is None else height_loss['data_cost'],
+                    fixed_association_loss_valid=loss_valid)
+                if loss_valid:
+                    height, variance, height_update = fuse_height(
+                        self.height, self.height_variance, measured_height, measurement_var)
+                else:
+                    height_update['reason'] = 'height_likelihood_outside_search' if not within_bounds else 'height_likelihood_loss_increased'
+            else:
+                height_update['reason'] = 'height_unobservable'
+        return height, variance, height_update, height_likelihood
 
     def refine(self, raw, prior, timestamp_ns, *, prior_covariance, speed_mps=None, rotation_delta_rad=None, reference_delta=None):
         started = time.perf_counter()
@@ -268,6 +420,7 @@ class MetricRegistration:
             T[:3, :3] = Rotation.from_euler('z', correction[2]).as_matrix() @ prior[:3, :3]
             return T, self.last_scale, dict(accepted=False, geometry_accepted=False, reason='ground_support_failed',
                 failure=str(error), scale_validated=False, scale_source='previous_or_unverified_seed',
+                ground_support=getattr(error, 'diagnostic', None),
                 candidate_pose=None, correction_filter=temporal,
                 elapsed_seconds=time.perf_counter()-started)
         cp.cuda.get_current_stream().synchronize()
@@ -328,48 +481,100 @@ class MetricRegistration:
         if final['coverage'] > 0:
             observation, covariance, observable = geometry_observation(
                 final['data_H'], self.correction_jacobian(x), self.prior_covariance, final)
-        support_required = 0. if observable is None else p.PLANE_MIN_SUPPORT_PER_VARIABLE*(observable['rank']+1)
+        support_required = 0. if observable is None else p.PLANE_MIN_SUPPORT_PER_VARIABLE*(observable['strong_rank']+1)
         geometry_accepted = bool(quality_ok and observable is not None and observable['rank'] > 0
             and final['angular_support'] >= support_required)
         scale_info = 0. if observable is None else observable['scale_information']
         scale_std = 1/np.sqrt(max(scale_info, 1e-20))
+        if p.uses_v52_fusion():
+            return self._finish_v52(x, prior, final, seed, stages, planes, eig,
+                quality_ok, observation, covariance, observable, support_required,
+                geometry_accepted, scale_info, scale_std, started, prepared, optimized)
         candidate_T, candidate_scale = self.pose(x)
-        candidate_sensitivity = None
+        candidate_sensitivity = None; measurement = None; likelihood = None
+        likelihood_valid = False
         if geometry_accepted:
-            # Candidate is sensor-regularized. Its response to a changed prior
-            # reference is NOT a full -I data-only observation response.
-            J = self.correction_jacobian(x)
-            candidate_sensitivity = np.eye(3)-J @ np.linalg.solve(final['H'], J.T @ self.prior_precision)
+            measurement, observation, covariance, likelihood = likelihood_observation(
+                final['data_H'], final['data_g'], self.correction_jacobian(x),
+                self.prior_covariance, final, pose_correction(candidate_T, prior))
+            # A map-only likelihood is world anchored. A changed sensor
+            # reference shifts its relative correction by the SAME delta.
+            candidate_sensitivity = np.eye(3)
+            logscale = x[3]+likelihood['likelihood_nuisance_logscale_step']
+            scale_in_bounds = bool(np.isfinite(logscale) and np.log(p.SCALE_BOUNDS[0]) < logscale < np.log(p.SCALE_BOUNDS[1]))
+            likelihood_x = (self.state_for_correction(prior, measurement, float(np.exp(logscale)))
+                            if scale_in_bounds else None)
+            within_bounds = bool(likelihood_x is not None and self.valid(likelihood_x))
+            likelihood['within_existing_search_bounds'] = within_bounds
+            # H/g is a LOCAL quadratic, not a guarantee about a nonlinear pose.
+            # Require the unregularized loss to improve on the SAME final planes
+            # (no rematching/dropping difficult points to manufacture improvement).
+            validated = None
+            if within_bounds:
+                validated = self.evaluate(likelihood_x, radius, robust, include_prior=False,
+                                          association=final['association'], diagnostics=False)
+            likelihood_valid = bool(validated is not None and np.isfinite(validated['data_cost'])
+                                    and validated['data_cost'] <= final['data_cost']+1e-12)
+            likelihood.update(fixed_association_data_cost=None if validated is None else validated['data_cost'],
+                              candidate_data_cost=final['data_cost'],
+                              fixed_association_loss_valid=likelihood_valid,
+                              validation='profiled scale; existing search bounds; actual nonlinear data loss on unchanged final planes')
+        # A weak mode's unregularized likelihood center can be far away even
+        # though its Bayesian update is tiny. Validate the ACTUAL finite gain
+        # proposal inside existing bounds, not the inverse-H center. The same
+        # final planes/sample remain fixed so lost matches cannot hide loss.
+        proposed_height, proposed_height_variance, height_update, height_likelihood = self.height_proposal(
+            x, final, candidate_scale, scale_std, radius, robust, geometry_accepted)
+        baseline_x = self.state_for_correction(prior, predicted_correction, self.height/self.ds)
+        baseline_loss = self.evaluate(baseline_x, radius, robust, include_prior=False,
+            association=final['association'], diagnostics=False)['data_cost']
+        def validate_proposal(proposal):
+            trial = self.state_for_correction(prior, proposal, proposed_height/self.ds)
+            valid = self.valid(trial)
+            value = (self.evaluate(trial, radius, robust, include_prior=False,
+                association=final['association'], diagnostics=False)['data_cost'] if valid else None)
+            ok = bool(value is not None and np.isfinite(value) and value <= baseline_loss+1e-12)
+            return dict(accepted=ok, reason='posterior_map_loss_increased' if valid else 'posterior_outside_search',
+                baseline_data_cost=baseline_loss, proposal_data_cost=value,
+                comparison='actual limited-gain pose and once-fused height proposal vs prediction; same fixed planes')
+        measurement_accepted = geometry_accepted
         correction, temporal = self.correction_filter.update(
-            pose_correction(candidate_T, prior) if geometry_accepted else None,
-            covariance if geometry_accepted else None,
-            observation_matrix=observation if geometry_accepted else None,
+            measurement if measurement_accepted else None,
+            covariance if measurement_accepted else None,
+            observation_matrix=observation if measurement_accepted else None,
             missing_reason='unobservable_map_geometry' if quality_ok else 'geometry_rejected',
-            candidate_sensitivity=candidate_sensitivity)
+            candidate_sensitivity=candidate_sensitivity,
+            memory_observation_matrix=observable['strong_observation_matrix'] if measurement_accepted else None,
+            proposal_validator=validate_proposal if measurement_accepted else None,
+            local_linear_likelihood=True)
         accepted = temporal['accepted']
-        scale = candidate_scale if accepted and scale_std <= p.MAX_SCALE_LOG_STD else float(np.exp(self.seed[3]))
+        if accepted:
+            self.height, self.height_variance = proposed_height, proposed_height_variance
+        else:
+            height_update = dict(height_update, accepted=False, gain=0.,
+                reason='pose_update_rejected' if height_update['accepted'] else height_update['reason'])
+        # h is a physical state, not another MAP candidate to fuse a second
+        # time. Emit THIS frame's height posterior and its current ground scale.
+        scale = self.height/self.ds
+        height_accepted = height_update['accepted']
         emitted_x = self.state_for_correction(prior, correction, scale)
         T, scale = self.pose(emitted_x)
         # The seed is an independent current ground measurement with a past
         # height anchor; it must be distinguished from feature-validated scale.
         self.last_scale = scale
-        if accepted and scale_std <= p.MAX_SCALE_LOG_STD:
-            measured_height = scale*self.ds
-            measurement_var = max((measured_height*scale_std)**2, p.HEIGHT_OBSERVATION_FLOOR_M**2)
-            gain = self.height_variance/(self.height_variance+measurement_var)
-            self.height += gain*(measured_height-self.height)
-            self.height_variance = (1-gain)**2*self.height_variance+gain*gain*measurement_var
-        else:
-            gain = 0.
-        diag = {k:v for k,v in final.items() if k not in ('H','g','data_H','association')}
+        gain = height_update['gain']
+        diag = {k:v for k,v in final.items() if k not in ('H','g','data_H','data_g','association')}
         diag.update(accepted=accepted, geometry_accepted=geometry_accepted,
-            reason='feature_metric_update' if accepted else 'temporal_innovation_rejected' if geometry_accepted else 'ground_only_prior',
-            scale_validated=bool(accepted and scale_std <= p.MAX_SCALE_LOG_STD),
-            scale_source='current_features_and_ground' if accepted and scale_std <= p.MAX_SCALE_LOG_STD else 'current_ground_and_past_height',
+            reason=('feature_metric_update' if accepted else 'temporal_innovation_rejected'
+                    if geometry_accepted else 'ground_only_prior'),
+            scale_validated=bool(height_accepted),
+            scale_source='current_data_height_posterior_and_ground' if height_accepted else 'current_ground_and_past_height',
             scale=scale, scale_seed=planes['scale_seed'], scale_log_std=float(scale_std),
             scale_information=scale_info, data_information_eigenvalues=eig.tolist(),
             seed_feature_cost=seed['feature_cost'], stages=stages, planes=planes,
             height_anchor_after_m=self.height, height_update_gain=float(gain),
+            height_variance_after_m2=float(self.height_variance),
+            height_likelihood=height_likelihood, height_update=height_update,
             correction_plane_xy_yaw=(emitted_x[:3]-self.seed[:3]).tolist(),
             candidate_pose=candidate_T.tolist(), candidate_scale=candidate_scale,
             candidate_correction_plane_xy_yaw=(x[:3]-self.seed[:3]).tolist(),
@@ -377,10 +582,12 @@ class MetricRegistration:
             observability=observable, angular_support_required=float(support_required),
             association_policy='fixed inside line search; rematch at outer ICP iteration; seed compared on final identical planes',
             prior_covariance_xy_yaw=self.prior_covariance.tolist(),
-            measurement_covariance_model='point-to-plane data-only Schur modes; current-prior whitening and error floors; uncalibrated',
+            measurement_covariance_model='plane/line data-only likelihood H/g Schur modes; sensor prior once; uncalibrated',
+            likelihood_observation=likelihood,
+            candidate_data_gradient=final['data_g'].tolist(),
             feature_quality_scope='unfiltered_geometry_candidate', emitted_feature_quality=self.score_pose(T, scale),
             ground_normal_difference_before_deg=float(np.degrees(np.arccos(np.clip(self.nm @ (prior[:3,:3] @ self.ns),-1,1)))),
-            model='causal_observable_point_to_plane_with_correction_memory', elapsed_seconds=time.perf_counter()-started)
+            model='causal_observable_plane_line_with_directional_motion', elapsed_seconds=time.perf_counter()-started)
         cp.cuda.get_current_stream().synchronize()
         finished = time.perf_counter()
         diag['elapsed_seconds'] = finished-started

@@ -29,6 +29,7 @@ tmp/
 !.codex/agents/quick_scan.toml
 !.codex/agents/docs_helper.toml
 !.codex/agents/small_fix.toml
+graphify-out/*
 
 # Dataset / ROS bag
 data/

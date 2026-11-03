@@ -1,5 +1,6 @@
 """Track2 ROS 顯示。只讀已估計 pose，不影響濾波或配準。"""
 import json
+from functools import partial
 import numpy as np
 import rclpy
 from rclpy.context import Context
@@ -12,7 +13,10 @@ from std_msgs.msg import String
 from visualization_msgs.msg import Marker
 from tf2_ros import TransformBroadcaster
 from scipy.spatial.transform import Rotation
-from track3.visualization import cloud_message
+from track3.visualization import cloud_message as _cloud_message
+
+# Track2 opts into typed ROS payloads; shared callers retain the original API.
+cloud_message = partial(_cloud_message, array_payload=True)
 
 
 class Track2RvizPublisher:

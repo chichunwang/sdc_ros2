@@ -55,6 +55,14 @@ class CausalSensorPrior:
         self.gnss_heading_updates = 0
         self.gnss_heading_decision = None
         self.last_gnss_heading_yaw = None
+        self.last_gnss_heading_change_ns = None
+        self.previous_gnss_heading_change_ns = None
+        self.last_gnss_heading_value = None
+        self.last_gnss_position_ns = None
+        self.last_gnss_arrival_ns = None
+        # Position/velocity changes caused by GNSS updates SINCE last emission.
+        # Propagate to camera time before re-expressing map-relative memory.
+        self.gnss_reference_shift = np.zeros(4)
         self.bias = 0.
         self.last_frame_bias = 0.
         self.bias_var = np.deg2rad(p.HEADING_INITIAL_BIAS_STD_DEG)**2
@@ -62,6 +70,13 @@ class CausalSensorPrior:
         self.gnss_updates = 0
         self.accepted_blocks = 0
         self.block_records = []
+        self.lateral_constraint_gnss_count = 0
+        self.lateral_constraint_diagnostic = None
+        self.emitted_frames = 0
+        self.pending_heading_information = []
+        self.heading_information_updates = []
+        self.heading_factor_sequence = 0
+        self.heading_update_budget_used = 0.
 
     @property
     def bias(self):
@@ -79,7 +94,7 @@ class CausalSensorPrior:
     def bias_var(self, value):
         self.heading_covariance[0, 0] = value
 
-    def _heading_update(self, observation, H, variance, *, course_rate_limit=False):
+    def _heading_update_v52(self, observation, H, variance, *, course_rate_limit=False):
         """Current-time 2-state update; course anchors common bias, pair only its difference."""
         H = np.asarray(H, dtype=float)
         innovation = wrap(observation-float(H @ self.heading_bias))
@@ -108,6 +123,123 @@ class CausalSensorPrior:
             observation_matrix=H.tolist(),covariance_before=before.tolist(),
             covariance_after=self.heading_covariance.tolist())
 
+    def _heading_factor_step(self, factor):
+        """Consume at most the UNUSED fraction of one delivered likelihood.
+
+        Static linear case: multiplying likelihood powers f_k (sum f_k=1)
+        is exactly one update with the original R. No extra observations are
+        manufactured. For a delayed remainder, bias random-walk uncertainty
+        only enlarges R. The approximation never revises a past state.
+        """
+        H=np.asarray(factor['H']);before=self.heading_covariance.copy()
+        innovation=wrap(factor['observation']-float(H@self.heading_bias))
+        process=np.diag(np.deg2rad([p.HEADING_BIAS_RW_DEG_SQRT_S,p.GNSS_HEADING_BIAS_RW_DEG_SQRT_S])**2)
+        age=max(0.,(self.time-factor['timestamp_ns'])*1e-9)
+        base_R=factor['variance']+float(H@process@H)*age
+        PH=before@H;s=float(H@PH)
+        available=float(factor['remaining'])
+        fraction=available
+        full=PH/(s+base_R/max(available,1e-30))
+        if self.emitted_frames:
+            allowance=max(0.,np.deg2rad(p.HEADING_MAX_UPDATE_DEG)-self.heading_update_budget_used)
+            proposed=abs(float(full[0]*innovation))
+            if proposed>allowance:
+                fraction=(0. if allowance<=1e-15 else
+                    min(available,base_R/max(abs(float(PH[0]*innovation))/allowance-s,1e-30)))
+        R=base_R/max(fraction,1e-30)
+        K=np.zeros(2) if fraction==0 else PH/(s+R)
+        actual=K.copy()
+        value=np.clip(self.bias+K[0]*innovation,-np.deg2rad(p.HEADING_MAX_BIAS_DEG),np.deg2rad(p.HEADING_MAX_BIAS_DEG))
+        if abs(innovation)>1e-15:actual[0]=(value-self.bias)/innovation
+        self.heading_update_budget_used+=abs(value-self.bias)
+        self.heading_bias+=actual*innovation
+        self.heading_bias[:]=[wrap(v) for v in self.heading_bias]
+        A=np.eye(2)-np.outer(actual,H)
+        self.heading_covariance=A@before@A.T+np.outer(actual,actual)*R
+        self.heading_covariance=(self.heading_covariance+self.heading_covariance.T)*.5
+        factor['remaining']=max(0.,available-fraction)
+        return dict(innovation_rad=innovation,innovation_nis=float(innovation**2/(s+base_R)),
+            inflation=factor['inflation'],bias_gain=float(actual[0]),unconstrained_bias_gain=float(full[0]),
+            bias_variance_before=float(before[0,0]),measurement_variance=float(R),
+            bias_variance_after=self.bias_var,heading_gain=actual.tolist(),observation_matrix=H.tolist(),
+            covariance_before=before.tolist(),covariance_after=self.heading_covariance.tolist(),
+            heading_factor_id=factor['id'],information_fraction=float(fraction),
+            information_fraction_remaining=factor['remaining'],base_measurement_variance=float(base_R),
+            factor_age_seconds=age,model='one delivered likelihood split into powers; total fraction <= 1')
+
+    def _heading_update(self, observation, H, variance, *, course_rate_limit=False):
+        if p.uses_v52_fusion() and not p.v510_heading_enabled():
+            return self._heading_update_v52(observation, H, variance, course_rate_limit=course_rate_limit)
+        H=np.asarray(H,dtype=float)
+        innovation=wrap(observation-float(H@self.heading_bias))
+        nis=innovation**2/float(H@self.heading_covariance@H+variance)
+        inflation=max(1.,nis/p.HEADING_ROBUST_GATE_SIGMA**2)
+        self.heading_factor_sequence+=1
+        factor=dict(id=self.heading_factor_sequence,observation=float(observation),H=H.tolist(),
+            variance=float(variance*inflation),inflation=float(inflation),timestamp_ns=self.time,remaining=1.)
+        update=self._heading_factor_step(factor)
+        self.heading_information_updates.append(update)
+        if factor['remaining']>1e-12:self.pending_heading_information.append(factor)
+        return update
+
+    def _consume_heading_information(self):
+        remaining=[]
+        for factor in self.pending_heading_information:
+            if (self.time-factor['timestamp_ns'])*1e-9>p.HEADING_MAX_WINDOW_S:
+                self.heading_information_updates.append(dict(heading_factor_id=factor['id'],
+                    expired_information_fraction=factor['remaining'],reason='unused_heading_information_expired'))
+                continue
+            update=self._heading_factor_step(factor)
+            self.heading_information_updates.append(update)
+            if factor['remaining']>1e-12:remaining.append(factor)
+        self.pending_heading_information=remaining
+
+    def _lateral_velocity_constraint(self, orientation):
+        """One soft vehicle constraint per NEW GNSS delivery, never per pixel/frame.
+
+        State remains antenna [x,y,vx,vy]. Unknown body alignment, heading and
+        angular-rate*lever uncertainty enter R; heading is NOT calibrated again
+        from these same GNSS data. No saved pose is revisited.
+        """
+        if self.gnss_updates == self.lateral_constraint_gnss_count:
+            self.lateral_constraint_diagnostic = dict(accepted=False, reason='no_new_gnss')
+            return
+        self.lateral_constraint_gnss_count = self.gnss_updates
+        if p.uses_v52_fusion() or not p.LATERAL_VELOCITY_CONSTRAINT_ENABLED or self.orientation_stamp is None:
+            self.lateral_constraint_diagnostic = dict(accepted=False, reason='disabled_or_no_imu')
+            return
+        heading = float(orientation.as_euler('xyz')[2])+self.bias
+        normal = np.array([-np.sin(heading), np.cos(heading)])
+        H = np.r_[0., 0., normal]
+        speed = float(np.linalg.norm(self.position[2:]))
+        yaw_var = self.bias_var+float(self.orientation_cov[2,2])+np.deg2rad(p.EXTRINSIC_ROTATION_STD_DEG[2])**2
+        lever_var = float(np.sum(np.asarray(p.LEVER_ARM_STD_BODY_M)[:2]**2))
+        # Nonzero known mean lever is removed using the current gyro; the
+        # velocity constraint is on vehicle motion, not a fixed camera origin.
+        Rmap = (Rotation.from_euler('z',self.bias)*orientation).as_matrix()
+        lever_velocity = Rmap @ np.cross(self.gyro, np.asarray(p.GNSS_TO_PLY_LEVER_BODY_M))
+        innovation = -float(normal @ (self.position[2:]+lever_velocity[:2]))
+        variance = (p.LATERAL_VELOCITY_STD_MPS**2+speed**2*yaw_var
+                    +float(np.linalg.norm(self.gyro))**2*lever_var)
+        S = float(H @ self.cov @ H+variance)
+        nis = innovation**2/S
+        accepted = nis <= p.CORRECTION_NIS_REJECT_BY_DOF[0]
+        inflation = max(1.,nis/p.CORRECTION_NIS_SOFT_BY_DOF[0])
+        effective = variance*inflation
+        K = self.cov @ H/float(H @ self.cov @ H+effective) if accepted else np.zeros(4)
+        delta = K*innovation
+        self.position += delta
+        A = np.eye(4)-np.outer(K,H)
+        self.cov = A @ self.cov @ A.T+np.outer(K,K)*effective
+        self.cov = (self.cov+self.cov.T)*.5
+        # This is a MODEL constraint, not another GNSS measurement/reference.
+        self.lateral_constraint_diagnostic = dict(accepted=bool(accepted),
+            reason='soft_body_lateral_velocity' if accepted else 'lateral_velocity_incompatible',
+            gnss_update_count=self.gnss_updates,innovation_mps=innovation,variance_m2ps2=variance,
+            innovation_nis=nis,gain=K.tolist(),state_delta=delta.tolist(),
+            yaw_variance_rad2=yaw_var,lever_velocity_map_mps=lever_velocity.tolist(),
+            model='unknown-slip/heading/extrinsic/lever budget; current-time vehicle velocity constraint; no heading update')
+
     def _gnss_heading(self):
         if not p.GNSS_HEADING_ENABLED:
             self.gnss_heading_pending.clear();return
@@ -133,6 +265,14 @@ class CausalSensorPrior:
             gnss_yaw=float(Rotation.from_quat(q).as_euler('xyz')[2])
             if self.last_gnss_heading_yaw is not None and abs(wrap(gnss_yaw-self.last_gnss_heading_yaw)) <= 1e-6:
                 decision['reason']='held_gnss_orientation_already_used';continue
+            if self.last_gnss_heading_value is None:
+                self.last_gnss_heading_change_ns = stamp
+                self.last_gnss_heading_value = gnss_yaw
+            elif abs(wrap(gnss_yaw-self.last_gnss_heading_value)) > 1e-6:
+                self.previous_gnss_heading_change_ns = self.last_gnss_heading_change_ns
+                self.last_gnss_heading_change_ns = stamp
+                self.last_gnss_heading_value = gnss_yaw
+            interval_start = self.previous_gnss_heading_change_ns
             observation=wrap(gnss_yaw-imu_yaw)
             decision.update(gnss_yaw_rad=gnss_yaw,imu_yaw_rad=wrap(imu_yaw),pair_difference_rad=observation)
             if np.linalg.norm(self.gyro) >= np.deg2rad(p.HEADING_MAX_TURN_RATE_DEGPS):
@@ -144,10 +284,25 @@ class CausalSensorPrior:
             process=np.deg2rad(p.HEADING_BIAS_RW_DEG_SQRT_S)**2+np.deg2rad(p.GNSS_HEADING_BIAS_RW_DEG_SQRT_S)**2
             variance=(np.deg2rad(p.GNSS_HEADING_OBSERVATION_STD_DEG)**2+
                       float(self.orientation_cov[2,2])+process*max(0.,(self.time-stamp)*1e-9))
+            # PoseStamped has ONE header for XYZ and a frequently held heading.
+            # No evidence licenses a fixed time shift. Model the ambiguity of
+            # the heading epoch with rotation observed between value changes.
+            freshness_variance = 0.
+            if interval_start is not None and not p.uses_v52_fusion():
+                available = [v for t,v in history if interval_start <= t <= stamp]
+                if available:
+                    spread = float(np.ptp(np.unwrap(available)))
+                    freshness_variance = spread**2
+                if interval_start < history[0][0]:
+                    freshness_variance += np.deg2rad(p.GNSS_HEADING_BIAS_STD_DEG)**2
+            variance += freshness_variance
             update=self._heading_update(observation,[1.,-1.],variance)
             self.gnss_heading_updates+=1
             self.last_gnss_heading_yaw=gnss_yaw
-            decision.update(accepted=True,reason='causal_gnss_imu_relative_heading',**update)
+            decision.update(accepted=True,reason='causal_gnss_imu_relative_heading',
+                orientation_previous_change_ns=interval_start,
+                heading_epoch_uncertainty_variance=freshness_variance,
+                physical_heading_delay_s=None, fixed_time_shift_applied=False, **update)
         self.gnss_heading_pending=remaining
 
     def advance(self, timestamp_ns):
@@ -159,6 +314,7 @@ class CausalSensorPrior:
                                         [np.eye(2)*dt**2/2, np.eye(2)*dt]])
         self.gyro_rotation_since_frame += float(np.linalg.norm(self.gyro))*dt
         self.position = F @ self.position
+        self.gnss_reference_shift = F @ self.gnss_reference_shift
         self.cov = F @ self.cov @ F.T+Q
         # Predict at EVERY delivery time, including intervals with no course.
         self.heading_covariance += np.diag(np.deg2rad([
@@ -201,6 +357,22 @@ class CausalSensorPrior:
         std = max(np.deg2rad(p.HEADING_STD_FLOOR_DEG), scatter/max(np.sqrt(sxx)*speed, 1e-12))
         offset = wrap(np.arctan2(fit[1, 1], fit[1, 0])-float(np.average(heading, weights=weights)))
         turn = np.gradient(heading, t)
+        if p.v510_heading_enabled() and len(t) >= 2*p.HEADING_MIN_SAMPLES:
+            # An initial stop+acceleration window is not one constant course.
+            # Require both disjoint halves to carry observable agreeing directions.
+            estimates = []
+            for ids in np.array_split(np.arange(len(t)), 2):
+                tt = t[ids]-np.mean(t[ids]); XX = np.c_[np.ones(len(ids)), tt]
+                slope = np.linalg.lstsq(XX, xy[ids], rcond=None)[0][1]
+                ss = float(np.linalg.norm(slope)); sxx_half = float(tt @ tt)
+                se = max(np.deg2rad(p.HEADING_STD_FLOOR_DEG), p.GNSS_STD_M/max(ss*np.sqrt(sxx_half), 1e-12))
+                estimates.append((float(np.arctan2(slope[1], slope[0])), se, ss))
+            agreement = wrap(estimates[0][0]-estimates[1][0])**2/(estimates[0][1]**2+estimates[1][1]**2)
+            row['disjoint_half_course'] = [dict(yaw_rad=a, std_rad=b, speed_mps=c) for a,b,c in estimates]
+            row['half_course_nis'] = agreement
+            if max(e[1] for e in estimates) > np.deg2rad(p.HEADING_MAX_COURSE_STD_DEG) or agreement > p.CORRECTION_NIS_REJECT_BY_DOF[0]:
+                row.update(reason='nonuniform_or_unobservable_course_window', speed_mps=speed, std_deg=float(np.degrees(std)))
+                return
         row.update(speed_mps=speed, displacement_fit_m=speed*float(t[-1]),
                    observation_deg=float(np.degrees(offset)), std_deg=float(np.degrees(std)))
         if (np.max(np.abs(turn)) >= np.deg2rad(p.HEADING_MAX_TURN_RATE_DEGPS)
@@ -231,6 +403,23 @@ class CausalSensorPrior:
         self.block_records.append(row.copy())
         self.block = []  # accepted course samples are NEVER reused as new independent data
 
+    def exclude_image_stationary_course(self, start_ns, end_ns):
+        """Past image/GNSS-confirmed rest is not a heading displacement baseline.
+
+        Keep ALL GNSS fixes in the position filter. Only remove unused course
+        samples inside this observed interval; never revise an accepted bias
+        or an already-emitted pose. New moving samples build a fresh window.
+        """
+        if (type(start_ns) is not int or type(end_ns) is not int
+                or start_ns >= end_ns or end_ns != self.time):
+            raise ValueError('Stationary course interval must end at current state time')
+        before = len(self.block)
+        self.block = [r for r in self.block if not start_ns <= int(r['timestamp_ns']) <= end_ns]
+        self.course_pending = bool(self.block)
+        return dict(start_timestamp_ns=start_ns, end_timestamp_ns=end_ns,
+            removed_unused_samples=before-len(self.block), remaining_unused_samples=len(self.block),
+            policy='image AND GNSS accepted zero velocity; exclude only unused course samples; GNSS XY unchanged')
+
     def event(self, row, *, preframe=False):
         stamp = int(row['timestamp_ns'])
         if not preframe:
@@ -250,6 +439,7 @@ class CausalSensorPrior:
                 self.imu_history.popleft()
             return None
         if preframe:
+            self.gnss_reference_shift[:2] += np.asarray(row['xy'])-self.position[:2]
             self.position[:2] = row['xy']; self.height = float(row['z'])
             self.cov[:2, :2] = np.eye(2)*p.GNSS_STD_M**2
             self.cov[:2, 2:] = self.cov[2:, :2] = 0.
@@ -263,11 +453,16 @@ class CausalSensorPrior:
             inflation = max(1., md/p.HEADING_ROBUST_GATE_SIGMA**2)
             R *= inflation
             K = np.linalg.solve(H @ self.cov @ H.T+R, H @ self.cov).T
-            self.position += K @ r
+            increment = K @ r
+            self.position += increment
+            self.gnss_reference_shift += increment
             B = np.eye(4)-K @ H
             self.cov = B @ self.cov @ B.T+K @ R @ K.T
             self.height = float(row['z'])
-            decision = dict(accepted=True, reason='forward_gnss_kf', mahalanobis=md, inflation=inflation)
+            decision = dict(accepted=True, reason='forward_gnss_kf', mahalanobis=md, inflation=inflation,
+                            position_velocity_reference_shift=increment.tolist())
+        self.last_gnss_position_ns = stamp
+        self.last_gnss_arrival_ns = row.get('arrival_ns')
         self.gnss_updates += 1
         self.block.append(row)
         max_ns = int(p.HEADING_MAX_WINDOW_S*1e9)
@@ -280,6 +475,10 @@ class CausalSensorPrior:
 
     def for_frame(self, camera_ns, previous_height=None):
         self.advance(camera_ns)
+        self.heading_update_budget_used = 0.
+        self.heading_information_updates = []
+        if not p.uses_v52_fusion() or p.v510_heading_enabled():
+            self._consume_heading_information()
         self._gnss_heading()
         self._try_course()
         orientation = self.orientation
@@ -289,6 +488,7 @@ class CausalSensorPrior:
             if dt < 0 or dt > p.IMU_MAX_AGE_S:
                 raise ValueError('IMU orientation is stale/future; refusing invented sensor prior')
             orientation = orientation*Rotation.from_rotvec(self.gyro*dt)
+        self._lateral_velocity_constraint(orientation)
         body = (Rotation.from_euler('z', self.bias)*orientation).as_matrix()
         extrinsic = Rotation.from_euler('xyz', p.IMU_TO_PLY_RPY_DEG, degrees=True).as_matrix()
         T = np.eye(4); T[:3, :3] = body @ extrinsic
@@ -313,12 +513,34 @@ class CausalSensorPrior:
         C[2, 2] = Jyaw @ (Ctheta+Cextrinsic) @ Jyaw
         bias_delta = wrap(self.bias-self.last_frame_bias)
         old_lever_same_orientation = Rotation.from_euler('z', -bias_delta).as_matrix() @ lever
+        position_reference_shift = self.gnss_reference_shift[:2].copy()
+        # A GNSS state innovation corrects CV prediction error (including real
+        # acceleration); it is NOT a change of extrinsic/calibration reference.
+        # Only the heading calibration and its lever-arm displacement rebase
+        # learned map memory. Keep the propagated XY innovation for diagnostics.
         calibration_delta = np.r_[(lever-old_lever_same_orientation)[:2], bias_delta]
+        self.gnss_reference_shift[:] = 0.
         self.last_frame_bias = self.bias
         physical_rotation = self.gyro_rotation_since_frame
         self.gyro_rotation_since_frame = 0.
-        return T, dict(gyro_rotation_since_frame_rad=physical_rotation,
+        self.emitted_frames += 1
+        return T, dict(heading_information_policy=('fractional_likelihood_budget_v510' if p.v510_heading_enabled() else 'baseline_or_historical'),
+            course_guard_enabled=bool(p.v510_heading_enabled()),
+            heading_update_budget_limit_deg=float(p.HEADING_MAX_UPDATE_DEG),
+            gyro_rotation_since_frame_rad=physical_rotation,
+            lateral_velocity_constraint=self.lateral_constraint_diagnostic,
+            heading_update_budget_used_deg=float(np.degrees(self.heading_update_budget_used)),
+            heading_information_updates=self.heading_information_updates.copy(),
+            pending_heading_information=len(self.pending_heading_information),
             calibration_delta_xy_yaw=calibration_delta.tolist(),
+            gnss_position_reference_shift_xy=position_reference_shift.tolist(),
+            gnss_state_innovation_xy=position_reference_shift.tolist(),
+            calibration_delta_policy='heading calibration and induced lever only; GNSS XY state innovation passes through',
+            pose_timestamp_ns=int(camera_ns),
+            latest_gnss_position_timestamp_ns=self.last_gnss_position_ns,
+            latest_gnss_arrival_ns=self.last_gnss_arrival_ns,
+            gnss_position_age_s=None if self.last_gnss_position_ns is None else (int(camera_ns)-self.last_gnss_position_ns)*1e-9,
+            gnss_position_prediction='GNSS update at measurement header, CV propagation to camera acquisition time',
             heading_bias_rad=self.bias, heading_bias_std_rad=float(np.sqrt(self.bias_var)),
             heading_initialized=bool(self.accepted_blocks or self.gnss_heading_updates),
             gnss_heading_updates=self.gnss_heading_updates,
@@ -335,5 +557,6 @@ class CausalSensorPrior:
                 extrinsic_rpy_deg=list(p.IMU_TO_PLY_RPY_DEG),
                 extrinsic_rotation_std_deg=list(p.EXTRINSIC_ROTATION_STD_DEG),
                 gnss_course_position_correlation='not explicitly estimated; conservative error floors',
+                gnss_heading_epoch=('unknown physical epoch; v5.2 observation variance, no fixed shift' if p.uses_v52_fusion() else 'unknown physical epoch; variance includes past rotation between value changes; no estimated fixed shift'),
                 heading_bias_model='independent initial IMU/GNSS biases; shared covariance after pair update; uncalibrated'),
             course_decision=self.last_course_decision, block_records=self.block_records.copy())

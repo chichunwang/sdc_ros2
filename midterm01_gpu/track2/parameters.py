@@ -3,7 +3,15 @@
 直接改此檔。GNSS noise 延續原模型，正式配準改用逐幀 covariance 與
 可觀測平面量測。GNSS 空 frame、IMU/PLY 外參及 lever 仍未獨立標定。
 """
-VERSION = 'track2_causal_dual_heading_bias_v5_2_perf1'
+VERSION = 'track2_v57_course_heading_budget_v5_10_perf2'
+# 正式入口固定採 v5.2 融合，只移植方向性記憶。另一值僅供歷史機制 regression。
+FUSION_PROFILE = 'v52_directional_memory'
+
+def uses_v52_fusion():
+    if FUSION_PROFILE not in ('v52_directional_memory', 'v55_experimental'):
+        raise ValueError(f'Unknown Track2 fusion profile: {FUSION_PROFILE}')
+    return FUSION_PROFILE == 'v52_directional_memory'
+
 BASE_COMMIT = '5839746ce1e4fe59ed4980ae07cb5ceb3f27ddeb'
 DATA_DIR = '/workspace/midterm01/data/Track2'
 EXPECTED_FRAMES = 3299
@@ -44,10 +52,32 @@ HEADING_MAX_SPAN_DEG = 4.0
 HEADING_STD_FLOOR_DEG = 0.5
 HEADING_MAX_OBSERVATION_DEG = 15.0
 HEADING_MAX_BIAS_DEG = 10.0
-HEADING_MAX_BIAS_RATE_DEGPS = 0.2
+HEADING_MAX_BIAS_RATE_DEGPS = 0.2  # legacy course-window rate; v5.5 uses a per-frame information budget
+HEADING_MAX_UPDATE_DEG = 0.5  # 發布後每幀 calibration 總額不超過 map yaw model floor；非 gyro 車身轉速限制
 HEADING_ROBUST_GATE_SIGMA = 3.0
 GNSS_EXPECTED_FRAME = ''
 IMU_MAX_AGE_S = 0.1
+# ===== v5.7：路面影像提供區間平均速度；不當絕對位置或航向 =====
+IMAGE_GROUND_SPEED_ENABLED = True
+IMAGE_SPEED_INTERVAL_S = 0.25  # 不重疊區間，約 GNSS 更新週期；量測只消費一次
+IMAGE_SPEED_MAX_INTERVAL_S = 0.6
+IMAGE_SPEED_DOWNSAMPLE = 2
+IMAGE_SPEED_MAX_FEATURES = 800
+IMAGE_SPEED_GROUND_FEATURE_SPACING_PX = 4  # 路面小角點；大於兩倍1.5px reprojection 預算
+IMAGE_SPEED_MIN_TRACKS = 40
+IMAGE_SPEED_MIN_GRID_CELLS = 8  # 8x6 格至少八格；防止只追同一物體
+IMAGE_SPEED_FB_PX = 1.0  # 下採樣影像像素
+IMAGE_SPEED_REPROJECTION_PX = 1.5
+IMAGE_SPEED_GROUND_DEPTH_M = (3.0, 35.0)
+IMAGE_SPEED_STD_MPS = 1.0  # 未標定的路面/PnP/高度模型 floor；非榜分擬合
+IMAGE_SPEED_STATIONARY_STD_MPS = 0.3
+IMAGE_SPEED_QUIET_MEDIAN_PX = 0.25
+IMAGE_SPEED_QUIET_P90_PX = 0.75
+IMAGE_SPEED_QUIET_GYRO_RADPS = 0.02
+IMAGE_SPEED_MAX_MPS = 50.0
+IMAGE_SPEED_MAX_ROTATION_RATE_RADPS = 2.0
+LATERAL_VELOCITY_CONSTRAINT_ENABLED = True
+LATERAL_VELOCITY_STD_MPS = 0.3  # 未標定低側滑模型；相當於 GNSS 0.3m / 1s 解析度
 # ===== 未標定的 frame／外參誤差預算（不是由外部 CSV 擬合） =====
 # GNSS position 視為 antenna；lever 是 antenna→PLY 原點，表達於 IMU body。
 # identity / zero 仍是假設。若有獨立標定，直接改均值與標準差。
@@ -69,6 +99,11 @@ SOURCE_GROUND_THRESHOLD_RAW = 0.015
 MAX_MAP_GROUND_MAD_M = 0.08
 MAX_SOURCE_GROUND_MAD_M = 0.10
 MIN_SOURCE_GROUND_POINTS = 100
+# 地面必須在兩個平面內方向都有支持；比例是形狀保護，並非道路寬度標定。
+GROUND_MIN_INPLANE_RATIO = 0.20
+GROUND_NORMAL_MODEL_STD_M = 0.10  # 同 MAX_SOURCE_GROUND_MAD_M 的模型厚度預算
+GROUND_NORMAL_FLOOR_DEG = 0.5
+GROUND_NORMAL_NIS_REJECT = 13.816  # 法向 tangent 2 維、99.9% Gaussian 參考界
 CAMERA_HEIGHT_BOUNDS_M = (0.5, 3.0)
 CAMERA_HEIGHT_STD_M = 0.15  # 初始 pose 高度雜訊工程先驗；不是精確標定
 CAMERA_HEIGHT_RW_M_SQRT_S = 0.01
@@ -101,9 +136,16 @@ PLANE_MIN_NEIGHBORS = 8
 PLANE_MIN_SECOND_EIGEN_M2 = METRIC_MAP_LEAF_M**2/4
 PLANE_MAX_THICKNESS_RATIO = 0.10
 PLANE_MIN_PLANARITY = 0.20
+LINE_FEATURES_ENABLED = True
+LINE_MIN_NEIGHBORS = 6
+LINE_MAX_SECOND_RATIO = 0.10  # 線狀鄰域：第二／最大 scatter eigenvalue
+LINE_MIN_VARIANCE_M2 = METRIC_MAP_LEAF_M**2/4
+LINE_MAX_VERTICAL_ANGLE_DEG = 15.0
+LINE_MAX_DIRECTION_DIFFERENCE_DEG = 15.0
 PLANE_MIN_SUPPORT_PER_VARIABLE = 2.0  # 每個可觀測 pose 模式＋scale nuisance，至少兩個 angular 等效支持；不按全影像平面比例否決
 MAX_PLANE_MEDIAN_M = FEATURE_STD_M
-MAP_MIN_RELATIVE_INFORMATION = 1.0  # whiten 後 data 資訊至少等於當幀 sensor prior
+MAP_MIN_RELATIVE_INFORMATION = 1.0  # 強方向診斷／記憶刷新門檻，不再丟棄較弱但正的資訊
+MAP_NUMERICAL_INFORMATION_RCOND = 1e-8  # 僅排除數值 null；弱方向用其大 covariance 降權
 MAP_STARTUP_YAW_SEED_SIGMAS = (-1.0, 0.0, 1.0)  # 僅首個有效 map update 前，以當幀 yaw σ 播種
 
 # ===== v4：地圖 XY/yaw 修正的前向記憶（不濾 raw scale、不回寫舊 pose） =====
@@ -115,11 +157,12 @@ CORRECTION_POSITION_RW_M_SQRT_M = 0.03
 CORRECTION_YAW_RW_DEG_SQRT_S = 0.20
 CORRECTION_YAW_RW_DEG_SQRT_M = 0.05
 CORRECTION_TURN_LEVER_M = 1.5  # 未標定 lever 對轉向的誤差預算，非標定值
-CORRECTION_HOLD_SECONDS = 0.5  # 短暫無有效配準：保留修正均值，variance 繼續增加
-CORRECTION_DECAY_SECONDS = 3.0  # 超過 hold 後 exp(-失敗時間/tau) 逐漸退回 sensor prior
+CORRECTION_HOLD_SECONDS = 0.5  # 各幾何方向分別計齡；短暫無觀測保留均值，variance 增加
+CORRECTION_DECAY_SECONDS = 3.0  # 該方向超過 hold 後 exp(-未觀測時間/tau) 退回 sensor prior
 # 檢查的是「修正量的差」，不是限制車輛一幀能行駛多遠。
 CORRECTION_POSITION_GATE_BASE_M = 0.35
 CORRECTION_POSITION_RATE_MPS = 0.5  # 同時限制每幀實際 correction 更新，避免重獲配準時延後突跳
+CORRECTION_LATERAL_RATE_MPS = 0.2  # 側向偏差修正的工程速率；不隨前進距離放寬
 CORRECTION_SPEED_FRACTION = 0.10  # 容許未建模誤差為行駛距離的一部分
 CORRECTION_YAW_GATE_BASE_DEG = 0.75
 CORRECTION_YAW_RATE_DEGPS = 0.5
@@ -130,3 +173,17 @@ CORRECTION_NIS_REJECT = 16.266  # 99.9% 參考界，與物理 innovation gate �
 # 部分可觀測時的 1／2／3 自由度；95% soft、99.9% hard，非校準後的可靠度保證。
 CORRECTION_NIS_SOFT_BY_DOF = (3.841, 5.991, 7.815)
 CORRECTION_NIS_REJECT_BY_DOF = (10.828, 13.816, 16.266)
+
+# v5.6 沿用 v5.2 的 MAP_MIN_RELATIVE_INFORMATION=1、hold=0.5s、decay=3s。
+# 以下歷史 v5.4/v5.5 參數在正式 v5.6 profile 不啟用：ground normal fusion、
+# weak modes、line features、fractional heading、lateral velocity/directional gain。
+
+# ===== v5.10：只在 v5.7 上移植 course 檢查與航向資訊預算 =====
+V510_ENABLED = True  # False 僅供生成資料核對 v5.7 原行為
+BASELINE_RUN_ID = 'track02_full_2611031204_0002'
+OUTPUT_REFERENCE = 'camera_ply'
+REFERENCE_CONTRACT_STATUS = 'official scoring reference point not specified; preserve camera PLY pose'
+EXTRINSIC_CALIBRATION_STATUS = 'GNSS/IMU to camera uncalibrated; identity/zero means with declared covariance'
+
+def v510_heading_enabled():
+    return V510_ENABLED and uses_v52_fusion()
