@@ -1,8 +1,9 @@
 """Causal road-texture speed, never an absolute map pose or heading.
 
 Each disjoint image interval contributes at most one observation. Static flow
-can support zero velocity; moving speed needs a past feature-validated ground
-scale and visible ground support. Cloud rasterization stays on CUDA; sparse
+can support zero velocity; v5.13 metric depth uses a trusted past height/ground model independently of
+map-pose acceptance; full-image relative fits also observe lateral velocity
+and yaw change. Cloud rasterization stays on CUDA; sparse
 image tracking/PnP and small filters use CPU. No reference trajectory is read.
 """
 from pathlib import Path
@@ -13,6 +14,19 @@ from scipy.spatial.transform import Rotation
 from track3.io import sha256
 from track3.visual_prior import relative_pose_from_pnp
 from . import parameters as p
+
+# 原有 LK 視窗；路面深度假設至少需要這個 finest-level patch 的支持。
+LK_WINDOW = (21, 21)
+
+
+def road_patch_mask(mask):
+    """Necessary finest LK patch support; mask is not semantic ground truth.
+
+    A ground-labelled centre beside a car/curb can track that object's patch.
+    Coarser pyramid support remains an approximation; no new depth/inlier gate.
+    """
+    return cv2.erode(mask, np.ones(LK_WINDOW, np.uint8),
+                     borderType=cv2.BORDER_CONSTANT, borderValue=0)
 
 
 def ground_points(pixels, K, normal, height):
@@ -33,7 +47,7 @@ def track_images(before, after, mask, *, min_distance=8):
         qualityLevel=.01, minDistance=min_distance, mask=mask)
     if points is None:
         return np.empty((0, 2)), np.empty((0, 2))
-    lk = dict(winSize=(21, 21), maxLevel=3,
+    lk = dict(winSize=LK_WINDOW, maxLevel=3,
         criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, .01))
     end, status, _ = cv2.calcOpticalFlowPyrLK(before, after, points, None, **lk)
     if end is None:
@@ -152,8 +166,11 @@ class CausalGroundSpeed:
         self.mask = camera.mask[::factor, ::factor].copy()
         self.anchor = None; self.current = None; self.gyro_angle = 0.
         self.last_stamp = None; self.last_arrival = None
+        self.gyro_R=np.eye(3);self.interval_sequence=0;self.interval_produced=False
+        self.gyro_std_bound=0.
+        self.anchor_diagnostic=None
 
-    def observe(self, arrival_ns, camera_ns, gyro_rotation_rad):
+    def observe(self, arrival_ns, camera_ns, gyro_rotation_rad, *, rotation_previous_current=None,gyro_std_bound_rad=0.):
         if (type(arrival_ns) is not int or type(camera_ns) is not int or camera_ns > arrival_ns
                 or (self.last_stamp is not None and camera_ns <= self.last_stamp)
                 or (self.last_arrival is not None and arrival_ns <= self.last_arrival)):
@@ -170,6 +187,14 @@ class CausalGroundSpeed:
         gray = cv2.remap(raw, *self.maps, cv2.INTER_LINEAR)
         self.current = dict(stamp=camera_ns, arrival_ns=arrival_ns, gray=gray, path=str(path), sha256=sha256(path))
         self.gyro_angle += gyro_rotation_rad
+        if not np.isfinite(gyro_std_bound_rad) or gyro_std_bound_rad<0:raise ValueError('Invalid gyro uncertainty bound')
+        self.gyro_std_bound+=gyro_std_bound_rad
+        if rotation_previous_current is not None:
+            rotation_previous_current=np.asarray(rotation_previous_current,dtype=float)
+            if rotation_previous_current.shape!=(3,3) or not np.allclose(rotation_previous_current.T@rotation_previous_current,np.eye(3),atol=1e-8):
+                raise ValueError('Invalid causal gyro rotation matrix')
+            self.gyro_R=self.gyro_R@rotation_previous_current
+        self.interval_produced=False
         diag = dict(accepted=False, reason='awaiting_keyframe', current_image=str(path),
                     current_image_sha256=self.current['sha256'], timestamp_ns=camera_ns, arrival_ns=arrival_ns)
         if self.anchor is None:
@@ -183,6 +208,7 @@ class CausalGroundSpeed:
             return dict(diag, reason='nonoverlapping_interval_pending')
         if dt > p.IMAGE_SPEED_MAX_INTERVAL_S:
             return dict(diag, reason='image_interval_too_long')
+        self.interval_sequence+=1
         # Distributed full-image tracks permit a zero-motion observation even
         # before a metric ground anchor is available. Spatial support reduces
         # single-object failures; it does not prove a scene is static. The
@@ -196,12 +222,38 @@ class CausalGroundSpeed:
             diag.update(flow_median_px=median, flow_p90_px=p90)
             if (median <= p.IMAGE_SPEED_QUIET_MEDIAN_PX and p90 <= p.IMAGE_SPEED_QUIET_P90_PX
                     and self.gyro_angle/dt <= p.IMAGE_SPEED_QUIET_GYRO_RADPS):
+                self.interval_produced=True
                 return dict(diag, accepted=True, reason='distributed_image_and_gyro_stationary', kind='stationary',
                     variance_m2ps2=p.IMAGE_SPEED_STATIONARY_STD_MPS**2)
+        if p.v513_enabled() and (p.IMAGE_RELATIVE_TRANSLATION_ENABLED or p.IMAGE_RELATIVE_YAW_ENABLED):
+            relative=self._relative_observation(a,b,diag,dt,gray.shape,rotation_previous_current is not None)
+            if not p.v514_enabled() or relative.get('accepted') or self.anchor.get('ground') is None:
+                return relative
+            # The PLY depth fit and road-plane fit are alternative models of
+            # ONE image interval, never independent observations. A failed
+            # relative fit must not suppress the existing road-speed channel.
+            fallback=self._ground_observation(gray,diag,dt)
+            fallback.update(solver_comparison=relative.get('solver_comparison',{}),
+                relative_channel='ground_speed_fallback',image_interval_model='road_plane_fallback',
+                relative_attempt={k:relative.get(k) for k in ('reason','kind','inliers','depth_correspondences')},
+                candidate_policy='relative fit first; road-plane speed only if relative rejected; one observation')
+            self.interval_produced=bool(fallback.get('accepted'))
+            return fallback
         if self.anchor.get('ground') is None:
             return dict(diag, reason='no_past_validated_ground_scale')
+        return self._ground_observation(gray,diag,dt)
+
+    def _ground_observation(self,gray,diag,dt):
         ground = self.anchor['ground']
-        a, b = track_images(self.anchor['gray'], gray, ground['mask'],
+        mask = ground['mask']
+        patch_diagnostic = None
+        if p.v5163_enabled():
+            mask = road_patch_mask(mask)
+            patch_diagnostic = dict(window_px=list(LK_WINDOW),
+                source_mask_pixels=int(np.count_nonzero(ground['mask'])),
+                supported_mask_pixels=int(np.count_nonzero(mask)),
+                policy='entire finest LK window inside past road mask; coarse pyramid/semantics not guaranteed')
+        a, b = track_images(self.anchor['gray'], gray, mask,
                             min_distance=p.IMAGE_SPEED_GROUND_FEATURE_SPACING_PX)
         measured = ground_speed(a, b, self.K, ground['normal'], ground['height'],
                                 ground['height_variance'], dt, gray.shape)
@@ -213,13 +265,43 @@ class CausalGroundSpeed:
             if measured['rotation_rate_radps']*dt > allowance:
                 measured.update(accepted=False, reason='visual_rotation_exceeds_gyro_budget')
         measured.update(height_reference_m=ground['height'], height_reference_variance_m2=ground['height_variance'])
+        if patch_diagnostic is not None:
+            measured['road_patch_support'] = patch_diagnostic
         return dict(diag, **measured)
 
-    def store(self, raw, scale, registration):
+    def store(self, raw, scale, registration, *, reference_rotation=None):
         """Store only this emitted frame, without any look-ahead or old edits."""
         if self.current is None:
             raise RuntimeError('Store requires a current image')
         if not self.refresh:
+            if p.v513_enabled() and self.anchor_diagnostic is not None:
+                self.anchor_diagnostic=dict(self.anchor_diagnostic,store_attempted=False,
+                    current_image_timestamp_ns=self.current['stamp'])
+            return
+        if p.v513_enabled() and p.IMAGE_ANCHOR_MEMORY_ENABLED:
+            from .image_anchor import metric_reference
+            reference=metric_reference(registration)
+            ground=None;depth=None
+            if reference['accepted']:
+                ground=dict(mask=self._visible_ground_mask(raw,reference['normal'],reference['offset_raw'],reference['threshold_raw']),
+                    normal=np.asarray(reference['normal']),height=reference['height_m'],height_variance=reference['height_variance_m2'],
+                    normal_variance_rad2=reference['ground_normal_model_variance_rad2'],mad_raw=reference['ground_mad_raw'])
+                depth=self._visible_depth(raw,reference['scale'])
+            # Retrying a longer interval is allowed only if the prior attempt
+            # produced NO observation. An already used interval is never reused.
+            retain=(not reference['accepted'] and self.anchor is not None
+                and self.anchor.get('depth') is not None and not self.interval_produced
+                and (self.current['stamp']-self.anchor['stamp'])*1e-9<p.IMAGE_SPEED_MAX_INTERVAL_S)
+            active_reference=self.anchor['metric_reference'] if retain else reference
+            self.anchor_diagnostic=dict(active_reference,store_attempted=True,
+                current_reference=reference,anchor_retained=bool(retain),
+                anchor_available=bool(active_reference['accepted'] and (retain or depth is not None)),
+                current_image_timestamp_ns=self.current['stamp'],
+                image_timestamp_ns=self.anchor['stamp'] if retain else self.current['stamp'])
+            if retain:return
+            self.anchor=dict(self.current,ground=ground,depth=depth,metric_reference=reference,
+                reference_rotation=None if reference_rotation is None else np.asarray(reference_rotation).copy())
+            self.gyro_angle=0.;self.gyro_R=np.eye(3);self.gyro_std_bound=0.
             return
         ground = None; planes = registration.get('planes')
         if registration.get('scale_validated') and planes is not None:
@@ -232,7 +314,62 @@ class CausalGroundSpeed:
                     height=float(scale*measured['offset']),
                     height_variance=float(registration['height_variance_after_m2']+p.HEIGHT_OBSERVATION_FLOOR_M**2))
         self.anchor = dict(self.current, ground=ground)
+        if p.v513_enabled() and ground is not None:
+            measured=planes['source_ground'];ds=float(measured['offset'])
+            self.anchor.update(depth=self._visible_depth(raw,scale),
+                metric_reference=dict(accepted=True,reason='legacy_validated_scale',
+                    scale_log_variance=float(ground['height_variance']/ground['height']**2+(measured.get('mad',0.)/ds)**2)),
+                reference_rotation=None if reference_rotation is None else np.asarray(reference_rotation).copy())
         self.gyro_angle = 0.
+        self.gyro_R=np.eye(3)
+        self.gyro_std_bound=0.
+
+    def _visible_depth(self,raw,scale):
+        raw=cp.asarray(raw,dtype=cp.float64);h,w=self.mask.shape
+        good=cp.isfinite(raw).all(axis=1)&(raw[:,0]>0)
+        safe=cp.where(good,raw[:,0],1.)
+        uv=cp.stack([self.K[0,2]-self.K[0,0]*raw[:,1]/safe,self.K[1,2]-self.K[1,1]*raw[:,2]/safe],axis=1)
+        pixels=cp.rint(uv).astype(cp.int64);metric_range=cp.linalg.norm(raw,axis=1)*scale
+        good&=(pixels[:,0]>=0)&(pixels[:,0]<w)&(pixels[:,1]>=0)&(pixels[:,1]<h)
+        good&=(metric_range>=p.IMAGE_SPEED_GROUND_DEPTH_M[0])&(metric_range<=p.FEATURE_MAX_RANGE_M)
+        raw=raw[good];uv=uv[good];pixels=pixels[good]
+        ids=pixels[:,1]*w+pixels[:,0];nearest=cp.full(h*w,cp.inf)
+        cp.minimum.at(nearest,ids,raw[:,0]);visible=raw[:,0]<=nearest[ids]+1e-10
+        return dict(points=raw[visible]*scale,pixels=uv[visible])
+
+    def _relative_observation(self,before,after,diag,dt,shape,has_gyro):
+        from .relative_geometry import compare_relative
+        from track3.search import closest_pixels
+        if self.anchor.get('depth') is None:
+            return dict(diag,reason='no_trusted_metric_depth_anchor',anchor_model=self.anchor.get('metric_reference'))
+        if self.anchor.get('reference_rotation') is None:
+            return dict(diag,reason='missing_anchor_reference_rotation')
+        depth=self.anchor['depth']
+        if not len(before) or not len(depth['points']):return dict(diag,reason='insufficient_background_depth_tracks')
+        ids,d2=closest_pixels(before,depth['pixels'])
+        keep=cp.asnumpy(d2)<=p.IMAGE_SPEED_REPROJECTION_PX**2
+        objects=cp.asnumpy(depth['points'][ids[cp.asarray(keep)]])
+        association_error=cp.asnumpy(d2)[keep]
+        if p.v514_enabled():
+            from .relative_geometry import depth_on_feature_rays
+            objects=depth_on_feature_rays(objects,before[keep],self.K)
+        pixels=after[keep]
+        reference=self.anchor['metric_reference']
+        sigma=max(self.gyro_std_bound**2,(np.linalg.norm(np.deg2rad(p.IMU_GYRO_UNKNOWN_STD_DEGPS))*dt)**2)
+        sigma+=float(np.sum(np.deg2rad(p.EXTRINSIC_ROTATION_STD_DEG)**2))*self.gyro_angle**2
+        compared=compare_relative(objects,pixels,self.K,dt,shape,self.gyro_R if has_gyro else None,sigma,reference['scale_log_variance'])
+        both=p.IMAGE_RELATIVE_TRANSLATION_ENABLED and p.IMAGE_RELATIVE_YAW_ENABLED
+        channel=('relative_yaw' if self.interval_sequence%2==0 else 'vector_velocity') if both else ('vector_velocity' if p.IMAGE_RELATIVE_TRANSLATION_ENABLED else 'relative_yaw')
+        if p.IMAGE_RELATIVE_SOLVER not in ('gyro_translation','pnp'):raise ValueError('Unknown relative-motion solver')
+        selected=compared['pnp' if channel=='relative_yaw' else p.IMAGE_RELATIVE_SOLVER]
+        self.interval_produced=bool(selected['accepted'])
+        result=dict(diag,**selected,kind=channel,interval_s=dt,depth_correspondences=len(objects),
+            solver_comparison=compared,anchor_reference_rotation=self.anchor['reference_rotation'].tolist(),
+            anchor_model=reference,measurement_scope='one channel per disjoint accepted image interval; relative motion only')
+        if p.v514_enabled():
+            result.update(depth_association_rms_px=float(np.sqrt(np.mean(association_error))) if len(association_error) else None,
+                depth_association_model='nearest PLY forward depth on exact anchor feature ray; depth errors retain model floor')
+        return result
 
     def _visible_ground_mask(self, raw, normal, offset, threshold):
         raw = cp.asarray(raw, dtype=cp.float64)

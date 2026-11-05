@@ -144,7 +144,7 @@ def test_scale_translation_gauge_is_not_false_pose_information():
     assert d['scale_information'] < 1e-8
 
 
-def test_geometry_analysis_respects_covariance_and_units_and_slope_scale_coupling():
+def test_geometry_analysis_respects_covariance_and_units_and_slope_scale_coupling(monkeypatch):
     information = np.diag([100., 50., 2000., 500.])
     C = np.array([[.25, .03, .002], [.03, .16, -.001], [.002, -.001, .03]])
     J = np.array([[.99, -.1, 0., .06], [.1, .99, 0., -.04], [0., 0., .98, 0.]])
@@ -158,9 +158,12 @@ def test_geometry_analysis_respects_covariance_and_units_and_slope_scale_couplin
     _, _, c = geometry(information, centimetres @ J, centimetres @ C @ centimetres.T)
     np.testing.assert_allclose(d['normalized_eigenvalues'], c['normalized_eigenvalues'], rtol=1e-10)
     _, _, weak = geometry(np.diag([1., 1., 1., 100.]), C=np.diag([.01, .01, .01]))
-    # Production v5.6 restores v5.2's information >= 1 threshold.
-    # Weak-positive fusion remains covered under the explicit historical profile.
+    # Recovered production preserves v5.10's information >= 1 threshold.
     assert weak['rank'] == 0 and weak['strong_rank'] == 0
+    # Keep the failed v5.15 mechanism independently reproducible.
+    monkeypatch.setattr(p, 'V515_ENABLED', True)
+    _, _, historical_weak = geometry(np.diag([1., 1., 1., 100.]), C=np.diag([.01, .01, .01]))
+    assert historical_weak['rank'] == 3 and historical_weak['strong_rank'] == 0
     # Positive weak modes retain large uncertainty; they are not exact nulls.
     assert np.linalg.eigvalsh(R).min() > 0 and H.shape == (3, 3)
 

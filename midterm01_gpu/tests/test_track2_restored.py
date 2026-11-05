@@ -196,7 +196,13 @@ def test_no_overlap_resets_correction_to_current_sensor_prior(cuda):
     np.testing.assert_array_equal(reg.previous_correction, np.zeros(4))
 
 
-def test_generated_output_runner(tmp_path, monkeypatch, cuda):
+@pytest.mark.parametrize('turn_enabled',[False,True])
+@pytest.mark.parametrize('surface_enabled',[False,True])
+@pytest.mark.parametrize('height_enabled',[False,True])
+def test_generated_output_runner(tmp_path, monkeypatch, cuda, turn_enabled, surface_enabled, height_enabled):
+    monkeypatch.setattr(p, 'V5162_ENABLED', turn_enabled)
+    monkeypatch.setattr(p, 'V5161_ENABLED', surface_enabled)
+    monkeypatch.setattr(p, 'V5165_ENABLED', height_enabled)
     # This legacy fixture contains no images; the image-enabled runner has a
     # separate generated end-to-end fixture.
     monkeypatch.setattr(p, 'IMAGE_GROUND_SPEED_ENABLED', False)
@@ -252,10 +258,19 @@ def test_generated_output_runner(tmp_path, monkeypatch, cuda):
     assert not (run/'analysis').exists()
     scope = json.loads((run/'algorithm_scope.json').read_text())
     assert scope['baseline_run'] == 'track02_full_2611031941'
-    assert scope['heading_enabled'] and len(scope['excluded_v59']) == 4
+    assert scope['heading_enabled'] and scope['v5162_enabled'] == turn_enabled
+    assert scope['v5163_enabled'] == turn_enabled
+    assert scope['v5161_enabled'] == surface_enabled
+    data_height = height_enabled and turn_enabled and not surface_enabled
+    assert scope['v5165_enabled'] == data_height
+    if data_height:
+        assert scope['height_filter_model'] == 'data_only_local_likelihood_once'
+        assert 'original v5.10 map association' in scope['numerical_changes'][0]
+    assert scope['excluded_v59'] == ['adaptive feature ranges']+([] if data_height else ['data-only height update'])+([] if turn_enabled else ['stationary gyro bias learning'])
     obs = [json.loads(line) for line in (run/'observations.jsonl').read_text().splitlines()]
     traces = [json.loads(line) for line in (run/'pose_trace.jsonl').read_text().splitlines()]
     assert display_stamps == [o['camera_timestamp_ns'] for o in obs]
+    assert all(('motion_prediction' in o['sensor_prior']) == turn_enabled for o in obs)
     from track2.correction_filter import pose_correction
     for o, trace in zip(obs, traces):
         assert trace['camera_timestamp_ns'] == o['camera_timestamp_ns'] == o['timestamp_ns']-7_000_000
@@ -297,25 +312,63 @@ def test_full_analysis_read_only_and_contract_failures(tmp_path):
         for i in range(n):
             memory = dict(gain_scale_xy=.9, gain_scale_yaw=.5, nis_soft_threshold=5.991, nis_reject_threshold=13.816, correction=[.1, .2, .01], covariance=np.diag([.01, .01, .0001]).tolist(),
                           innovation_nis=1., accepted=True, seconds_since_update=0.,
-                          proposal_validation=dict(accepted=True,baseline_data_cost=1.,proposal_data_cost=.9))
+                          proposal_validation=dict(accepted=True,baseline_data_cost=1.,proposal_data_cost=.9,
+                              baseline_common_feature_cost=.2,proposal_common_feature_cost=.19))
             f.write(json.dumps(dict(state=[i*.01, 0., 0., .001, .2], scale=8.,
                                    sensor_prior=dict(pose_covariance_xy_yaw=np.diag([.36,.36,.03]).tolist(),
+                                       motion_prediction=dict(model='arrived_gyro_coordinated_turn',
+                                           gyro_bias_mean_radps=[0., 0., -.005], gyro_bias_covariance_rad2ps2=(np.eye(3)*1e-6).tolist(),
+                                           rest_bias_updates=i//10, signed_turn_since_frame_rad=.0001, integrated_turn_rad=i*.0001),
+                                       position_information_policy='fractional_likelihood_budget_v5121',
+                                       gnss_state_innovation_xy=[.01,0.] if i%10==0 else [0.,0.],
+                                       position_information_updates=[dict(position_factor_id=i//10,information_fraction=1.)] if i%10==0 else [],
                                        heading_information_policy='fractional_likelihood_budget_v510',
                                        heading_update_budget_used_deg=.2 if i % 10 == 0 else 0.,
                                        heading_update_budget_limit_deg=.5,
                                        heading_information_updates=[dict(heading_factor_id=i//10, information_fraction=1.)] if i % 10 == 0 else []),
-                                   image_ground_speed=dict(kind='stationary' if i % 10 == 0 else 'speed',
-                                       speed_mps=.2, filter_accepted=i % 5 == 0, innovation_nis=.5),
-                                   registration=dict(correction_filter=memory, observability=dict(rank=2),
+                                   image_ground_speed=dict(kind='stationary' if i % 10 == 0 else 'relative_yaw' if i % 20 == 15 else 'vector_velocity',
+                                       speed_mps=.2, filter_accepted=i % 5 == 0, innovation_nis=.5,
+                                       reason='generated_consensus',
+                                       solver_comparison=dict(
+                                           pnp=dict(accepted=True, inliers=30, common_capped_pixel_cost=.8),
+                                           gyro_translation=dict(accepted=i % 2 == 0, inliers=25, common_capped_pixel_cost=None if i % 2 else .9)),
+                                       anchor_store=dict(accepted=i % 2 == 0, reason='generated_anchor',
+                                           anchor_retained=i % 2 == 1, height_variance_m2=None if i % 2 else .01),
+                                       relative_heading_update=dict(accepted=i % 20 == 15, innovation_rad=.01,
+                                           innovation_nis=.5, bias_step_rad=.001, absolute_yaw_observed=False)),
+                                   registration=dict(correction_filter=memory, observability=dict(rank=2,normalized_eigenvalues=[.1,2.,5.]),
+                                       surface_profile=dict(normal_effective_directions=1.5, dominant_normal_bin_fraction=.8,
+                                           normal_gram_eigenvalues=[.1,.2,1.], range_bands=[dict(min_m=0.,max_m=10.,matches=20,
+                                               signed_median_m=None if i % 2 else .03, abs_p90_m=.1)]),
+                                       stages=[dict(reason='generated_converged', iteration_trace=[dict(cost_before=1.,cost_after_fixed=.9,
+                                           data_cost_before=1.,data_cost_after_fixed=.9,association_change_fraction=None if i % 2 else .1,
+                                           step_xy_m=.01,step_yaw_rad=.001,step_logscale=.001,line_search_halvings=0,step_accepted=True)])],
+                                       map_likelihood=dict(likelihood_step_world=[.05,.02,.001]),
                                        candidate_selection=dict(startup=i<4,fully_refined=2 if i<4 else 1))))+'\n')
     paths = [x for x in run.iterdir() if x.is_file()]
     before = {f.name: sha256(f) for f in paths}
     analyze(run)
     assert before == {f.name: sha256(f) for f in paths}
-    for name in ('01_trajectory', '02_pose_changes', '03_registration_timing', '04_fusion_and_scale', '05_map_correction_memory', '06_observability_uncertainty', '07_image_ground_speed', '08_heading_information', '09_candidate_validation'):
+    for name in ('01_trajectory', '02_pose_changes', '03_registration_timing', '04_fusion_and_scale', '05_map_correction_memory', '06_observability_uncertainty', '07_image_ground_speed', '08_heading_information', '09_candidate_validation', '10_map_likelihood', '11_position_information', '12_image_relative', '13_geometry_diagnostics', '14_coordinated_turn'):
         for ext in ('png', 'pdf'): assert (run/'analysis'/f'{name}.{ext}').stat().st_size > 1000
+    turn_summary = json.loads((run/'analysis/coordinated_turn_summary.json').read_text())
+    assert turn_summary['diagnostic_frames'] == list(range(n))
+    assert turn_summary['final']['rest_bias_updates'] == (n-1)//10
     image_summary = json.loads((run/'analysis/image_speed_summary.json').read_text())
     assert image_summary['accepted_frames'] == list(range(0, n, 5))
+    assert image_summary['accepted_moving_intervals'] == len(range(5, n, 20))  # Relative yaw never counts as speed.
+    assert 15 not in image_summary['unused_estimate_frames']
+    relative_summary = json.loads((run/'analysis/image_relative_summary.json').read_text())
+    assert relative_summary['channels']['relative_yaw']['accepted_frames'] == list(range(15, n, 20))
+    assert relative_summary['channels']['vector_velocity']['reasons']['generated_consensus'] > 0
+    assert relative_summary['solvers']['pnp']['qualified_count'] == n
+    assert relative_summary['solvers']['gyro_translation']['qualified_count'] == len(range(0, n, 2))
+    assert relative_summary['anchor_retained_frames'] == list(range(1, n, 2))
+    assert not relative_summary['absolute_yaw_observed_frames']
+    geometry_summary = json.loads((run/'analysis/geometry_diagnostics_summary.json').read_text())
+    assert geometry_summary['surface_profile_frames'] == list(range(n))
+    assert geometry_summary['recorded_iterations'] == n
+    assert geometry_summary['stage_reasons'] == {'generated_converged': n}
     heading_summary = json.loads((run/'analysis/heading_information_summary.json').read_text())
     assert heading_summary['post_bootstrap_budget_exceedances'] == 0
     assert heading_summary['maximum_factor_fraction'] == 1.
@@ -323,10 +376,20 @@ def test_full_analysis_read_only_and_contract_failures(tmp_path):
     assert selection_summary['maximum_complete_solves']==2
     assert selection_summary['startup_frames']==[0,1,2,3]
     assert not selection_summary['proposal_reject_frames']
+    likelihood_summary=json.loads((run/'analysis/map_likelihood_summary.json').read_text())
+    assert likelihood_summary['data_likelihood_frames']==list(range(n))
+    assert not likelihood_summary['rematched_cost_reject_frames']
+    position_summary=json.loads((run/'analysis/position_information_summary.json').read_text())
+    assert position_summary['maximum_axis_factor_fraction']==1.
+    assert position_summary['expired_unused_axis_fraction']==0.
     # A partial same-source render can be retried without touching any pose.
     (run/'analysis'/'03_registration_timing.pdf').unlink()
+    (run/'analysis'/'12_image_relative.pdf').unlink()
+    (run/'analysis'/'13_geometry_diagnostics.png').unlink()
     analyze(run)
     assert (run/'analysis'/'03_registration_timing.pdf').is_file()
+    assert (run/'analysis'/'12_image_relative.pdf').stat().st_size > 1000
+    assert (run/'analysis'/'13_geometry_diagnostics.png').stat().st_size > 1000
     assert before == {f.name: sha256(f) for f in paths}
     (run/'analysis'/'user_note.txt').write_text('preserve user artifact')
     with pytest.raises(FileExistsError): analyze(run)
@@ -336,3 +399,9 @@ def test_full_analysis_read_only_and_contract_failures(tmp_path):
     values = (run/'result_2.csv').read_text().replace('0,0.000000000,0.0,0.0', '0,0.000000000,0.0,1.0', 1)
     (run/'result_2.csv').write_text(values)
     with pytest.raises(ValueError, match='yaw mismatch'): validate(run)
+
+
+@pytest.fixture(autouse=True)
+def isolate_pre_v513_model(monkeypatch):
+    from track2 import parameters as model_parameters
+    monkeypatch.setattr(model_parameters, 'V513_ENABLED', False)

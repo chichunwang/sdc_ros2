@@ -40,6 +40,15 @@ class CausalSensorPrior:
         self.orientation_stamp = None
         self.gyro = np.zeros(3)
         self.gyro_rotation_since_frame = 0.
+        self.gyro_matrix_since_frame=np.eye(3)
+        self.gyro_std_bound_since_frame=0.
+        self.visual_heading_anchor=None
+        self.gyro_motion_bias=None
+        if p.v5162_enabled():
+            from .coordinated_motion import StationaryGyroBias
+            self.gyro_motion_bias=StationaryGyroBias(np.deg2rad(p.IMU_GYRO_UNKNOWN_STD_DEGPS),
+                np.deg2rad(p.TURN_GYRO_REST_STD_DEGPS),np.deg2rad(p.TURN_GYRO_BIAS_RW_DEGPS_SQRT_S),
+                p.IMAGE_SPEED_MAX_INTERVAL_S+p.IMU_MAX_AGE_S,p.CORRECTION_NIS_SOFT,p.CORRECTION_NIS_REJECT)
         self.orientation_cov, self.orientation_cov_source = imu_covariance(
             None, np.deg2rad(p.IMU_ORIENTATION_UNKNOWN_STD_DEG))
         self.gyro_cov, self.gyro_cov_source = imu_covariance(
@@ -77,6 +86,11 @@ class CausalSensorPrior:
         self.heading_information_updates = []
         self.heading_factor_sequence = 0
         self.heading_update_budget_used = 0.
+        self.pending_position_information = []
+        self.position_factor_sequence = 0
+        self.position_information_updates = []
+        self.last_position_frame_ns = None
+        self.position_information_initialized = False
 
     @property
     def bias(self):
@@ -116,6 +130,7 @@ class CausalSensorPrior:
         A = np.eye(2)-np.outer(actual,H)
         self.heading_covariance = A @ before @ A.T+np.outer(actual,actual)*R
         self.heading_covariance = (self.heading_covariance+self.heading_covariance.T)*.5
+        self._condition_visual_anchor(A,float(actual[0]*innovation))
         return dict(innovation_rad=innovation,innovation_nis=float(nis),inflation=float(inflation),
             bias_gain=float(actual[0]),unconstrained_bias_gain=float(K[0]),
             bias_variance_before=float(before[0,0]),measurement_variance=R,
@@ -157,6 +172,7 @@ class CausalSensorPrior:
         A=np.eye(2)-np.outer(actual,H)
         self.heading_covariance=A@before@A.T+np.outer(actual,actual)*R
         self.heading_covariance=(self.heading_covariance+self.heading_covariance.T)*.5
+        self._condition_visual_anchor(A,float(actual[0]*innovation))
         factor['remaining']=max(0.,available-fraction)
         return dict(innovation_rad=innovation,innovation_nis=float(innovation**2/(s+base_R)),
             inflation=factor['inflation'],bias_gain=float(actual[0]),unconstrained_bias_gain=float(full[0]),
@@ -309,10 +325,22 @@ class CausalSensorPrior:
         if timestamp_ns < self.time:
             raise ValueError('Causal prior cannot move backward')
         dt = (int(timestamp_ns)-self.time)*1e-9
-        F = np.eye(4); F[:2, 2:] = np.eye(2)*dt
-        Q = p.GNSS_XY_ACCEL_PSD*np.block([[np.eye(2)*dt**3/3, np.eye(2)*dt**2/2],
-                                        [np.eye(2)*dt**2/2, np.eye(2)*dt]])
+        if self.gyro_motion_bias is None:
+            F = np.eye(4); F[:2, 2:] = np.eye(2)*dt
+            Q = p.GNSS_XY_ACCEL_PSD*np.block([[np.eye(2)*dt**3/3, np.eye(2)*dt**2/2],
+                                            [np.eye(2)*dt**2/2, np.eye(2)*dt]])
+        else:
+            from .coordinated_motion import transition,yaw_rate,rate_sensitivity
+            bias=self.gyro_motion_bias;bias.predict(dt)
+            rate,variance=yaw_rate(self.orientation,self.gyro-bias.mean,self.gyro_cov+bias.cov,self.orientation_cov)
+            F,Q=transition(dt,rate,p.GNSS_XY_ACCEL_PSD)
+            sensitivity=rate_sensitivity(self.position[2:],dt,rate)
+            Q+=np.outer(sensitivity,sensitivity)*variance
+            bias.integrated_turn+=rate*dt;bias.frame_turn+=rate*dt
         self.gyro_rotation_since_frame += float(np.linalg.norm(self.gyro))*dt
+        if p.v513_enabled():
+            self.gyro_matrix_since_frame=self.gyro_matrix_since_frame@Rotation.from_rotvec(self.gyro*dt).as_matrix()
+            self.gyro_std_bound_since_frame+=np.sqrt(max(0.,float(np.linalg.eigvalsh(self.gyro_cov).max())))*dt
         self.position = F @ self.position
         self.gnss_reference_shift = F @ self.gnss_reference_shift
         self.cov = F @ self.cov @ F.T+Q
@@ -420,6 +448,79 @@ class CausalSensorPrior:
             removed_unused_samples=before-len(self.block), remaining_unused_samples=len(self.block),
             policy='image AND GNSS accepted zero velocity; exclude only unused course samples; GNSS XY unchanged')
 
+    def _condition_visual_anchor(self,A,calibration_step=0.):
+        if self.visual_heading_anchor is not None:
+            anchor=self.visual_heading_anchor
+            anchor['cross']=A@anchor['cross']
+            # GNSS/course change the common calibration reference, not the
+            # camera's physical turn. Re-express the current measurement's
+            # reference only; no old output pose is touched.
+            anchor['bias']=wrap(anchor['bias']+calibration_step)
+            anchor['camera_rotation']=Rotation.from_euler('z',calibration_step).as_matrix()@anchor['camera_rotation']
+            anchor['calibration_rebase_rad']+=calibration_step
+
+    def capture_visual_anchor(self,timestamp_ns,camera_rotation):
+        if int(timestamp_ns)!=self.time:raise ValueError('Visual anchor must be current')
+        E=Rotation.from_euler('xyz',p.IMU_TO_PLY_RPY_DEG,degrees=True).as_matrix()
+        self.visual_heading_anchor=dict(timestamp_ns=int(timestamp_ns),bias=self.bias,
+            variance=float(self.heading_covariance[0,0]),cross=self.heading_covariance[:,0].copy(),
+            camera_rotation=np.asarray(camera_rotation).copy(),orientation_variance=float(self.orientation_cov[2,2]),
+            orientation_covariance_camera=E.T@self.orientation_cov@E,used=False,calibration_rebase_rad=0.)
+
+    def update_relative_heading(self,delta_bias,variance,keyframe_timestamp_ns):
+        """Schmidt anchor clone: observes b_now-b_anchor, not absolute yaw.
+
+        The anchor is a Schmidt nuisance during this measurement. Common
+        calibration reference changes re-express it separately, never a saved
+        pose. Current/anchor cross covariance follows every heading gain.
+        """
+        anchor=self.visual_heading_anchor
+        if anchor is None or anchor['timestamp_ns']!=keyframe_timestamp_ns or keyframe_timestamp_ns>=self.time:
+            raise ValueError('Relative yaw requires the matching past heading clone')
+        if anchor['used']:raise ValueError('Relative image interval already consumed')
+        if not np.isfinite([delta_bias,variance]).all() or variance<=0:raise ValueError('Invalid relative yaw likelihood')
+        anchor['used']=True
+        P=np.block([[self.heading_covariance,anchor['cross'][:,None]],
+                    [anchor['cross'][None,:],np.array([[anchor['variance']]])]])
+        H=np.array([1.,0.,-1.]);innovation=wrap(delta_bias-(self.bias-anchor['bias']))
+        S=float(H@P@H+variance);nis=innovation**2/S
+        allowance=max(0.,np.deg2rad(p.HEADING_MAX_UPDATE_DEG)-self.heading_update_budget_used)
+        d=dict(accepted=False,reason='visual_relative_heading_statistical_gate',innovation_rad=innovation,
+            innovation_nis=float(nis),anchor_timestamp_ns=keyframe_timestamp_ns,anchor_bias_rad=anchor['bias'],
+            joint_covariance_before=P.tolist(),observation_matrix=H.tolist(),absolute_yaw_observed=False)
+        if nis>p.CORRECTION_NIS_REJECT_BY_DOF[0]:return d
+        if allowance<=1e-15:return dict(d,reason='visual_relative_heading_budget_exhausted')
+        R=variance*max(1.,nis/p.CORRECTION_NIS_SOFT_BY_DOF[0]);S=float(H@P@H+R)
+        K=(P@H)[:2]/S;step=K*innovation
+        K*=min(1.,allowance/max(abs(step[0]),1e-30))
+        new_bias=np.clip(self.bias+K[0]*innovation,-np.deg2rad(p.HEADING_MAX_BIAS_DEG),np.deg2rad(p.HEADING_MAX_BIAS_DEG))
+        if abs(innovation)>1e-15:K[0]=(new_bias-self.bias)/innovation
+        gain=np.r_[K,0.];A=np.eye(3)-np.outer(gain,H)
+        after=A@P@A.T+np.outer(gain,gain)*R;after=(after+after.T)*.5
+        self.heading_bias+=K*innovation;self.heading_bias[:]=[wrap(x) for x in self.heading_bias]
+        self.heading_covariance=after[:2,:2];anchor['cross']=after[:2,2]
+        self.heading_update_budget_used+=abs(K[0]*innovation)
+        return dict(d,accepted=True,reason='visual_relative_heading_schmidt_update',
+            kalman_gain=gain.tolist(),effective_measurement_variance=float(R),joint_covariance_after=after.tolist(),
+            bias_step_rad=float(K[0]*innovation),model='current bias difference with frozen causal anchor; common absolute yaw gauge retained')
+
+    def visual_pose_covariance(self,rotation,orientation_age):
+        extrinsic=Rotation.from_euler('xyz',p.IMU_TO_PLY_RPY_DEG,degrees=True).as_matrix()
+        body=rotation@extrinsic.T;lever=body@np.asarray(p.GNSS_TO_PLY_LEVER_BODY_M)
+        Ctheta=body@(self.orientation_cov+orientation_age**2*self.gyro_cov)@body.T;Ctheta[2,2]+=self.bias_var
+        f=rotation[:,0];horizontal=float(f[0]**2+f[1]**2)
+        if horizontal<1e-8:raise ValueError('Camera yaw undefined')
+        Jyaw=np.array([-f[2]*f[0]/horizontal,-f[2]*f[1]/horizontal,1.]);Jlever=-skew(lever)[:2]
+        Cextrinsic=body@np.diag(np.deg2rad(p.EXTRINSIC_ROTATION_STD_DEG)**2)@body.T
+        Clever=body@np.diag(np.asarray(p.LEVER_ARM_STD_BODY_M)**2)@body.T
+        C=np.zeros((3,3));C[:2,:2]=self.cov[:2,:2]+Clever[:2,:2]+Jlever@Ctheta@Jlever.T
+        C[:2,2]=Jlever@Ctheta@Jyaw;C[2,:2]=C[:2,2];C[2,2]=Jyaw@(Ctheta+Cextrinsic)@Jyaw
+        return C
+
+    def update_gyro_motion_bias(self,start_ns,end_ns):
+        if self.gyro_motion_bias is None:return dict(accepted=False,reason='disabled')
+        return self.gyro_motion_bias.update(start_ns,end_ns,self.time)
+
     def event(self, row, *, preframe=False):
         stamp = int(row['timestamp_ns'])
         if not preframe:
@@ -434,6 +535,8 @@ class CausalSensorPrior:
                 row.get('gyro_covariance'), np.deg2rad(p.IMU_GYRO_UNKNOWN_STD_DEGPS))
             yaw = float(self.orientation.as_euler('xyz')[2])
             self.imu_history.append((stamp, yaw))
+            if self.gyro_motion_bias is not None:
+                self.gyro_motion_bias.observe(stamp,self.gyro,self.time)
             keep_ns = int((p.HEADING_MAX_WINDOW_S+p.IMU_MAX_AGE_S+1.)*1e9)
             while len(self.imu_history) > 1 and self.imu_history[1][0] < stamp-keep_ns:
                 self.imu_history.popleft()
@@ -443,7 +546,33 @@ class CausalSensorPrior:
             self.position[:2] = row['xy']; self.height = float(row['z'])
             self.cov[:2, :2] = np.eye(2)*p.GNSS_STD_M**2
             self.cov[:2, 2:] = self.cov[2:, :2] = 0.
+            self.position_information_initialized = True
             decision = dict(accepted=True, reason='available_initial_gnss')
+        elif p.v5121_enabled() and p.GNSS_POSITION_INFORMATION_BUDGET:
+            # Freeze one original likelihood; no position jump at delivery.
+            H = np.c_[np.eye(2),np.zeros((2,2))]
+            innovation = np.asarray(row['xy'])-H@self.position
+            md = float(innovation@np.linalg.solve(H@self.cov@H.T+np.eye(2)*p.GNSS_STD_M**2,innovation))
+            inflation = max(1.,md/p.HEADING_ROBUST_GATE_SIGMA**2)
+            angle=float(self.orientation.as_euler('xyz')[2])+self.bias
+            axes=np.array([[np.cos(angle),np.sin(angle)],[-np.sin(angle),np.cos(angle)]])
+            # Isotropic XY R factors EXACTLY into two orthogonal 1D factors.
+            # Separating them keeps lateral tempering from starving forward
+            # velocity/acceleration information from the same delivered fix.
+            ids=[]
+            # During the initial handoff, one COMMON XY power preserves the
+            # original innovation direction instead of drawing forward-then-
+            # sideways steps. Tracking can use independent orthogonal powers.
+            directions=enumerate(axes) if self.position_information_initialized else [(None,None)]
+            for axis,direction in directions:
+                self.position_factor_sequence += 1
+                factor = dict(id=self.position_factor_sequence,axis=axis,
+                    direction=None if direction is None else direction.tolist(),timestamp_ns=stamp,
+                    xy=list(row['xy']),variance=p.GNSS_STD_M**2*inflation,remaining=1.)
+                self.pending_position_information.append(factor);ids.append(factor['id'])
+            decision = dict(accepted=True,reason='arrived_gnss_position_likelihood_queued',
+                position_factor_ids=ids,mahalanobis=md,inflation=inflation,
+                position_velocity_reference_shift=[0.,0.,0.,0.])
         else:
             H = np.column_stack([np.eye(2), np.zeros((2, 2))])
             R = np.eye(2)*p.GNSS_STD_M**2
@@ -473,6 +602,54 @@ class CausalSensorPrior:
             self.gnss_heading_pending.append(row)
         return decision
 
+    def _consume_position_information(self, orientation):
+        from .gnss_budget import fractional_position_update
+        self.position_information_updates = []
+        if not (p.v5121_enabled() and p.GNSS_POSITION_INFORMATION_BUDGET):
+            return
+        dt=0. if self.last_position_frame_ns is None else (self.time-self.last_position_frame_ns)*1e-9
+        self.last_position_frame_ns=self.time
+        angle=float(orientation.as_euler('xyz')[2])+self.bias
+        body=np.array([[np.cos(angle),-np.sin(angle)],[np.sin(angle),np.cos(angle)]])
+        radial=(p.CORRECTION_POSITION_RATE_MPS*dt+p.CORRECTION_SPEED_FRACTION
+                *float(np.linalg.norm(self.position[2:]))*dt
+                +p.CORRECTION_TURN_LEVER_M*self.gyro_rotation_since_frame)
+        # This is a GNSS state innovation, which includes real acceleration.
+        # Heading uncertainty turns forward travel into uncertain body-left
+        # travel. Account for it here; the map-bias budget stays independent
+        # of forward speed and no lateral-zero pseudo-observation is added.
+        yaw_std=np.sqrt(self.bias_var+float(self.orientation_cov[2,2])
+                        +np.deg2rad(p.EXTRINSIC_ROTATION_STD_DEG[2])**2)
+        lateral=((p.CORRECTION_LATERAL_RATE_MPS+float(np.linalg.norm(self.position[2:]))*yaw_std)*dt
+                 +p.CORRECTION_TURN_LEVER_M*self.gyro_rotation_since_frame)
+        used_radial=used_lateral=0.;remaining=[]
+        for factor in self.pending_position_information:
+            age=(self.time-factor['timestamp_ns'])*1e-9
+            if age<0:raise ValueError('Future GNSS position factor')
+            # Past CV process uncertainty has exceeded one original GNSS R:
+            # expire unused information instead of accumulating stale factors.
+            if p.GNSS_XY_ACCEL_PSD*age**3/3.>p.GNSS_STD_M**2:
+                self.position_information_updates.append(dict(position_factor_id=factor['id'],
+                    expired_information_fraction=factor['remaining'],reason='unused_gnss_information_expired_cv_uncertainty'))
+                continue
+            before=self.position.copy()
+            self.position,self.cov,d=fractional_position_update(self.position,self.cov,factor['xy'],
+                variance=factor['variance'],age_seconds=age,remaining=factor['remaining'],
+                acceleration_psd=p.GNSS_XY_ACCEL_PSD,body_rotation=body,
+                direction=factor['direction'],
+                radial_limit=None if not self.emitted_frames or self.position_information_initialized else max(0.,radial-used_radial),
+                lateral_limit=None if not self.emitted_frames else max(0.,lateral-used_lateral))
+            increment=self.position-before
+            used_radial+=float(np.linalg.norm(increment[:2]));used_lateral+=abs(float((body.T@increment[:2])[1]))
+            self.gnss_reference_shift+=increment
+            factor['remaining']=d['information_fraction_remaining']
+            d['position_factor_id']=factor['id']
+            d['coupled_startup_xy']=factor['direction'] is None
+            self.position_information_updates.append(d)
+            if factor['remaining']>1e-12:remaining.append(factor)
+            elif factor['direction'] is None:self.position_information_initialized=True
+        self.pending_position_information=remaining
+
     def for_frame(self, camera_ns, previous_height=None):
         self.advance(camera_ns)
         self.heading_update_budget_used = 0.
@@ -488,6 +665,7 @@ class CausalSensorPrior:
             if dt < 0 or dt > p.IMU_MAX_AGE_S:
                 raise ValueError('IMU orientation is stale/future; refusing invented sensor prior')
             orientation = orientation*Rotation.from_rotvec(self.gyro*dt)
+        self._consume_position_information(orientation)
         self._lateral_velocity_constraint(orientation)
         body = (Rotation.from_euler('z', self.bias)*orientation).as_matrix()
         extrinsic = Rotation.from_euler('xyz', p.IMU_TO_PLY_RPY_DEG, degrees=True).as_matrix()
@@ -523,11 +701,20 @@ class CausalSensorPrior:
         self.last_frame_bias = self.bias
         physical_rotation = self.gyro_rotation_since_frame
         self.gyro_rotation_since_frame = 0.
+        E=Rotation.from_euler('xyz',p.IMU_TO_PLY_RPY_DEG,degrees=True).as_matrix()
+        gyro_matrix=E.T@self.gyro_matrix_since_frame@E
+        gyro_std_bound=self.gyro_std_bound_since_frame;self.gyro_std_bound_since_frame=0.
+        self.gyro_matrix_since_frame=np.eye(3)
         self.emitted_frames += 1
         return T, dict(heading_information_policy=('fractional_likelihood_budget_v510' if p.v510_heading_enabled() else 'baseline_or_historical'),
+            position_information_policy=('fractional_likelihood_budget_v5121' if p.v5121_enabled() and p.GNSS_POSITION_INFORMATION_BUDGET else 'v510_immediate_gnss_kf'),
+            position_information_updates=self.position_information_updates.copy(),
+            pending_position_information=len(self.pending_position_information),
             course_guard_enabled=bool(p.v510_heading_enabled()),
             heading_update_budget_limit_deg=float(p.HEADING_MAX_UPDATE_DEG),
             gyro_rotation_since_frame_rad=physical_rotation,
+            gyro_rotation_matrix_since_frame=gyro_matrix.tolist(),imu_orientation_extrapolation_s=float(dt),
+            gyro_rotation_std_bound_rad=float(gyro_std_bound),
             lateral_velocity_constraint=self.lateral_constraint_diagnostic,
             heading_update_budget_used_deg=float(np.degrees(self.heading_update_budget_used)),
             heading_information_updates=self.heading_information_updates.copy(),
@@ -540,7 +727,7 @@ class CausalSensorPrior:
             latest_gnss_position_timestamp_ns=self.last_gnss_position_ns,
             latest_gnss_arrival_ns=self.last_gnss_arrival_ns,
             gnss_position_age_s=None if self.last_gnss_position_ns is None else (int(camera_ns)-self.last_gnss_position_ns)*1e-9,
-            gnss_position_prediction='GNSS update at measurement header, CV propagation to camera acquisition time',
+            gnss_position_prediction=('GNSS update at measurement header, arrived-gyro coordinated turn to camera time' if self.gyro_motion_bias is not None else 'GNSS update at measurement header, CV propagation to camera acquisition time'),
             heading_bias_rad=self.bias, heading_bias_std_rad=float(np.sqrt(self.bias_var)),
             heading_initialized=bool(self.accepted_blocks or self.gnss_heading_updates),
             gnss_heading_updates=self.gnss_heading_updates,
@@ -559,4 +746,5 @@ class CausalSensorPrior:
                 gnss_course_position_correlation='not explicitly estimated; conservative error floors',
                 gnss_heading_epoch=('unknown physical epoch; v5.2 observation variance, no fixed shift' if p.uses_v52_fusion() else 'unknown physical epoch; variance includes past rotation between value changes; no estimated fixed shift'),
                 heading_bias_model='independent initial IMU/GNSS biases; shared covariance after pair update; uncalibrated'),
-            course_decision=self.last_course_decision, block_records=self.block_records.copy())
+            course_decision=self.last_course_decision, block_records=self.block_records.copy(),
+            **({'motion_prediction':self.gyro_motion_bias.frame_diagnostic()} if self.gyro_motion_bias is not None else {}))

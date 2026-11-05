@@ -90,3 +90,10 @@ def test_sensor_position_jump_remains_one_prior_update_not_extra_map_motion_budg
     assert d['motion']['distance_m'] == 0.
     # GNSS changes the prior; this map-state fix does not cancel that information.
     np.testing.assert_allclose(f.last_prior[:2, 3]+after[:2]-before[:2], [.5, -.45])
+
+
+@pytest.fixture(autouse=True)
+def historical_model_profile(monkeypatch):
+    monkeypatch.setattr(p, 'V511_ENABLED', True)
+    monkeypatch.setattr(p, 'V5121_ENABLED', False)
+    monkeypatch.setattr(p, 'V513_ENABLED', False)

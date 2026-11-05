@@ -60,7 +60,10 @@ def fixture_registration(scope, count=128, matches=90):
 
 @pytest.mark.parametrize('matches', [0, 12, 90, 128])
 @pytest.mark.parametrize('include_prior', [False, True])
-def test_fast_cost_and_derivatives_equal_full_diagnostics(matches, include_prior):
+def test_fast_cost_and_derivatives_equal_full_diagnostics(matches, include_prior, monkeypatch):
+    # This AST-only CPU algebra oracle excludes optional CUDA-only summaries.
+    # v5.13 diagnostics and unchanged fixed-loss decisions have a real CUDA test.
+    monkeypatch.setattr(p, 'MAP_GEOMETRY_DIAGNOSTICS', False)
     scope = load_methods(); reg = fixture_registration(scope, matches=matches)
     x = np.array([.1, -.2, .03, np.log(8.)])
     full = reg.evaluate(x, 1.5, .5, derivatives=True, include_prior=include_prior)

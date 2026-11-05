@@ -42,8 +42,9 @@ def geometry_observation(data_information, correction_jacobian, prior_covariance
     if values.min() < -tolerance:
         raise ValueError('Map information is not positive semidefinite after marginalizing scale')
     values = np.maximum(values, 0.)
-    threshold = (max(p.MAP_MIN_RELATIVE_INFORMATION, float(values.max())*1e-10)
-                 if p.uses_v52_fusion() else max(1e-10, float(values.max())*p.MAP_NUMERICAL_INFORMATION_RCOND))
+    continuous = p.v515_enabled() or not p.uses_v52_fusion()
+    threshold = (max(1e-10, float(values.max())*p.MAP_NUMERICAL_INFORMATION_RCOND)
+                 if continuous else max(p.MAP_MIN_RELATIVE_INFORMATION, float(values.max())*1e-10))
     keep = values >= threshold
     # Measurement coordinates z = V_good.T L^-1 [dx,dy,dyaw]. Null directions
     # have NO measurement row; never use pinv(H) as zero uncertainty there.
@@ -76,7 +77,7 @@ def geometry_observation(data_information, correction_jacobian, prior_covariance
                 measurement_covariance=R.tolist(), quality_inflation=float(inflation),
                 scale_information=scale_info,
                 scale_log_std=float(1/np.sqrt(max(scale_info, 1e-20))),
-                convention=('world XY/yaw; current prior whitening; scale marginalized; weak modes omitted' if p.uses_v52_fusion() else 'world XY/yaw; current prior whitening; scale marginalized; positive weak modes have large variance; only numerical null omitted'))
+                convention=('world XY/yaw; current prior whitening; scale marginalized; positive weak modes have large variance; only numerical null omitted' if continuous else 'world XY/yaw; current prior whitening; scale marginalized; weak modes omitted'))
     return observation, R, diag
 
 

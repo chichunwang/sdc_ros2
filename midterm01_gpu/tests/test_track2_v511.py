@@ -4,6 +4,14 @@ import pytest
 from track2 import parameters as p
 
 
+@pytest.fixture(autouse=True)
+def historical_v511_mechanisms(monkeypatch):
+    monkeypatch.setattr(p, 'V512_ENABLED', False)
+    monkeypatch.setattr(p, 'V511_ENABLED', True)
+    monkeypatch.setattr(p, 'V5121_ENABLED', False)
+    monkeypatch.setattr(p, 'V513_ENABLED', False)
+
+
 def selector(monkeypatch, *, tracking=False, first_ok=False, all_fail=False):
     from track2.metric_registration import MetricRegistration
     from types import SimpleNamespace

@@ -1,0 +1,129 @@
+{
+  "created_at": "2026-11-05T20:29:24+08:00",
+  "operation": "read_only_report_and_charts",
+  "author": {
+    "name": "王祈淳",
+    "student_id": "112611054",
+    "contribution_percent": 100
+  },
+  "sources_sha256": {
+    "midterm01_gpu/doc/analysis doc/track1.csv": "3e1f7e81c093de830d4dc2aae7df980bde2ac115ced79d02126d56fddd4c5b2c",
+    "midterm01_gpu/doc/analysis doc/track2.csv": "4bcd9db40f58e7c1ef35867a058a6418fe750887fca95d32b0c426858c20df4c",
+    "midterm01_gpu/doc/analysis doc/track3.csv": "733a0da83e9b77f7d4493cef1eacc33ed8531d28cbde4b373ef7b18ef11f389e",
+    "midterm01_gpu/outputs/run/track02_full_2611050123/result_2.csv": "4bcd9db40f58e7c1ef35867a058a6418fe750887fca95d32b0c426858c20df4c",
+    "midterm01/docs/Competition Regulations/00_SDC_2026_Midterm01_Localization.pdf": "cdf6467c50562a03e3a34d4ab26edb4db8ace84da9ca22a726728c0ada8ea047",
+    "midterm01/docs/Competition Regulations/01_Mid01_Updates_Rules.pdf": "cf60236b87f6a89b12f1b182dfd27b20a356023636877677ef0b608c2e8b14fd",
+    "midterm01_gpu/README.md": "45a158501d7a6dafb03f0297ffb99974180142f383e9f8c6e7a715f9b1f59c5a",
+    "midterm01_gpu/AGENTS.md": "071e0bb29b7e22c18b0d0cd801bff6f1484dbbf98208ec70c12bc79e58476a2f",
+    "midterm01_gpu/track1/README.md": "a7dd48ee410238c274ca19f2d60c35e8b83fabd2f4e5f883a6e3aca0c5a48032",
+    "midterm01_gpu/track1/parameters.py": "89d2e4e80f77d922a914d91ee0629d1817a99fe388dbb5c0584826d1fceff752",
+    "midterm01_gpu/track2/README.md": "7743e737f0b85e92ab1127346b1ac59be3ea60ff6170878eb459a73cc67eebf2",
+    "midterm01_gpu/track2/parameters.py": "e58b146edb87fe090ab3a7eece7c29d0aa10b7349e745140c714ac4f4d5ab4c0",
+    "midterm01_gpu/doc/66_TRACK2_METRIC_SCALE_20261029.md": "46a1b967390dc4440b56e30f3eac2c801c9826de443f1b703fd9854983b5d324",
+    "midterm01_gpu/doc/67_TRACK2_CAUSAL_CORRECTION_MEMORY_20261029.md": "5da944b4792bf2044270afff1e1cd239dcab8f51c23ff81fbe5dd253e09c207a",
+    "midterm01_gpu/doc/70_EXTERNAL_TRACK3_LOCAL_VALIDATION.md": "8e32cc49ddbf3a5e7854f9c015f551d90a7c6c44ef8ccb668d9d7aab2e29ef0b",
+    "midterm01_gpu/doc/83_TRACK2_V57_IMAGE_GROUND_SPEED_20261102.md": "af0193058b94cde48d00ada3bfcd262b4568086fb7decc50806c5f4ee2617868",
+    "midterm01_gpu/doc/86_TRACK2_V510_V57_HEADING_20261103.md": "87a237b6e2d281531337ddcb5d0ba9832198f3197ebe164b78b7e3caca0a4bdb",
+    "midterm01_gpu/doc/96_TRACK2_V5162_CAUSAL_TURN_20261104.md": "2ca85c1d59d74b0ee13e0b5b7cbcac72f56b6a679fabee207f006d8f1c818be0",
+    "midterm01_gpu/doc/98_TRACK2_V5164_ASSOCIATION_ABLATION_20261105.md": "2114fa69b3a35ef766262e93a327eb83a02f2479db7847740b47ee436d808b8c",
+    "midterm01_gpu/doc/101_TRACK2_V5164_BEST_HEIGHT_REGRESSION_20261105.md": "321ad2fefeb3662c7c6d8db24d7a7fb2425edb852796737a08d6039cc6ebac7a",
+    "midterm01/others code track3/README.md": "e28887ca2b319f95630ce4738abe0317f3035125a55ff163d31895e133854952",
+    "midterm01/others code track3/run_track3_causal.sh": "6c45f694e0df93cfeb0bf64395fb9ab934ad0ff5ea357a0b88fd6aab202122d7",
+    "midterm01/others code track3/scripts/scale_from_height.py": "334fe453e4d12f3a79138d4df1b0a164d3c048c25e44d824cf18d5a3a3be283f",
+    "midterm01/others code track3/scripts/track_sequential.py": "6391857500f547a7b83a06e577827be35c81bda8e704cdeacbc226bb1f3d9655",
+    "midterm01/others code track3/scripts/register_all.py": "5a96562de85199683caa8a9471fff76a36c810e8ddcba79843719fe58f35c9f2",
+    "midterm01/others code track3/scripts/merge_regs.py": "cb0f46bcf6c63950c0ea0daf6c3304db6f5af4bfbf8a288fd92321f7fa917ae3",
+    "midterm01/others code track3/scripts/build_causal.py": "9dcc8654a49cf2b3fc1f7c000ca04449f8ad995d26da028040d8b2d5cb0b1f1c",
+    "midterm01/others code track3/scripts/yaw_from_motion.py": "0c376735cc443f18700180fc2577b02ca69af18f599cc4903fc976614575f9db",
+    "midterm01_gpu/outputs/run/track02_full_2611050123/timings.csv": "84149170416c3de2b7f90381d7d654d98ff72f77144c320e5b6043f881b7a8ff",
+    "midterm01_gpu/outputs/run/track02_full_2611050123/test_info.json": "69d1da230597aae847bd75252d35d5abd9ead78c51303147e55c0e7a3fbee9ad",
+    "midterm01_gpu/outputs/run/track00_test_2611050118/score_receipt.json": "9857e774375e2b06316f9983b724770236c2331a8a85265dcd9c18e355744bd9",
+    "midterm01_gpu/outputs/run/track00_test_2611051137/score_receipt.json": "ae5733f304ca4cb5b63dbd48bcddf6fea454670416b18a8dc06ab3b3709c3a75"
+  },
+  "outputs_sha256": {
+    "README.md": "1cea5130a5b256fbac90194bc33ba8f221422eeb6834d2dc52efee94e94d1359",
+    "assets/01_track12_pipeline.png": "c6268a716d939e279875b657da9fd71dc8addab2f9b4f1e485c3a399724692a2",
+    "assets/02_final_trajectories.png": "65cd6561ebc5eb3305d2162af5ffc275b0247b649aa375da4cfc869d24acd203",
+    "assets/03_track2_diagnostics.png": "46952cc8b8fc9fda869d5380b30e3ae4fd7033eb297489cb2223b45ccf07fbb6",
+    "assets/04_track2_scores.png": "75ae719755edd5d5692546967e80edf3f66698da15e442ed3220bed79d5c232c",
+    "assets/05_track3_pipeline.png": "534467290230532dbc59e376807211094544a7be65219342ac64880b5cb83a40",
+    "localization_report_112611054.md": "b577508f8af8e79431ad4d7f5ec5f585cb08472aba6dfc6548f616275d5dde81",
+    "localization_report_112611054.pdf": "3192ca21aacbe9610d9d17525909c7789beb65f28f97c1cb1e95cb90e47fc564",
+    "result_1.csv": "3e1f7e81c093de830d4dc2aae7df980bde2ac115ced79d02126d56fddd4c5b2c",
+    "result_2.csv": "4bcd9db40f58e7c1ef35867a058a6418fe750887fca95d32b0c426858c20df4c",
+    "result_3.csv": "733a0da83e9b77f7d4493cef1eacc33ed8531d28cbde4b373ef7b18ef11f389e"
+  },
+  "selected_csvs": {
+    "track1": {
+      "source": "midterm01_gpu/doc/analysis doc/track1.csv",
+      "copy": "result_1.csv",
+      "rows": 3011,
+      "header": [
+        "idx",
+        "x",
+        "y",
+        "yaw"
+      ],
+      "idx_contiguous": true,
+      "finite": true
+    },
+    "track2": {
+      "source": "midterm01_gpu/doc/analysis doc/track2.csv",
+      "copy": "result_2.csv",
+      "rows": 3299,
+      "header": [
+        "idx",
+        "x",
+        "y",
+        "yaw"
+      ],
+      "idx_contiguous": true,
+      "finite": true
+    },
+    "track3": {
+      "source": "midterm01_gpu/doc/analysis doc/track3.csv",
+      "copy": "result_3.csv",
+      "rows": 3142,
+      "header": [
+        "idx",
+        "x",
+        "y",
+        "yaw"
+      ],
+      "idx_contiguous": true,
+      "finite": true
+    }
+  },
+  "reported_scores": {
+    "source": "user_explicit_message_2026-11-05",
+    "track1": {
+      "public": "0.56188"
+    },
+    "track2": {
+      "public": "0.42660"
+    },
+    "track3": {
+      "public": "0.57380",
+      "private": "0.86831"
+    }
+  },
+  "track2_invalid_historical_score": {
+    "score": "0.30488",
+    "reason": "使用者說明上傳誤用全段平滑；不列為因果版本成績"
+  },
+  "limitations": [
+    "Track1 final CSV not traced to a v5.16.4 source manifest; existing standalone entry is v4",
+    "Track3 final CSV supplied by user; no local byte reproduction; causal concerns documented",
+    "No localization executed; chart smoothness and acceptance are not accuracy evidence"
+  ],
+  "source_files_unchanged": true,
+  "localization_frames_executed": 0,
+  "pdf_pages": 14,
+  "audit_run": "midterm01_gpu/outputs/run/track00_test_2611052016",
+  "visual_qa": {
+    "status": "passed",
+    "pages_rendered": 14,
+    "no_missing_text_glyphs": true,
+    "review_record": "midterm01_gpu/outputs/run/track00_test_2611052016/analysis/report_quality_checks.json"
+  }
+}

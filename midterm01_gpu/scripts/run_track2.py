@@ -42,7 +42,7 @@ def execute(run, max_frames=None, publish_rviz=False):
     info = dict(status='running', version=p.VERSION, track=2, frame_count=0,
                 mode='full' if max_frames is None else 'test', expected_frames=p.EXPECTED_FRAMES,
                 score=None, score_source=None, graph_seconds=0.,
-                causality='forward GNSS heading prior + disjoint past/current image speed + current-frame metric scale/ground + causal correction-state filter',
+                causality=('arrived-gyro coordinated-turn XY prediction + disjoint image/GNSS-confirmed rest gyro calibration + forward GNSS heading + current-frame metric registration and causal correction filter' if p.v5162_enabled() else 'forward GNSS heading prior + disjoint past/current image speed + current-frame metric scale/ground + causal correction-state filter'),
                 base_commit=p.BASE_COMMIT,
                 timing_clock='camera header; availability cutoff=PLY bag timestamp')
     write_json(run/'test_info.json', info)
@@ -101,13 +101,55 @@ def execute(run, max_frames=None, publish_rviz=False):
             limitation='official scoring frame/lever and physical sensor latency are not established by timestamp pairing'))
         write_json(run/'algorithm_scope.json', dict(version=p.VERSION, baseline_run='track02_full_2611031941',
             baseline_score=0.42699, baseline_score_source='user_report',
-            numerical_changes=['complete startup hypotheses before common scoring', 'geometry-failure hypothesis retry', 'actual posterior fixed-plane data-loss validation', 'delayed first map anchor uses current-frame gain budget after prior-only output'],
-            startup_bound_after_first_frame=bool(p.V511_ENABLED and p.STARTUP_BOUND_AFTER_FIRST_FRAME and p.uses_v52_fusion()),
-            retained_v57=['EPNP image speed', '40m feature range', 'MAP height fusion', 'directional map correction memory'],
-            excluded_v59=['adaptive feature ranges', 'data-only height update', 'gyro-constrained road translation', 'stationary gyro bias learning'],
+            numerical_changes=(['v5.16.4 original v5.10 map association, causal turn and finest road patches retained; fixed40m',
+                'height anchor uses data-only local Schur likelihood once; unchanged fixed-plane nonlinear validation and Joseph height filter; no current pose/scale policy change'] if p.v5165_enabled() else [('v5.16.2 causal turn and v5.16.1 map association retained; fixed40m'
+                if p.v5161_enabled() else 'v5.10 original map association restored; v5.16.2 causal turn retained; fixed40m'),
+                'road-plane speed features require the complete finest LK window inside the past validated road mask; original40-track gate unchanged'] if p.v5163_enabled() else
+                ['v5.16.1 map association and v5.10 fusion; 40m and original quality gates retained',
+                'XY velocity propagated with arrived IMU yaw rate; exact constant-turn transition and isotropic acceleration covariance',
+                'disjoint image/GNSS-confirmed stationary intervals learn motion-only gyro bias; no past pose or absolute-heading correction'] if p.v5162_enabled() else
+                ['v5.16/v5.10 numerical fusion baseline; 40m and original quality gates retained',
+                'bounded source/map normal-compatible surface fallback for unreliable nearest map points',
+                'fallback only after past map anchor and yaw std <=3deg; original reliable matches preserved',
+                'current correspondence radius and one-map-voxel distance margin; confidence=min(source,target)'] if p.v5161_enabled() else
+                ['v5.10 frozen numerical baseline; historical v5.11-v5.14 branches disabled',
+                'data-only current-map likelihood; sensor prior used once',
+                'positive weak directions retain their uncertainty; exact numerical null omitted; only strong directions refresh memory',
+                'actual posterior gain backtracking on fixed planes and rematched same sample; Joseph covariance uses actual gain'] if p.v515_enabled() else
+                ['v5.10 production numerical baseline; v5.11/v5.12/v5.12.1 disabled', 'causal height/ground anchors independent of current map-pose acceptance',
+                'exact feature rays; pixel-refined gyro translation; scalar relative speed or one road fallback; disjoint intervals' if p.v514_enabled() else 'sparse background PnP compared with gyro-fixed translation; disjoint vector-velocity and relative-yaw intervals',
+                'angular-stratified feature cap and normal/solver diagnostics; original quality gates retained'] if p.v513_enabled() else
+                ['v5.10 numerical baseline restored after scored v5.15 regression',
+                 f'fixed source feature range {p.FEATURE_MAX_RANGE_M:g} m; original sampling, registration and fusion']),
+            feature_max_range_m=p.FEATURE_MAX_RANGE_M,
+            v5165_enabled=bool(p.v5165_enabled()),
+            height_filter_model='data_only_local_likelihood_once' if p.v5165_enabled() else 'legacy_MAP_height_center',
+            v5163_enabled=bool(p.v5163_enabled()),
+            road_patch_support_policy='finest LK window inside past road mask' if p.v5163_enabled() else None,
+            v5162_enabled=bool(p.v5162_enabled()),
+            turn_gyro_rest_std_degps=p.TURN_GYRO_REST_STD_DEGPS,
+            turn_gyro_bias_rw_degps_sqrt_s=p.TURN_GYRO_BIAS_RW_DEGPS_SQRT_S,
+            v5161_enabled=bool(p.v5161_enabled()),
+            surface_fallback_normal_max_deg=p.SURFACE_FALLBACK_NORMAL_MAX_DEG,
+            surface_fallback_yaw_std_deg=p.SURFACE_FALLBACK_YAW_STD_DEG,
+            metric_submap_half_extent_m=p.METRIC_SUBMAP_HALF_EXTENT_M,
+            metric_correspondence_stages=p.METRIC_STAGES,
+            v515_enabled=bool(p.v515_enabled()),
+            v513_enabled=bool(p.v513_enabled()),
+            v514_enabled=bool(p.v514_enabled()),
+            image_geometry_contract=('v5.10 validated-ground scalar speed; no relative-image fallback' if not p.v513_enabled() else
+                'exact feature ray / pixel reprojection / scalar relative speed / one road fallback' if p.v514_enabled() else 'v5.13 nearest PLY point / algebraic gyro translation / map vector'),
+            image_anchor_memory_enabled=bool(p.v513_enabled() and p.IMAGE_ANCHOR_MEMORY_ENABLED),
+            relative_translation_enabled=bool(p.v513_enabled() and p.IMAGE_RELATIVE_TRANSLATION_ENABLED),
+            relative_yaw_enabled=bool(p.v513_enabled() and p.IMAGE_RELATIVE_YAW_ENABLED),
+            relative_translation_solver=p.IMAGE_RELATIVE_SOLVER,
+            angular_stratified_cap=bool(p.v513_enabled() and p.MAP_ANGULAR_STRATIFIED_CAP),
+            geometry_diagnostics=bool(p.v513_enabled() and p.MAP_GEOMETRY_DIAGNOSTICS),
+            retained_v57=['EPNP image speed', f'{p.FEATURE_MAX_RANGE_M:g}m feature range', 'MAP height fusion', 'directional map correction memory'],
+            excluded_v59=['adaptive feature ranges']+([] if p.v5165_enabled() else ['data-only height update'])+([] if p.v5162_enabled() else ['stationary gyro bias learning']),
             heading_enabled=p.v510_heading_enabled(),
             modules={name:sha256(Path(__file__).resolve().parents[1]/name) for name in
-                ('track2/image_speed.py','track2/metric_registration.py','track2/visual_update.py','track2/causal_prior.py','track2/parameters.py')}))
+                ('track2/image_speed.py','track2/metric_registration.py','track2/visual_update.py','track2/causal_prior.py','track2/parameters.py','track2/coordinated_motion.py')}))
         if publish_rviz:
             from track2.visualization import Track2RvizPublisher
             visualizer = Track2RvizPublisher()
@@ -149,7 +191,8 @@ def execute(run, max_frames=None, publish_rviz=False):
                 image_started = time.perf_counter()
                 if image_speed is not None:
                     from track2.visual_update import fuse_visual_speed
-                    measured = image_speed.observe(stamp, camera_ns, prior_diag['gyro_rotation_since_frame_rad'])
+                    measured = image_speed.observe(stamp, camera_ns, prior_diag['gyro_rotation_since_frame_rad'],
+                        **({'rotation_previous_current':prior_diag['gyro_rotation_matrix_since_frame'], 'gyro_std_bound_rad':prior_diag['gyro_rotation_std_bound_rad']} if p.v513_enabled() else {}))
                     prior, prior_diag, image_observation = fuse_visual_speed(
                         state, prior, prior_diag, measured, float(np.linalg.norm(state.gyro)))
                 image_done = time.perf_counter()
@@ -169,7 +212,13 @@ def execute(run, max_frames=None, publish_rviz=False):
                 map_decision = dict(accepted=reg_diag['accepted'], reason=reg_diag['reason'])
                 store_started = time.perf_counter()
                 if image_speed is not None:
-                    image_speed.store(raw, scale, reg_diag)
+                    image_speed.store(raw, scale, reg_diag, **({'reference_rotation':prior[:3,:3]} if p.v513_enabled() else {}))
+                    if p.v513_enabled() and image_speed.anchor is not None:
+                        anchor_stamp=image_speed.anchor['stamp']
+                        if state.visual_heading_anchor is None or state.visual_heading_anchor['timestamp_ns']!=anchor_stamp:
+                            if anchor_stamp!=camera_ns:raise ValueError('Cannot invent a past heading anchor')
+                            state.capture_visual_anchor(camera_ns,prior[:3,:3])
+                    image_observation['anchor_store']=image_speed.anchor_diagnostic if p.v513_enabled() else None
                 image_store_ms = (time.perf_counter()-store_started)*1000
                 accepted_count += int(map_decision['accepted'])
                 previous_height = float(final[2, 3])

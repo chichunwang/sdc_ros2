@@ -168,7 +168,7 @@ class CausalCorrectionFilter:
         # BEFORE adding this frame's map measurement. New data never gets faded
         # merely because another direction has been unseen for a long time.
         self._age_memory(dt)
-        if not p.uses_v52_fusion():
+        if not p.uses_v52_fusion() or (p.v5121_enabled() and p.MAP_BOUNDED_REFERENCE_RESPONSE):
             self.reference_sensitivity, self.reference_response_diagnostic = bounded_reference_sensitivity(
                 self.reference_sensitivity, self.anchor_covariance)
         self.reference_rebase_sensitivity = self.reference_sensitivity.copy()
@@ -207,6 +207,8 @@ class CausalCorrectionFilter:
         motion_ratio = 0.; gain = None; gain_scale_xy = gain_scale_yaw = gain_support_scale = 1.
         H = None; nis_soft = nis_reject = None; innovation_world = None
         proposal_validation = None
+        nonlinear_gain_fraction = 1.
+        proposal_backtracking = None
         step_xy_limit = (p.CORRECTION_POSITION_RATE_MPS*self.motion['dt_seconds']
                          +p.CORRECTION_SPEED_FRACTION*self.motion['distance_m']
                          +p.CORRECTION_TURN_LEVER_M*self.motion['prior_rotation_rad'])
@@ -218,7 +220,7 @@ class CausalCorrectionFilter:
         body = np.array([[np.cos(angle), -np.sin(angle), 0.],
                          [np.sin(angle), np.cos(angle), 0.], [0., 0., 1.]])
         gain_scale_longitudinal = gain_scale_lateral = 1.
-        delayed_first_anchor = bool(p.V511_ENABLED and p.STARTUP_BOUND_AFTER_FIRST_FRAME
+        delayed_first_anchor = bool(((p.V511_ENABLED and p.STARTUP_BOUND_AFTER_FIRST_FRAME) or p.v5121_enabled())
             and p.uses_v52_fusion() and self.last_update is None and self.previous_stamp is not None)
         age = (0. if self.last_update is None else (self.last_stamp-self.last_update)*1e-9)
         pos_limit = (p.CORRECTION_POSITION_GATE_BASE_M+p.CORRECTION_POSITION_RATE_MPS*age
@@ -300,7 +302,7 @@ class CausalCorrectionFilter:
                     # A first map update AFTER a prior-only output is already
                     # tracking: use this frame's budget, not the outage length.
                     increment = K @ innovation
-                    if p.uses_v52_fusion():
+                    if p.uses_v52_fusion() and not (p.v5121_enabled() and p.MAP_BODY_LATERAL_BUDGET):
                         gain_scale_xy = min(1., step_xy_limit/max(np.linalg.norm(increment[:2]), 1e-30))
                         gain_scale_yaw = min(1., step_yaw_limit/max(abs(increment[2]), 1e-30))
                         K = state_projector @ np.diag([gain_scale_xy, gain_scale_xy, gain_scale_yaw]) @ K
@@ -338,6 +340,27 @@ class CausalCorrectionFilter:
                 proposal = self.mean+K @ innovation; proposal[2] = wrap(proposal[2])
                 if proposal_validator is not None:
                     proposal_validation = proposal_validator(proposal.copy())
+                    if p.v515_enabled():
+                        # The local likelihood may be imperfect after partial
+                        # fusion. Backtrack the ACTUAL gain on the same current
+                        # sample; covariance and sensitivity use that gain too.
+                        original_gain = K.copy()
+                        attempts = [dict(gain_fraction=1., **proposal_validation)]
+                        for half in range(1, 15):
+                            if proposal_validation['accepted']:
+                                break
+                            fraction = 2.**-half
+                            trial_gain = original_gain*fraction
+                            trial = self.mean+trial_gain @ innovation
+                            trial[2] = wrap(trial[2])
+                            decision = proposal_validator(trial.copy())
+                            attempts.append(dict(gain_fraction=fraction, **decision))
+                            if decision['accepted']:
+                                K, proposal, proposal_validation = trial_gain, trial, decision
+                                nonlinear_gain_fraction = fraction
+                        proposal_backtracking = dict(attempts=attempts,
+                            accepted=bool(proposal_validation['accepted']),
+                            objective='actual emitted pose/scale; fixed planes and rematched same sample')
                     if not proposal_validation['accepted']:
                         reason = proposal_validation['reason']
                 if proposal_validation is not None and not proposal_validation['accepted']:
@@ -350,12 +373,14 @@ class CausalCorrectionFilter:
                     self.last_measurement_is_linear = bool(local_linear_likelihood)
                     gain = K.tolist()
                     weight = 1/inflation
-                    reason = 'downweighted_update' if inflation > 1 or min(gain_scale_xy, gain_scale_yaw, gain_support_scale) < 1 else 'measurement_update'
+                    reason = 'downweighted_update' if inflation > 1 or min(gain_scale_xy, gain_scale_yaw, gain_support_scale, nonlinear_gain_fraction) < 1 else 'measurement_update'
                     accepted = True
         diag = dict(accepted=accepted, reason=reason, frame='map XY metres, world yaw radians',
             delayed_first_anchor_budget_required=delayed_first_anchor,
             delayed_first_anchor_budget_applied=bool(delayed_first_anchor and accepted),
             proposal_validation=proposal_validation,
+            proposal_backtracking=proposal_backtracking,
+            nonlinear_gain_fraction=float(nonlinear_gain_fraction),
             local_linear_likelihood=bool(local_linear_likelihood),
             reference_response_constraint=self.reference_response_diagnostic,
             calibration_rebase_sensitivity=self.reference_rebase_sensitivity.tolist(),
@@ -365,11 +390,11 @@ class CausalCorrectionFilter:
             innovation=None if innovation is None else innovation.tolist(), innovation_nis=nis,
             motion_innovation=None if motion_innovation is None else motion_innovation.tolist(),
             motion_reference=None if motion_reference is None else motion_reference.tolist(),
-            measurement_weight=weight, kalman_gain=gain, gain_scale=float(min(gain_scale_xy, gain_scale_yaw, gain_support_scale)),
+            measurement_weight=weight, kalman_gain=gain, gain_scale=float(min(gain_scale_xy, gain_scale_yaw, gain_support_scale)*nonlinear_gain_fraction),
             gain_scale_xy=float(gain_scale_xy), gain_scale_yaw=float(gain_scale_yaw),
             gain_scale_longitudinal=float(gain_scale_longitudinal), gain_scale_lateral=float(gain_scale_lateral),
             lateral_update_limit_m=step_lateral_limit, longitudinal_update_limit_m=step_xy_limit,
-            correction_budget_frame=('v5.2 world XY norm/yaw' if p.uses_v52_fusion() else 'current sensor-prior forward/left/yaw; forward travel does not enlarge lateral budget'),
+            correction_budget_frame=('v5.2 world XY norm/yaw' if p.uses_v52_fusion() and not (p.v5121_enabled() and p.MAP_BODY_LATERAL_BUDGET) else 'current sensor-prior forward/left/yaw; forward travel does not enlarge lateral budget'),
             gain_scale_observable=float(gain_support_scale),
             observation_matrix=None if H is None else H.tolist(),
             observation_dof=0 if H is None else H.shape[0], nis_soft_threshold=nis_soft, nis_reject_threshold=nis_reject,
@@ -386,7 +411,8 @@ class CausalCorrectionFilter:
             memory_decay_factors=self.memory_decay_factors.tolist(),
             memory_decay_matrix_world=self.memory_decay.tolist(),
             memory_metric=self.motion_units.tolist(),
-            memory_age_policy='fixed initial-prior whitening; only accepted observable row space resets; fade before current measurement',
+            memory_age_policy=('fixed initial-prior whitening; only accepted strong row space resets; weak information does not refresh memory; fade before current measurement'
+                if p.v515_enabled() else 'fixed initial-prior whitening; only accepted observable row space resets; fade before current measurement'),
             covariance_predicted=self.predicted_covariance.tolist(), covariance=self.covariance.tolist(),
             measurement_covariance=None if R is None else R.tolist(),
             seconds_since_update=None if self.last_update is None else (self.last_stamp-self.last_update)*1e-9,
@@ -397,7 +423,7 @@ class CausalCorrectionFilter:
     def _commit(self, candidate, candidate_sensitivity, H, K, effective_R, supported):
         A = np.eye(3)-K @ H
         self.reference_sensitivity = A @ self.reference_sensitivity+K @ H @ candidate_sensitivity
-        if not p.uses_v52_fusion():
+        if not p.uses_v52_fusion() or (p.v5121_enabled() and p.MAP_BOUNDED_REFERENCE_RESPONSE):
             self.reference_sensitivity, self.reference_response_diagnostic = bounded_reference_sensitivity(
                 self.reference_sensitivity, self.anchor_covariance)
         self.covariance = A @ self.covariance @ A.T+K @ effective_R @ K.T

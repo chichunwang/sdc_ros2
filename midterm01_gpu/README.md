@@ -1,8 +1,48 @@
 # Midterm01 GPU 定位
 
-**Track2 v5.11.1（2026-11-03，已套用）：**修正「先輸出 prior-only pose，之後才接受首筆 map」時略過更新限幅的問題，保留真正首幀的初始化能力。版本 `track2_startup_candidates_current_validation_v5_11_1_perf2`；基準仍是 v5.10 full（使用者回報 `0.42699`）。Track2 GPU suite **214 passed**、44.80 秒，118 個 Python SHA 一致；尚未執行真實定位或取得新分數。生成 handoff 場景的首筆突跳由 1.344392 m 限為既有預算 0.020000 m，這是機制檢查。[算法與手動 full 命令](doc/87_TRACK2_V511_STARTUP_VALIDATION_20261103.md) · [測試 XML](outputs/run/track00_test_2611032103/pytest_gpu_0002.xml) · [圖表與分析](outputs/run/track00_test_2611032103/analysis/README.md)。
+**最終目標（使用者於 2026-11-04 明確指定）：Track2 正式評分達到參照檔的 `0.30488`。** 參照檔為 [`result_2_0.30488.csv`](<doc/analysis doc/result_2_0.30488.csv>)，SHA256 `5b04d260123a8d87f0f0c317ddbce5b59c3ee3068cf07e020a370034a9728dbb`。目標尚未達成；參照分數依使用者指定與檔名記錄，後續版本需保留實際驗證結果。
 
-目前已知最低的 Track2 Public Score 是 v5.10 使用者回報的 `0.42699`；v5.7 為 `0.44296`，v5.8 為 `0.45341`，v5.9 為 `0.44917`。這些是各版本完整輸出的歷史成績，不能證明 v5.11.1 的精度效果。v5.8 影像追蹤改動與 full 診斷見 [84｜v5.8 平面影像追蹤](doc/84_TRACK2_V58_PLANAR_IMAGE_TRACKS_20261103.md) 和 [v5.8 full 的影像診斷](outputs/run/track02_full_2611031406/analysis/README.md)；v5.9 full [`track02_full_2611031629`](outputs/run/track02_full_2611031629/test_info.json) 與 v5.10 full [`track02_full_2611031941`](outputs/run/track02_full_2611031941/test_info.json) 均完成 3299 幀。
+## Track2：v5.16.4 為目前最佳已知，已恢復最佳基線
+
+使用者持續授權自行迭代與必要 Track 測試含 full，並表示每天可在 Kaggle 測 99 份；完成檢查的新 CSV 會立即提供。
+
+**目前最佳已知：[v5.16.4 CSV](outputs/run/track02_full_2611050123/result_2.csv)，使用者回報 Public Score `0.42660`。** CSV SHA 已核對，收據見 [score receipt](outputs/run/track00_test_2611051137/score_receipt.json)。它比 v5.10 的 `0.42699` 低 `0.00039`；差距小，不作顯著性聲稱。[完整圖表](outputs/run/track02_full_2611050123/analysis/README.md) · [v5.16.4 模型對照](doc/98_TRACK2_V5164_ASSOCIATION_ABLATION_20261105.md)。
+
+v5.16.5 使用者回報 `0.43213`，比 v5.16.4 高 `0.00553`；停止推薦原樣重算或重複提交。[v5.16.5 CSV SHA／分數收據](outputs/run/track00_test_2611051137/score_receipt.json) · [候選模型與歷史分析](doc/99_TRACK2_V5165_DATA_HEIGHT_20261105.md)。
+
+目前 live `VERSION` 已還原為 `track2_v510_turn_patch_v5_16_4_perf2`；`V5165_ENABLED=False`，v5.16.2／v5.16.3 分支啟用、v5.16.1 分支停用，**40 m 與原配對不變**。恢復檢查已完成：完整 suite **329 passed、52.72 秒、1 項既有 Axes3D warning**；另 4 幀生成 CUDA 與 v5.16.4 frozen core 的 pose／scale／height／covariance 數值精確相同（1.82 秒），來源 SHA guard 通過。首輪 324 passed／1 failed 是 metadata fixture 沒涵蓋高度開關；補上高度開關兩值與原 profiles 的交叉檢查後通過，數值核心未改。[最新正式結論](doc/101_TRACK2_V5164_BEST_HEIGHT_REGRESSION_20261105.md)。
+
+v5.16.5 full 已完成，但分數高於 v5.16.4；其 CSV、模型與診斷保留為候選歷史，不建議重跑或重複提交。[full 圖表](outputs/run/track02_full_2611050200/analysis/README.md) · [高度融合模型紀錄](doc/99_TRACK2_V5165_DATA_HEIGHT_20261105.md)。新增研究：[高度與側向資訊的聯合模型](doc/100_TRACK2_HEIGHT_POSE_INFORMATION_20261105.md)；目前只是診斷，沒有套用其建議。
+
+使用者回報 v5.16.1 `0.44629`、v5.16.3 `0.44657`，都高於目前最佳已知 v5.16.4 `0.42660`；停止推薦原樣重複提交。[分數與 CSV SHA 收據](outputs/run/track00_test_2611050118/score_receipt.json) · [完整原因分析](doc/97_TRACK2_V5163_ROAD_PATCH_20261105.md)。本機殘差與 GNSS 預測不能代替正式精度，最終目標 **0.30488** 尚未達成。
+
+## Track2 v5.16 回復基線與距離對照（歷史）
+
+v5.16 版本 `track2_v510_verified_recovery_v5_16_perf2` 恢復 v5.10 數值基線，v5.11–v5.15 分支停用。147 個共同非 metadata 參數值與已評分 v5.10 相同。40 m control 的前 **800 幀 CSV、poses、frame manifest 逐位元組重現 v5.10 full**；當時完整 Track2 CPU／CUDA 檢查 **294 passed、47.10 秒、1 項既有 Axes3D warning**。
+
+本輪依兩次明確授權完成 40／30 m 各 300 幀、再各 800 幀，共 **2200 幀**，未執行 full。30 m 在第 393 幀開始改變輸出，但未顯示整體優勢：800 幀的 map 更新為 236 次，40 m 為 263 次；第 650 幀 source sample 由 3958 減至 450，失去可用 pose 模式。抽查 10 幀的相同 raw sample 評分，30 m 成本較高 6 幀、較低 3 幀、相同 1 幀；因此正式保留 **40 m**，不採用 30 m 候選。[完整診斷與圖表](doc/94_TRACK2_V515_REGRESSION_RANGE_20261104.md) · [本輪 analysis](outputs/run/track00_test_2611042012/analysis/README.md)。
+
+v5.16 是回復修正，尚無新榜分，也未達成 `0.30488`。可沿用已評分 v5.10 的 [`result_2.csv`](outputs/run/track02_full_2611031941/result_2.csv)（使用者回報 `0.42699`）及其原始來源證據，不需為相同數值策略再跑 full 或重複提交。
+
+v5.15 full `track02_full_2611041916` 的使用者回報分數為 **0.51729**。實際圖表證實：保留弱方向連帶提高最低支持量，使首筆 map 更新由 idx 4 延到 188；全段 map 更新由 1774 次降至 1286 次。先前生成測試通過未能預測退步。歷史模型保留於 [93](doc/93_TRACK2_V515_MAP_LIKELIHOOD_20261104.md)，目前結論以 [94](doc/94_TRACK2_V515_REGRESSION_RANGE_20261104.md) 為準。
+
+## Track2 v5.14 full 與影片（歷史）
+
+v5.14 full（2026-11-04）`track02_full_2611041506` 已完成 3299 幀；使用者回報 Public Score `0.43937`。分數比 v5.13 `0.42933` 高 `0.01004`，比 v5.10 `0.42699` 高 `0.01238`；分數差尚不能歸因於單一事件。v5.14 版本 `track2_v510_ray_consistent_image_speed_v5_14_perf2` 修正 PLY 深度／特徵射線、gyro 固定旋轉下的像素重投影，以及道路速度回退和 scalar-speed 融合；129 個 Python SHA 與 full 快照相符，輸入、map 與 frame manifest 和 v5.10／v5.13 相同。
+
+使用者影片 [`2026-11-04 15-06-59.mov`](</home/ricky/2026-11-04 15-06-59.mov>) 的 RViz 標題對應 v5.14 full。灰線是使用者確認的兩條 map 道路線，橘線是估計軌跡。錄影長 2 小時 35 分 1.77 秒，有效定位約前 34 分 45 秒，後段為掛機跳過。逐段分析與限制見 [doc92](doc/92_TRACK2_V514_VIDEO_DEVIATION_20261104.md) 和[診斷索引](outputs/run/track00_test_2611041808/analysis/README.md)。舊 Downloads 影片仍對應 v5.12.1，請勿和本次影片混淆。
+
+v5.14 完整 Track2 CUDA suite 為 **279 passed、1 項既有 warning、46.32 秒**；9 個新增案例含 CUDA 深度、特徵射線、相對配準與 scalar fusion 整合。圖表及機制限制見[測試分析](outputs/run/track00_test_2611041445/analysis/README.md)和[doc91](doc/91_TRACK2_V514_RAY_SPEED_20261104.md)。
+
+Downloads 影片 `2026-11-03 23-57-09.mov` 經 RViz run title、idx、座標與 scale 核對，屬於 v5.12.1 full `track02_full_2611032346`，不是 v5.13。v5.13 的 full 影像通道摘要見[run analysis](outputs/run/track02_full_2611041345/analysis/README.md)。
+
+v5.13 候選階段的 270 項 GPU 機制檢查和當時限制保留於 [90](doc/90_TRACK2_V513_IMAGE_RELATIVE_GEOMETRY_20261104.md) 及 [候選測試分析](outputs/run/track00_test_2611041306/analysis/README.md)；候選時尚未定位，之後才由使用者完成 v5.13 full 並回報分數。
+
+v5.13 將高度記憶品質與 map pose 接受分開，使用完整畫面剛體運動共識與過去 PLY 深度，並在不重疊影像區間提供向量速度或相對 yaw；另保留稀有角度視角並加入幾何診斷。這些機制尚無真實定位精度證據。歷史 v5.12.1：它限制既有 GNSS／map 修正步長，沒有新增定位觀測，軌跡較平順不能當成精度改善。相關逐幀診斷見[前輪分析](outputs/run/track00_test_2611041207/analysis/README.md)。
+
+**v5.12.1 歷史 full 診斷：**v5.10 frame 2 首筆 GNSS update 造成 `0.65119 m` 步長，其中車身側向 `−0.23007 m`，當幀 map update 為 0；v5.11.1 和被停止於 395 幀的 v5.12 prefix 有幾乎相同的 frame 2 GNSS 側向移動。另有 v5.10 frame 377／418 reference rebase 約 `+0.0535`／`+0.0504 m`，以及 frame 2154／2865 map 側向更新約 `+0.0623`／`+0.0615 m`，高於各自診斷中的側向預算。這些是估計器輸出分解，能指出跳動來源，不能視為真實車體側向誤差或逐一對應截圖中的 frame。兩張 RViz 圖都標示 run `track02_full_2611032114`，但 scale `8.488`／`7.514` 各匹配多個 frame，不能用 scale 唯一對幀。[完整數值與 v5.12.1 機制](doc/89_TRACK2_V5121_V510_HANDOFF_LATERAL_20261103.md)。
+
+v5.11.1 `track02_full_2611032114` 使用者回報 `0.43685`；v5.12 `track02_full_2611032240` 由使用者停止時已有 395 幀輸出（idx 0–394），沒有分數。當時 v5.10 使用者回報 `0.42699` 是最低已知完整分數；v5.13 的 `0.42933` 為後續使用者回報，分數較高、表現退步。最新最佳已知結果為 v5.16.4，見上方狀態與分數收據。此前 v5.12 已套用並完成 230 項 GPU suite，但它的 map likelihood／rematched-cost 修正沒有消除這個首筆 GNSS 跳動；歷史 v5.12.1 關閉該分支、回到 v5.10 基線並完成 full。[v5.12 歷史說明](doc/88_TRACK2_V512_MAP_LIKELIHOOD_20261103.md) · [v5.8 影像追蹤改動](doc/84_TRACK2_V58_PLANAR_IMAGE_TRACKS_20261103.md) · [v5.8 full 診斷](outputs/run/track02_full_2611031406/analysis/README.md) · [v5.9 full](outputs/run/track02_full_2611031629/test_info.json) · [v5.10 full](outputs/run/track02_full_2611031941/test_info.json)。
 
 v5.2 至 v5.6 的六個 full 均完成 3299 幀；v5.2 至 v5.5 的五個 run 使用相同 input 與 frame-manifest SHA，v5.6 另完成來源 SHA 核對。使用者回報的 Public Score 為 v5.2 `0.46434`、v5.3 `0.80300`、fix1 `0.46899`、v5.4 `0.59002`、v5.5 `0.52708`、v5.6 `0.45455`。不同版本同時改了多項算法，分數不能單獨證明因果。v5.7 full 為 `0.44296`、v5.8 full `0.45341`、v5.9 full `0.44917`、v5.10 full `0.42699`，皆為使用者回報。perf2 元件等價證據見 [78](doc/78_TRACK2_LOSSLESS_IO_ROS_20261031.md)，高度背景見 [79](doc/79_TRACK2_CAMERA_HEIGHT_POSITION_20261102.md)，v5.4、v5.5 及 v5.7 沿革見 [80](doc/80_TRACK2_V54_SCENE_EVIDENCE_20261102.md)、[81](doc/81_TRACK2_V55_DIRECTIONAL_MOTION_LINES_20261102.md) 與 [83](doc/83_TRACK2_V57_IMAGE_GROUND_SPEED_20261102.md)、[84](doc/84_TRACK2_V58_PLANAR_IMAGE_TRACKS_20261103.md)。Track1／Track3 保留。
 

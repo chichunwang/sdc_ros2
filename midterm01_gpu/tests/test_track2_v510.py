@@ -140,3 +140,9 @@ def test_course_guard_blocks_a_stop_start_window_accepted_by_v57(monkeypatch):
     assert d['reason'] == 'nonuniform_or_unobservable_course_window'
     assert d['disjoint_half_course'][0]['speed_mps'] == 0.
     assert guarded.bias_var > legacy.bias_var
+
+
+@pytest.fixture(autouse=True)
+def isolate_pre_v513_model(monkeypatch):
+    from track2 import parameters as model_parameters
+    monkeypatch.setattr(model_parameters, 'V513_ENABLED', False)

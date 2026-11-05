@@ -59,8 +59,13 @@ def analyze(run):
     has_observability = (has_memory and all('pose_covariance_xy_yaw' in o.get('sensor_prior', {}) for o in obs))
     has_quality = len(obs) == len(result) and any('range_selection' in o.get('registration', {}) for o in obs)
     has_candidates = len(obs) == len(result) and any(o.get('registration',{}).get('candidate_selection') is not None for o in obs)
+    has_likelihood = len(obs) == len(result) and any(o.get('registration',{}).get('map_likelihood') is not None for o in obs)
+    has_position_budget = len(obs) == len(result) and any(o.get('sensor_prior',{}).get('position_information_policy') == 'fractional_likelihood_budget_v5121' for o in obs)
     has_heading = len(obs) == len(result) and any(o.get('sensor_prior', {}).get('heading_information_policy') == 'fractional_likelihood_budget_v510' for o in obs)
     has_images = len(obs) == len(result) and any('image_ground_speed' in o for o in obs)
+    has_image_relative = has_images and any('solver_comparison' in (o.get('image_ground_speed') or {}) for o in obs)
+    has_geometry = len(obs) == len(result) and any(o.get('registration', {}).get('surface_profile') is not None for o in obs)
+    has_turn = len(obs) == len(result) and any(o.get('sensor_prior', {}).get('motion_prediction') is not None for o in obs)
     names = ['result_2.csv', 'poses.txt', 'timings.csv', 'frame_manifest.csv', 'observations.jsonl', 'test_info.json']
     if (run/'reference_contract.json').is_file(): names.append('reference_contract.json')
     sources = {n: sha256(run/n) for n in names}
@@ -80,12 +85,23 @@ def analyze(run):
         stems += ('08_heading_information',)
     if has_candidates:
         stems += ('09_candidate_validation',)
+    if has_likelihood:
+        stems += ('10_map_likelihood',)
+    if has_position_budget: stems += ('11_position_information',)
+    if has_image_relative: stems += ('12_image_relative',)
+    if has_geometry: stems += ('13_geometry_diagnostics',)
+    if has_turn: stems += ('14_coordinated_turn',)
     recognized = {'manifest.json', 'README.md'} | {f'{s}.{ext}' for s in stems for ext in ('png', 'pdf')}
     if has_images:
         recognized.add('image_speed_summary.json')
     if has_quality: recognized.add('quality_models_summary.json')
     if has_heading: recognized.add('heading_information_summary.json')
     if has_candidates: recognized.add('candidate_validation_summary.json')
+    if has_likelihood: recognized.add('map_likelihood_summary.json')
+    if has_position_budget: recognized.add('position_information_summary.json')
+    if has_image_relative: recognized.add('image_relative_summary.json')
+    if has_geometry: recognized.add('geometry_diagnostics_summary.json')
+    if has_turn: recognized.add('coordinated_turn_summary.json')
     if any(f.name not in recognized for f in output.iterdir()):
         raise FileExistsError('Unrecognized analysis artifacts preserved')
     if any(output.iterdir()):
@@ -166,9 +182,9 @@ def analyze(run):
     if has_images:
         records = [o.get('image_ground_speed', {}) for o in obs]
         used = np.array([bool(d.get('filter_accepted')) for d in records])
-        moving = np.array([d.get('kind') == 'speed' for d in records])
+        moving = np.array([d.get('kind') in ('speed', 'vector_velocity') for d in records])
         stationary = np.array([d.get('kind') == 'stationary' for d in records])
-        speed = np.array([float(d['speed_mps']) if d.get('kind') == 'speed'
+        speed = np.array([float(d['speed_mps']) if d.get('kind') in ('speed', 'vector_velocity') and d.get('speed_mps') is not None
                           else 0. if d.get('kind') == 'stationary' else np.nan for d in records])
         idx = np.arange(len(records))
         fig, axes = plt.subplots(3, 1, figsize=(11, 9), sharex=True)
@@ -177,7 +193,7 @@ def analyze(run):
         axes[0].scatter(idx[~used & np.isfinite(speed)], speed[~used & np.isfinite(speed)],
                         s=8, marker='x', color='tab:red', label='Unused image estimate')
         axes[0].set(ylabel='Speed [m/s]', title='Image speed observations, not ground truth'); axes[0].legend()
-        axes[1].plot(idx, [d.get('innovation_nis', np.nan) for d in records], lw=.8)
+        axes[1].plot(idx, [d.get('innovation_nis', np.nan) for d in records], linestyle='None', marker='.', markersize=3)
         axes[1].set(ylabel='Velocity innovation NIS', yscale='symlog')
         axes[2].plot(idx, [o.get('phase_timings_ms', {}).get('image_ground_speed', 0.) for o in obs], label='Image read/tracking/update')
         axes[2].plot(idx, [o.get('phase_timings_ms', {}).get('image_ground_model_store', 0.) for o in obs], label='CUDA ground-model storage')
@@ -271,6 +287,156 @@ def analyze(run):
             startup_frames=[i for i,d in enumerate(selections) if d.get('startup')],
             proposal_reject_frames=rejected,
             caveat='Candidate quality/consistency only; no future poses or accuracy truth; every frame commits once'))
+    if has_likelihood:
+        likelihoods = [o.get('registration',{}).get('map_likelihood') or {} for o in obs]
+        steps = np.array([d.get('likelihood_step_world',[np.nan]*3) for d in likelihoods])
+        spectra = np.array([(o.get('registration',{}).get('observability') or {}).get('normalized_eigenvalues',[np.nan]*3) for o in obs])
+        validations = [(o.get('registration',{}).get('correction_filter') or {}).get('proposal_validation') or {} for o in obs]
+        rematched = np.array([100.*(v['proposal_common_feature_cost']-v['baseline_common_feature_cost'])/max(abs(v['baseline_common_feature_cost']),1e-12)
+            if v.get('proposal_common_feature_cost') is not None and v.get('baseline_common_feature_cost') is not None else np.nan for v in validations])
+        rejected = [i for i,v in enumerate(validations) if v.get('reason')=='posterior_rematched_feature_loss_increased']
+        fig,axes=plt.subplots(4,1,figsize=(11,11),sharex=True)
+        for j in range(3):axes[0].plot(np.maximum(spectra[:,j],1e-8),label=f'Mode {j+1}')
+        axes[0].set_yscale('log');axes[0].axhline(1.,color='k',ls='--');axes[0].legend();axes[0].set(ylabel='Relative map information',title='Current DATA likelihood; steps and costs are not pose errors')
+        axes[1].plot(np.linalg.norm(steps[:,:2],axis=1));axes[1].set_ylabel('Likelihood XY step [m]')
+        axes[2].plot(np.degrees(steps[:,2]));axes[2].set_ylabel('Likelihood yaw step [deg]')
+        axes[3].plot(rematched,label='Emitted vs prediction, same raw sample');axes[3].axhline(0.,color='k',lw=.7)
+        if rejected:axes[3].scatter(rejected,rematched[rejected],s=9,color='tab:red',label='Rematched-cost rejection')
+        axes[3].set(xlabel='Frame idx',ylabel='Rematched loss change [%]');axes[3].legend()
+        for ax in axes:ax.grid(alpha=.3)
+        save(fig,'10_map_likelihood')
+        write_json(output/'map_likelihood_summary.json',dict(
+            data_likelihood_frames=[i for i,d in enumerate(likelihoods) if d],
+            rematched_cost_reject_frames=rejected,
+            caveat='DATA gradient removes search prior from measurement center; original rank rules and height model retained; not ground-truth accuracy'))
+    if has_position_budget:
+        factors=Counter();expired=0.;per_frame=[];steps=[]
+        for o in obs:
+            d=o.get('sensor_prior',{});spent=0.
+            steps.append(np.linalg.norm(d.get('gnss_state_innovation_xy',[0.,0.])))
+            for u in d.get('position_information_updates',[]):
+                if 'information_fraction' in u:
+                    value=u['information_fraction'];spent+=value
+                    factors[str(u['position_factor_id'])]+=value
+                expired+=u.get('expired_information_fraction',0.)
+            per_frame.append(spent)
+        fig,axes=plt.subplots(2,1,figsize=(11,7),sharex=True)
+        axes[0].plot(steps);axes[0].set(ylabel='GNSS state XY correction [m]',title='Causal GNSS information and estimator increments; not pose error')
+        axes[1].stem(np.arange(len(obs)),per_frame,markerfmt=' ',basefmt=' ')
+        axes[1].set(xlabel='Frame idx',ylabel='Axis likelihood power spent')
+        for ax in axes:ax.grid(alpha=.3)
+        save(fig,'11_position_information')
+        write_json(output/'position_information_summary.json',dict(
+            axis_factor_information_fraction_totals=dict(factors),
+            maximum_axis_factor_fraction=max(factors.values(),default=0.),
+            expired_unused_axis_fraction=float(expired),
+            caveat='Two orthogonal scalar factors equal one isotropic XY likelihood; each axis total <=1. Current CV row with process inflation is approximate; no past pose rewrite or accuracy truth.'))
+    # Missing optional diagnostics remain gaps rather than fabricated measurements.
+    def diagnostic_number(record, key):
+        value = record.get(key)
+        return np.nan if value is None else float(value)
+    if has_image_relative:
+        from collections import Counter
+        records = [o.get('image_ground_speed') or {} for o in obs]
+        idx = np.arange(len(obs))
+        anchors = [d.get('anchor_store') or {} for d in records]
+        heading = [d.get('relative_heading_update') or {} for d in records]
+        fig, axes = plt.subplots(5, 1, figsize=(11, 13), sharex=True)
+        channels = {}
+        kinds=('vector_velocity', 'relative_yaw', 'stationary', 'ground_speed_fallback')
+        for j, kind in enumerate(kinds):
+            selected = np.array([d.get('relative_channel',d.get('kind')) == kind for d in records])
+            accepted = selected & np.array([bool(d.get('filter_accepted')) for d in records])
+            axes[0].scatter(idx[accepted], np.full(accepted.sum(), j), s=7, label=kind)
+            channels[kind] = dict(frames=idx[selected].tolist(), accepted_frames=idx[accepted].tolist(),
+                reasons=dict(Counter(str(d.get('reason', 'not_recorded')) for d, take in zip(records, selected) if take)))
+        axes[0].set(ylabel='Accepted channel', yticks=range(len(kinds)), yticklabels=('relative speed / legacy vector', 'relative yaw', 'stationary', 'road speed fallback'),
+                    title='Relative image diagnostics; acceptance is not accuracy'); axes[0].legend()
+        solvers = {}
+        for name in ('pnp', 'gyro_translation'):
+            rows = [(d.get('solver_comparison') or {}).get(name) or {} for d in records]
+            accepted = np.array([bool(d.get('accepted')) for d in rows])
+            axes[1].plot(idx, [diagnostic_number(d, 'common_capped_pixel_cost') for d in rows], label=name, lw=.8)
+            solvers[name] = dict(qualified_count=int(accepted.sum()), qualified_frames=idx[accepted].tolist())
+        axes[1].set_ylabel('Common capped pixel cost'); axes[1].legend()
+        for key, label in (('accepted', 'Anchor available'), ('anchor_retained', 'Previous anchor retained')):
+            axes[2].step(idx, [bool(d.get('anchor_available',d.get(key))) if key=='accepted' else bool(d.get(key)) for d in anchors], where='post', label=label, lw=.8)
+        axes[2].set_ylabel('Anchor state'); axes[2].legend()
+        axes[3].plot(idx, [diagnostic_number(d, 'height_variance_m2') for d in anchors], lw=.8)
+        axes[3].set_ylabel('Anchor height variance [m²]')
+        axes[4].plot(idx, [np.degrees(diagnostic_number(d, 'innovation_rad')) for d in heading], label='Innovation')
+        axes[4].plot(idx, [np.degrees(diagnostic_number(d, 'bias_step_rad')) for d in heading], label='Bias step')
+        axes[4].set(xlabel='Frame idx', ylabel='Relative heading [deg]'); axes[4].legend()
+        for ax in axes: ax.grid(alpha=.3)
+        save(fig, '12_image_relative')
+        write_json(output/'image_relative_summary.json', dict(channels=channels, solvers=solvers,
+            anchor_available_frames=[i for i, d in enumerate(anchors) if d.get('anchor_available',d.get('accepted'))],
+            anchor_retained_frames=[i for i, d in enumerate(anchors) if d.get('anchor_retained')],
+            anchor_reasons=dict(Counter(str(d.get('reason', 'not_recorded')) for d in anchors)),
+            relative_heading_accepted_frames=[i for i, d in enumerate(heading) if d.get('accepted')],
+            absolute_yaw_observed_frames=[i for i, d in enumerate(heading) if d.get('absolute_yaw_observed')],
+            caveat='Current/past relative observations only; solver qualification and acceptance are not accuracy evidence.'))
+    if has_geometry:
+        from collections import Counter
+        profiles = [o.get('registration', {}).get('surface_profile') or {} for o in obs]
+        idx = np.arange(len(obs))
+        fig, axes = plt.subplots(4, 1, figsize=(11, 11), sharex=True)
+        axes[0].plot(idx, [diagnostic_number(d, 'normal_effective_directions') for d in profiles], label='Effective normal directions')
+        axes[0].set(ylabel='Effective directions', title='Geometry and convergence diagnostics; original quality gates retained')
+        right = axes[0].twinx()
+        right.plot(idx, [diagnostic_number(d, 'dominant_normal_bin_fraction') for d in profiles], color='tab:orange', label='Dominant normal fraction')
+        right.set(ylabel='Dominant normal fraction', ylim=(0, 1.05)); axes[0].legend(loc='upper left'); right.legend(loc='upper right')
+        band_values = {}
+        stage_reasons = Counter(); iterations = []; changes = []
+        for i, (profile, observation) in enumerate(zip(profiles, obs)):
+            for band in profile.get('range_bands') or []:
+                label = f"{band.get('min_m')}–{band.get('max_m')} m"
+                band_values.setdefault(label, np.full(len(obs), np.nan))[i] = diagnostic_number(band, 'signed_median_m')
+            stages = observation.get('registration', {}).get('stages') or []
+            traces = []
+            for stage in stages:
+                stage_reasons[str(stage.get('reason', 'not_recorded'))] += 1
+                traces.extend(stage.get('iteration_trace') or [])
+            iterations.append(len(traces))
+            changes.append(diagnostic_number(traces[-1], 'association_change_fraction') if traces else np.nan)
+        for label, values in band_values.items(): axes[1].plot(idx, values, lw=.8, label=label)
+        axes[1].axhline(0., color='black', lw=.5); axes[1].set_ylabel('Range signed median [m]')
+        if band_values: axes[1].legend()
+        axes[2].plot(idx, iterations); axes[2].set_ylabel('Recorded iterations')
+        axes[3].plot(idx, changes); axes[3].set(xlabel='Frame idx', ylabel='Last association change')
+        for ax in axes: ax.grid(alpha=.3)
+        save(fig, '13_geometry_diagnostics')
+        write_json(output/'geometry_diagnostics_summary.json', dict(
+            surface_profile_frames=[i for i, d in enumerate(profiles) if d],
+            stage_reasons=dict(stage_reasons), recorded_iterations=int(sum(iterations)),
+            range_band_labels=list(band_values),
+            caveat='Original quality thresholds are unchanged. Normal diversity, signed residuals and convergence describe information and matching, not pose accuracy.'))
+    if has_turn:
+        records = [o.get('sensor_prior', {}).get('motion_prediction') or {} for o in obs]
+        idx = np.arange(len(obs))
+        mean = np.array([d.get('gyro_bias_mean_radps', [np.nan]*3) for d in records])
+        covariance = np.array([d.get('gyro_bias_covariance_rad2ps2', np.full((3,3), np.nan)) for d in records])
+        std = np.sqrt(np.maximum(0., np.diagonal(covariance, axis1=1, axis2=2)))
+        fig, axes = plt.subplots(4, 1, figsize=(11, 11), sharex=True)
+        for j, label in enumerate(('X', 'Y', 'Z')):
+            values = np.degrees(mean[:, j]); sigma = np.degrees(std[:, j])
+            axes[0].plot(idx, values, label=label)
+            axes[0].fill_between(idx, values-sigma, values+sigma, alpha=.12)
+        axes[0].set(ylabel='Gyro rest bias [deg/s]', title='Causal turn prediction; shading is model uncertainty, not measured error')
+        axes[0].legend()
+        axes[1].step(idx, [diagnostic_number(d, 'rest_bias_updates') for d in records], where='post')
+        axes[1].set_ylabel('Accepted rest updates')
+        axes[2].plot(idx, [np.degrees(diagnostic_number(d, 'signed_turn_since_frame_rad')) for d in records])
+        axes[2].set_ylabel('Frame turn [deg]')
+        axes[3].plot(idx, [np.degrees(diagnostic_number(d, 'integrated_turn_rad')) for d in records])
+        axes[3].set(xlabel='Frame idx', ylabel='Integrated relative turn [deg]')
+        for ax in axes: ax.grid(alpha=.3)
+        save(fig, '14_coordinated_turn')
+        available = [i for i, d in enumerate(records) if d]
+        write_json(output/'coordinated_turn_summary.json', dict(
+            diagnostic_frames=available, final=records[available[-1]],
+            rest_update_frames=[i for i, o in enumerate(obs) if (o.get('image_ground_speed') or {}).get('gyro_motion_bias_update', {}).get('accepted')],
+            caveat='Only arrived relative gyro and accepted rest intervals; no absolute yaw constraint, future correction, or independent accuracy measurement.'))
     # Never change input files while plotting, including info used as evidence.
     if sources != {n: sha256(run/n) for n in names}:
         raise RuntimeError('Input changed during analysis')
@@ -282,6 +448,11 @@ def analyze(run):
         +('06 顯示逐幀 prior 標準差、scale 邊際化後的 map 可觀測維度及 XY/yaw 分別限幅。\n\n' if has_observability else '')
         +('07 顯示影像速度量測、實際採用影格、velocity innovation 與讀圖／ground model 耗時；image_speed_summary.json 列出採用的 frame，不能當精度證據。\n\n' if has_images else '')
         +('09_candidate_validation 顯示完整候選數及實際posterior固定平面損失檢查；不是定位精度。\n\n' if has_candidates else '')
+        +('10_map_likelihood 顯示 map 資訊、去除搜尋 prior 後的 likelihood 中心差，以及實際輸出重新對應的共同成本；不是定位誤差。\n\n' if has_likelihood else '')
+        +('11_position_information 顯示 GNSS 對當幀 estimator 的修正與各軸資訊使用量；summary 記錄每軸總 power 及過期未使用資訊，不是定位誤差。\n\n' if has_position_budget else '')
+        +('12_image_relative 顯示相對影像通道、兩 solver 的共同像素成本、anchor 保存及相對航向更新；summary 列出 frame 與原因，不代表絕對 yaw 或精度。\n\n' if has_image_relative else '')
+        +('13_geometry_diagnostics 顯示法向多樣性、各距離有號殘差與迭代／對應變動；summary 統計收斂原因，沒有放寬品質門檻。\n\n' if has_geometry else '')
+        +('14_coordinated_turn 顯示靜止估計的 gyro 偏差、模型標準差、已接受靜止更新及累積相對轉角；不代表絕對航向或定位誤差。\n\n' if has_turn else '')
         +('08_heading_information 顯示共用航向預算、已消費資訊及 course 決策；不修改定位輸出。\n\n' if has_heading else '')
         +('08 顯示當幀選用範圍、影像共識支持、gyro零偏和獨立高度更新；quality_models_summary.json保存統計。\n\n' if has_quality else '')
         +'GNSS 是融合輸入，不是真值；接受率與殘差不能證明精度。來源 SHA 見 manifest.json。\n')

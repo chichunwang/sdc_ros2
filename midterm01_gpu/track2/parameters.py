@@ -3,7 +3,7 @@
 直接改此檔。GNSS noise 延續原模型，正式配準改用逐幀 covariance 與
 可觀測平面量測。GNSS 空 frame、IMU/PLY 外參及 lever 仍未獨立標定。
 """
-VERSION = 'track2_startup_candidates_current_validation_v5_11_1_perf2'
+VERSION = 'track2_v510_turn_patch_v5_16_4_perf2'
 # 正式入口固定採 v5.2 融合，只移植方向性記憶。另一值僅供歷史機制 regression。
 FUSION_PROFILE = 'v52_directional_memory'
 
@@ -111,7 +111,7 @@ HEIGHT_OBSERVATION_FLOOR_M = 0.05
 MIN_SOURCE_FEATURE_HEIGHT_RAW = 0.02
 MIN_MAP_FEATURE_HEIGHT_M = 0.10
 SOURCE_FEATURE_LEAF_RAW = 0.035
-FEATURE_MAX_RANGE_M = 40.
+FEATURE_MAX_RANGE_M = 40.  # ground-scale seed 換算的三維距離；30m 的800幀對照未顯示優勢
 MAX_METRIC_SOURCE_POINTS = 6000
 ANGULAR_CELL_RAD = 0.07   # ~4° angular cells；每格聚合深度誤差，避免每像素獨立假設
 FEATURE_STD_M = 0.3
@@ -144,7 +144,7 @@ LINE_MAX_VERTICAL_ANGLE_DEG = 15.0
 LINE_MAX_DIRECTION_DIFFERENCE_DEG = 15.0
 PLANE_MIN_SUPPORT_PER_VARIABLE = 2.0  # 每個可觀測 pose 模式＋scale nuisance，至少兩個 angular 等效支持；不按全影像平面比例否決
 MAX_PLANE_MEDIAN_M = FEATURE_STD_M
-MAP_MIN_RELATIVE_INFORMATION = 1.0  # 強方向診斷／記憶刷新門檻，不再丟棄較弱但正的資訊
+MAP_MIN_RELATIVE_INFORMATION = 1.0  # 正式 v5.10 基線的保留門檻；歷史連續模型僅以它刷新 strong memory
 MAP_NUMERICAL_INFORMATION_RCOND = 1e-8  # 僅排除數值 null；弱方向用其大 covariance 降權
 MAP_STARTUP_YAW_SEED_SIGMAS = (-1.0, 0.0, 1.0)  # 僅首個有效 map update 前，以當幀 yaw σ 播種
 
@@ -189,10 +189,86 @@ def v510_heading_enabled():
     return V510_ENABLED and uses_v52_fusion()
 
 # ===== v5.11：首筆 map anchor 完整比較候選；追蹤只在幾何失敗時恢復 =====
-V511_ENABLED = True
+V511_ENABLED = False
 STARTUP_HEIGHT_SEED_SIGMAS = (-1., 0., 1.)  # 沿用初始高度 covariance 的一個標準差
 STARTUP_INCLUDE_GIVEN_YAW = True
 STARTUP_INCLUDE_MAP_AXIS = True  # 無向主軸僅為 seed；仍須完整配準及既有 gate
 TRACKING_RETRY_ON_GEOMETRY_FAILURE = True
 VALIDATE_EMITTED_MAP_PROPOSAL = True
 STARTUP_BOUND_AFTER_FIRST_FRAME = True  # 僅真正首幀可自由初始化；延遲首筆 map 也用當幀 gain 預算
+
+# ===== v5.12：只調整 map 量測的統計意義及實際輸出驗收 =====
+V512_ENABLED = False
+MAP_DATA_LIKELIHOOD_ENABLED = True  # 配準 prior 只作搜尋；濾波使用 data-only likelihood，避免 prior 算兩次
+MAP_REMATCHED_POSTERIOR_CHECK = True  # 同時檢查固定平面與原樣本重新對應的共同成本
+TRACKING_RETRY_AFTER_NONCONVERGENCE = True  # 有可觀測資訊但未收斂，才沿既有 yaw σ 加起點
+
+def v512_enabled():
+    return V512_ENABLED and V511_ENABLED and uses_v52_fusion()
+
+# ===== v5.12.1：以已評分 v5.10 為基準，只修啟動交接及側向突變 =====
+V5121_ENABLED = False
+GNSS_POSITION_INFORMATION_BUDGET = True  # 一筆已抵達 likelihood 分次使用；總資訊不超過原觀測
+MAP_BODY_LATERAL_BUDGET = True  # 前進距離不放大側向修正；沿用既有 0.2 m/s 與 turn-lever 預算
+MAP_BOUNDED_REFERENCE_RESPONSE = True  # prior 白化後的 PSD contraction；阻止 yaw 校準交叉項放大平移
+
+def v5121_enabled():
+    return V5121_ENABLED and v510_heading_enabled()
+
+# ===== v5.13：v5.10 基準；影像 anchor、相對位姿與幾何診斷可分開驗證 =====
+V513_ENABLED = False
+IMAGE_ANCHOR_MEMORY_ENABLED = True
+IMAGE_RELATIVE_TRANSLATION_ENABLED = True
+IMAGE_RELATIVE_YAW_ENABLED = True  # 與 translation 交替使用不重疊區間；不提供絕對 yaw
+IMAGE_RELATIVE_SOLVER = 'gyro_translation'  # 'pnp'；兩者均保存共同像素比較
+MAP_ANGULAR_STRATIFIED_CAP = True  # 保留稀少視角的樣本，總點數上限不變
+MAP_GEOMETRY_DIAGNOSTICS = True  # 法向資訊與每個 solver step；不放寬 gate
+
+def v513_enabled():
+    return V513_ENABLED and v510_heading_enabled()
+
+# ===== v5.14：修正影像模型契約，保留原品質門檻與 map 算法 =====
+V514_ENABLED = False
+
+def v514_enabled():
+    return V514_ENABLED and v513_enabled()
+
+# ===== v5.15：v5.10 凍結數值基線，只改 current-map likelihood 與輸出驗收 =====
+V515_ENABLED = False  # v5.15 full 0.51729 退步；恢復已重現的 v5.10，30m 尚為研究候選
+
+def v515_enabled():
+    # Historical branches remain independently reproducible in generated tests.
+    # Production v5.15 never mixes their startup, image or GNSS budget changes.
+    return (V515_ENABLED and v510_heading_enabled()
+        and not (V511_ENABLED or V512_ENABLED or V5121_ENABLED or V513_ENABLED or V514_ENABLED))
+
+# ===== v5.16.1：保留 v5.16 的融合，只補可靠表面對應，不改40m或品質門檻 =====
+V5161_ENABLED = False  # v5.16.1/3 正式分數退步；本輪單獨還原 v5.10 map association
+SURFACE_FALLBACK_NORMAL_MAX_DEG = LINE_MAX_DIRECTION_DIFFERENCE_DEG
+SURFACE_FALLBACK_YAW_STD_DEG = HEADING_MAX_COURSE_STD_DEG
+
+def v5161_enabled():
+    return (V5161_ENABLED and v510_heading_enabled()
+        and not (V511_ENABLED or V512_ENABLED or V5121_ENABLED or V513_ENABLED or V514_ENABLED or V515_ENABLED))
+
+# ===== v5.16.2：以已抵達 gyro 轉速傳播 XY 速度，靜止時學 motion-only gyro bias =====
+V5162_ENABLED = True
+# 沿用 v5.9 已聲明的工程預算；本版先獨立驗證，沒有用榜分或目標 CSV 擬合。
+TURN_GYRO_REST_STD_DEGPS = 0.10
+TURN_GYRO_BIAS_RW_DEGPS_SQRT_S = 0.02
+
+def v5162_enabled():
+    return (V5162_ENABLED and v510_heading_enabled()
+        and not (V511_ENABLED or V512_ENABLED or V5121_ENABLED or V513_ENABLED or V514_ENABLED or V515_ENABLED))
+
+# ===== v5.16.3：路面速度的 LK 特徵必須有完整 finest-window 路面支持 =====
+V5163_ENABLED = True
+
+def v5163_enabled():
+    return V5163_ENABLED and v5162_enabled()
+
+# ===== v5.16.5：原 map pose 融合不變，高度改用 data-only likelihood 一次融合 =====
+V5165_ENABLED = False  # 正式0.43213差於v5.16.4的0.42660；保留機制，正式回復舊高度更新
+
+def v5165_enabled():
+    return V5165_ENABLED and v5163_enabled() and not v5161_enabled()

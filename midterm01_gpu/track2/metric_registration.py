@@ -17,6 +17,7 @@ from .plane_geometry import PlaneGeometry
 from .observability import checked_covariance, geometry_observation, likelihood_observation, height_observation
 from .height_filter import fuse_height
 from .ground_support import checked_ground
+from .posterior_validation import make_proposal_validator
 
 
 def wrap(a):
@@ -34,6 +35,7 @@ class MetricRegistration:
         self.center = None
         self.nn = None
         self.source_features = None
+        self.source_plane_good = self.source_plane_normal = self.source_plane_confidence = None
         self.correction_filter = CausalCorrectionFilter()
 
     def prepare(self, raw, prior, prior_covariance):
@@ -92,8 +94,12 @@ class MetricRegistration:
         if len(features) < 30:
             raise GroundInitializationError('Insufficient non-ground source structure')
         sample, _ = voxel_mean(features, p.SOURCE_FEATURE_LEAF_RAW)
+        selection=dict(policy='original_linear_cap',before=len(sample),after=min(len(sample),p.MAX_METRIC_SOURCE_POINTS))
         if len(sample) > p.MAX_METRIC_SOURCE_POINTS:
-            sample = sample[cp.linspace(0, len(sample)-1, p.MAX_METRIC_SOURCE_POINTS).astype(cp.int64)]
+            if p.v513_enabled() and p.MAP_ANGULAR_STRATIFIED_CAP:
+                from .geometry_diagnostics import angular_stratified_cap
+                sample,selection=angular_stratified_cap(sample,ds,p.MAX_METRIC_SOURCE_POINTS)
+            else:sample = sample[cp.linspace(0, len(sample)-1, p.MAX_METRIC_SOURCE_POINTS).astype(cp.int64)]
         target = (local-cp.asarray(origin)) @ cp.asarray(Bm)
         target = target[target[:, 2] > max(p.MIN_MAP_FEATURE_HEIGHT_M, 3*md['mad'])]
         if len(target) < 30:
@@ -121,15 +127,25 @@ class MetricRegistration:
         self.feature_nn = GpuNearest(target, cell=1.5)
         self.geometry = PlaneGeometry(self.feature_nn)
         self.source_line_good = None
-        if p.LINE_FEATURES_ENABLED and not p.uses_v52_fusion():
+        self.source_plane_good = self.source_plane_normal = self.source_plane_confidence = None
+        line_enabled = p.LINE_FEATURES_ENABLED and not p.uses_v52_fusion()
+        surface_tracking = bool(p.v5161_enabled()
+            and self.correction_filter.last_update is not None
+            and np.degrees(np.sqrt(self.prior_covariance[2, 2])) <= p.SURFACE_FALLBACK_YAW_STD_DEG)
+        if line_enabled or surface_tracking:
             metric_sample = sample*scale_seed
             source_nn = GpuNearest(metric_sample,cell=1.5)
             source_geometry = PlaneGeometry(source_nn)
             source_ids, _ = source_nn.query(metric_sample,1e-6)
             source_geometry.ensure(source_ids)
             safe_source = cp.maximum(source_ids,0)
-            self.source_line_good = (source_ids >= 0)&source_geometry.line_reliable[safe_source]
-            self.source_line_direction = source_geometry.line_direction[safe_source]
+            if line_enabled:
+                self.source_line_good = (source_ids >= 0)&source_geometry.line_reliable[safe_source]
+                self.source_line_direction = source_geometry.line_direction[safe_source]
+            if surface_tracking:
+                self.source_plane_good = (source_ids >= 0)&source_geometry.reliable[safe_source]
+                self.source_plane_normal = source_geometry.normal[safe_source]
+                self.source_plane_confidence = source_geometry.confidence[safe_source]
         # RViz presents the local XYZ map, rather than the ground-relative model.
         self.nn = type('DisplaySubmap', (), {'points': local})()
         self.center = prior[:3, 3].copy()
@@ -145,7 +161,10 @@ class MetricRegistration:
                     scale_seed=scale_seed, height_prior_m=self.height,
                     height_std_m=float(np.sqrt(self.height_variance)),
                     source_features=len(sample), angular_cells=len(unique), map_features=len(target),
+                    feature_selection=selection,
                     source_line_features=0 if self.source_line_good is None else int(self.source_line_good.sum()),
+                    source_plane_features=0 if self.source_plane_good is None else int(self.source_plane_good.sum()),
+                    surface_fallback_tracking=surface_tracking,
                     feature_max_range_m=p.FEATURE_MAX_RANGE_M,
                     prior_covariance_xy_yaw=self.prior_covariance.tolist(),
                     prior_frame='map [x_m,y_m,yaw_rad] with full cross covariance',
@@ -200,9 +219,25 @@ class MetricRegistration:
     def feature_association(self, q, radius, rotation):
         """Disjoint plane OR source/target-validated vertical line constraints."""
         ids,d2,good,normals,residual,confidence = self.plane_residuals(q,radius)
+        rescued = None
+        if getattr(self, 'source_plane_good', None) is not None:
+            from .surface_correspondence import bounded_surface_fallback
+            ids, rescued = bounded_surface_fallback(self.feature_nn, self.geometry, q,
+                ids, d2, self.source_plane_good, self.source_plane_normal, rotation,
+                radius, normal_max_deg=p.SURFACE_FALLBACK_NORMAL_MAX_DEG)
+            safe = cp.maximum(ids, 0)
+            good = good | rescued
+            normals = self.geometry.normal[safe]
+            residual = cp.sum(normals*(q-self.geometry.center[safe]), axis=1)
+            confidence = cp.where(rescued,
+                cp.minimum(self.geometry.confidence[safe], self.source_plane_confidence),
+                self.geometry.confidence[safe])
+            d2 = cp.minimum(cp.sum((q-self.feature_nn.points[safe])**2, axis=1), radius**2)
         safe = cp.maximum(ids,0)
         centers = self.geometry.center[safe]
         association = dict(ids=ids,good=good,normals=normals,centers=centers,confidence=confidence)
+        if rescued is not None:
+            association['surface_fallback_matches'] = rescued
         if getattr(self,'source_line_good',None) is not None:
             source_direction = self.source_line_direction @ cp.asarray(rotation).T
             direction = self.geometry.line_direction[safe]
@@ -275,6 +310,7 @@ class MetricRegistration:
         coverage = float(cp.sum(w*good)/w.sum())
         plane_median = float(cp.median(cp.abs(residual[good]))) if bool(good.any()) else float(radius)
         result.update(feature_cost=2*data_cost*p.FEATURE_STD_M**2/float(w.sum()),
+                    surface_fallback_matches=0 if 'surface_fallback_matches' not in association else int(association['surface_fallback_matches'].sum()),
                     line_matches=0 if 'line_matches' not in association else int(association['line_matches'].sum()),
                     residual_model='disjoint point-to-plane or validated vertical point-to-line; no line-axis residual',
                     coverage=coverage, median_capped_distance_m=float(cp.median(cp.sqrt(d2))),
@@ -282,6 +318,9 @@ class MetricRegistration:
                     median_plane_residual_m=plane_median,
                     median_geometric_residual_m=plane_median,
                     angular_support=float(cp.sum(w*good)))
+        if p.v513_enabled() and p.MAP_GEOMETRY_DIAGNOSTICS:
+            from .geometry_diagnostics import surface_profile
+            result['surface_profile']=surface_profile(association,residual,cp.linalg.norm(self.raw_features,axis=1)*np.exp(x[3]),w/(1+residual**2/robust**2))
         return result
 
     def score_pose(self, T, scale):
@@ -313,34 +352,51 @@ class MetricRegistration:
     def _finish_v52(self, x, prior, final, seed, stages, planes, eig,
                     quality_ok, observation, covariance, observable, support_required,
                     geometry_accepted, scale_info, scale_std, started, prepared, optimized):
-        """v5.2 fusion unchanged; directional expiry is the sole numerical change."""
+        """v5.10 fusion; historical data-likelihood branches are optional regressions."""
         candidate_T, candidate_scale = self.pose(x)
         candidate_sensitivity = None
+        measurement = None
+        likelihood = None
+        debiased = p.v515_enabled() or (p.v512_enabled() and p.MAP_DATA_LIKELIHOOD_ENABLED)
         if geometry_accepted:
             # Candidate is sensor-regularized. Its response to a changed prior
             # reference is NOT a full -I data-only observation response.
             J = self.correction_jacobian(x)
             candidate_sensitivity = np.eye(3)-J @ np.linalg.solve(final['H'], J.T @ self.prior_precision)
+            measurement = pose_correction(candidate_T, prior)
+            if debiased:
+                # The MAP optimizer uses the sensor prior to find associations.
+                # Its regularized center is NOT an independent map measurement.
+                measurement, observation, covariance, likelihood = likelihood_observation(
+                    final['data_H'], final['data_g'], J, self.prior_covariance, final, measurement)
+                candidate_sensitivity = np.eye(3)
         validator = None
-        if p.V511_ENABLED and p.VALIDATE_EMITTED_MAP_PROPOSAL and geometry_accepted:
+        common_check = p.v515_enabled() or (p.v512_enabled() and p.MAP_REMATCHED_POSTERIOR_CHECK)
+        if geometry_accepted and (debiased or common_check or (p.V511_ENABLED and p.VALIDATE_EMITTED_MAP_PROPOSAL)):
             radius, robust, _ = p.METRIC_STAGES[-1]
             emitted_scale = candidate_scale if scale_std <= p.MAX_SCALE_LOG_STD else float(np.exp(self.seed[3]))
             baseline = self.state_for_correction(prior, self.correction_filter.predicted_mean, float(np.exp(self.seed[3])))
             baseline_loss = self.evaluate(baseline,radius,robust,include_prior=False,association=final['association'],diagnostics=False)['data_cost']
-            def validator(proposal):
-                trial = self.state_for_correction(prior,proposal,emitted_scale)
-                valid = self.valid(trial)
-                cost = self.evaluate(trial,radius,robust,include_prior=False,association=final['association'],diagnostics=False)['data_cost'] if valid else None
-                ok = bool(cost is not None and np.isfinite(cost) and cost <= baseline_loss+1e-12)
-                return dict(accepted=ok,reason='posterior_fixed_plane_loss_not_increased' if ok else 'posterior_fixed_plane_loss_increased' if valid else 'posterior_outside_search',
-                    baseline_data_cost=baseline_loss,proposal_data_cost=cost,
-                    comparison='actual emitted pose/scale vs prediction on same final associations; no rematching or discarded points')
+            def common_cost(trial):
+                T_trial, s_trial = self.pose(trial)
+                return self.score_pose(T_trial, s_trial)['feature_cost']
+            validator = make_proposal_validator(
+                state_for_proposal=lambda proposal:self.state_for_correction(prior,proposal,emitted_scale),
+                valid=self.valid,
+                fixed_cost=lambda trial:self.evaluate(trial,radius,robust,include_prior=False,
+                    association=final['association'],diagnostics=False)['data_cost'],
+                baseline_fixed_cost=baseline_loss,
+                common_cost=common_cost if common_check else None,
+                baseline_common_cost=common_cost(baseline) if common_check else None)
         correction, temporal = self.correction_filter.update(
-            pose_correction(candidate_T, prior) if geometry_accepted else None,
+            measurement,
             covariance if geometry_accepted else None,
             observation_matrix=observation if geometry_accepted else None,
             missing_reason='unobservable_map_geometry' if quality_ok else 'geometry_rejected',
-            candidate_sensitivity=candidate_sensitivity,proposal_validator=validator)
+            memory_observation_matrix=(observable['strong_observation_matrix']
+                if p.v515_enabled() and geometry_accepted else None),
+            candidate_sensitivity=candidate_sensitivity,proposal_validator=validator,
+            local_linear_likelihood=bool(debiased))
         accepted = temporal['accepted']
         scale = candidate_scale if accepted and scale_std <= p.MAX_SCALE_LOG_STD else float(np.exp(self.seed[3]))
         emitted_x = self.state_for_correction(prior, correction, scale)
@@ -348,7 +404,17 @@ class MetricRegistration:
         # The seed is an independent current ground measurement with a past
         # height anchor; it must be distinguished from feature-validated scale.
         self.last_scale = scale
-        if accepted and scale_std <= p.MAX_SCALE_LOG_STD:
+        height_update = height_likelihood = None
+        if p.v5165_enabled():
+            # The MAP height already used this height prior. Recover a local
+            # DATA likelihood from H/g, validate on the same final planes, and
+            # update the past anchor once. The current emitted pose/scale above
+            # remains the same candidate policy; new height affects later frames.
+            radius, robust, _ = p.METRIC_STAGES[-1]
+            self.height, self.height_variance, height_update, height_likelihood = self.height_proposal(
+                x, final, candidate_scale, scale_std, radius, robust, accepted)
+            gain = height_update['gain']
+        elif accepted and scale_std <= p.MAX_SCALE_LOG_STD:
             measured_height = scale*self.ds
             measurement_var = max((measured_height*scale_std)**2, p.HEIGHT_OBSERVATION_FLOOR_M**2)
             gain = self.height_variance/(self.height_variance+measurement_var)
@@ -377,6 +443,13 @@ class MetricRegistration:
             ground_normal_difference_before_deg=float(np.degrees(np.arccos(np.clip(self.nm @ (prior[:3,:3] @ self.ns),-1,1)))),
             model='v52_point_to_plane_with_directional_correction_memory', elapsed_seconds=time.perf_counter()-started)
         diag['candidate_selection'] = getattr(self,'candidate_selection',None)
+        diag['map_likelihood'] = likelihood
+        diag['map_measurement_model'] = 'current_data_likelihood_prior_used_once' if debiased else 'legacy_regularized_map_candidate'
+        if p.v5165_enabled():
+            diag['height_filter_model'] = 'data_only_local_likelihood_once'
+            diag['height_likelihood'] = height_likelihood
+            diag['height_update'] = height_update
+        diag['data_gradient'] = final['data_g'].tolist()
         diag['fusion_profile'] = p.FUSION_PROFILE
         diag['height_variance_after_m2'] = float(self.height_variance)
         cp.cuda.get_current_stream().synchronize()
@@ -423,8 +496,16 @@ class MetricRegistration:
         x = x.copy(); stages = []
         for radius, robust, iterations in p.METRIC_STAGES:
             converged = False; reason = 'iteration_limit'; count = 0
+            trace=[];previous_ids=None
             for it in range(iterations):
                 before = self.evaluate(x, radius, robust, derivatives=True, diagnostics=False)
+                detail=None
+                if p.v513_enabled() and p.MAP_GEOMETRY_DIAGNOSTICS:
+                    ids=before['association']['ids']
+                    detail=dict(iteration=it,cost_before=before['cost'],data_cost_before=before['data_cost'],
+                        matches=before['matches'],association_change_fraction=None if previous_ids is None else float(cp.mean(ids!=previous_ids)),
+                        data_information_eigenvalues=np.linalg.eigvalsh(before['data_H']).tolist())
+                    previous_ids=ids.copy();trace.append(detail)
                 if before['matches'] < 20:
                     reason = 'insufficient_matches'; break
                 damping = np.diag(np.maximum(np.diag(before['H']), 1e-8))*1e-5
@@ -441,8 +522,12 @@ class MetricRegistration:
                             chosen = trial; break
                 count = it+1
                 if chosen is None:
+                    if detail is not None:detail.update(step_accepted=False,reason='stationary' if small else 'line_search_failed')
                     converged = bool(small); reason = 'stationary' if small else 'line_search_failed'; break
                 actual_delta = chosen-x
+                if detail is not None:detail.update(step_accepted=True,cost_after_fixed=after['cost'],data_cost_after_fixed=after['data_cost'],
+                    step_xy_m=float(np.linalg.norm(actual_delta[:2])),step_yaw_rad=float(actual_delta[2]),
+                    step_logscale=float(actual_delta[3]),line_search_halvings=half)
                 x = chosen
                 actual_small = (np.linalg.norm(actual_delta[:2]) < .002
                     and abs(actual_delta[2]) < .0002 and abs(actual_delta[3]) < .0002)
@@ -451,6 +536,7 @@ class MetricRegistration:
             end = self.evaluate(x, radius, robust)
             stages.append(dict(radius_m=radius, robust_m=robust, iterations=count,
                                converged=converged, reason=reason, feature_cost=end['feature_cost'], coverage=end['coverage']))
+            if p.v513_enabled() and p.MAP_GEOMETRY_DIAGNOSTICS:stages[-1]['iteration_trace']=trace
         final = self.evaluate(x, radius, robust, derivatives=True)
         seed = self.evaluate(self.seed, radius, robust, association=final['association'])
         eig = np.linalg.eigvalsh(final['data_H'])
@@ -461,7 +547,8 @@ class MetricRegistration:
         if final['coverage'] > 0:
             observation, covariance, observable = geometry_observation(
                 final['data_H'], self.correction_jacobian(x), self.prior_covariance, final)
-        support_required = 0. if observable is None else p.PLANE_MIN_SUPPORT_PER_VARIABLE*(observable['strong_rank']+1)
+        support_required = (0. if observable is None else p.PLANE_MIN_SUPPORT_PER_VARIABLE*
+            ((observable['rank'] if p.v515_enabled() else observable['strong_rank'])+1))
         geometry_accepted = bool(quality_ok and observable is not None and observable['rank'] > 0
             and final['angular_support'] >= support_required)
         scale_info = 0. if observable is None else observable['scale_information']
@@ -514,12 +601,32 @@ class MetricRegistration:
             for x in unique:
                 if np.array_equal(x,first):continue
                 trials.append(self._solve_candidate(x))
+        recovery_solves = 0
+        informative_nonconvergence = any(
+            t.get('observable') is not None and t['observable']['rank'] > 0
+            and t.get('stages') and t['stages'][-1]['reason'] in ('iteration_limit','line_search_failed')
+            and t['final']['matches'] >= p.MIN_METRIC_MATCHES
+            and t['final']['angular_support'] >= t['support_required'] for t in trials)
+        if (not startup and p.v512_enabled() and p.TRACKING_RETRY_AFTER_NONCONVERGENCE
+                and not any(t['geometry_accepted'] for t in trials) and informative_nonconvergence):
+            carry_T, carry_scale = self.pose(carry)
+            carry_correction = pose_correction(carry_T, prior)
+            sigma = np.sqrt(self.prior_covariance[2,2])
+            for multiple in p.MAP_STARTUP_YAW_SEED_SIGMAS:
+                if multiple == 0:continue
+                correction = carry_correction.copy();correction[2] += multiple*sigma
+                trial_seed = self.state_for_correction(prior,correction,carry_scale)
+                if not self.valid(trial_seed):continue
+                if any(np.linalg.norm(trial_seed[:2]-v[:2])<.002 and abs(wrap(trial_seed[2]-v[2]))<.0002 and abs(trial_seed[3]-v[3])<.0002 for v in unique):continue
+                unique.append(trial_seed)
+                trials.append(self._solve_candidate(trial_seed));recovery_solves += 1
         for trial in trials:
             T, scale = self.pose(trial['x'])
             trial['common_score'] = self.score_pose(T,scale)['feature_cost']
         eligible = [t for t in trials if t['geometry_accepted']]
         chosen = min(eligible or trials,key=lambda t:(t['common_score'],tuple(t['x'])))
         chosen['selection'] = dict(startup=startup,fully_refined=len(trials),invalid_seeds=invalid,
+            nonconvergence_recovery_solves=recovery_solves,
             selected_index=next(i for i,t in enumerate(trials) if t is chosen),
             candidates=[dict(geometry_accepted=t['geometry_accepted'],rank=0 if t['observable'] is None else t['observable']['rank'],
                 common_feature_cost=t['common_score'],candidate_state=t['x'].tolist(),selected=t is chosen) for t in trials],

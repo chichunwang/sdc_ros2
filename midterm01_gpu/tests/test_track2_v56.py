@@ -19,7 +19,9 @@ def retained_v57_heading_contract(monkeypatch):
 
 
 def test_production_profile_and_unknown_profile_fails(monkeypatch):
-    assert p.VERSION == 'track2_startup_candidates_current_validation_v5_11_1_perf2'
+    assert p.VERSION == 'track2_v510_turn_patch_v5_16_4_perf2'
+    assert not p.V515_ENABLED
+    assert not p.V5165_ENABLED
     assert p.uses_v52_fusion()
     monkeypatch.setattr(p, 'FUSION_PROFILE', 'typo')
     with pytest.raises(ValueError, match='Unknown Track2 fusion profile'):

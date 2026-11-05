@@ -204,3 +204,9 @@ def test_image_enabled_runner_prefix_and_measurement_output(tmp_path, monkeypatc
     assert records[10]['image_ground_speed']['filter_accepted']
     assert sum(bool(row['image_ground_speed']['filter_accepted']) for row in records) == 2
     assert all(type(row['image_ground_speed'].get('timestamp_ns', row['camera_timestamp_ns'])) is int for row in records)
+
+
+@pytest.fixture(autouse=True)
+def isolate_pre_v513_model(monkeypatch):
+    from track2 import parameters as model_parameters
+    monkeypatch.setattr(model_parameters, 'V513_ENABLED', False)
