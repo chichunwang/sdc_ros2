@@ -1,5 +1,6 @@
 outputs/
 vendor/
 data/
+/data_VSLAM-*.zip
 .env
 .venv/
