@@ -1,0 +1,5 @@
+outputs/
+vendor/
+data/
+.env
+.venv/

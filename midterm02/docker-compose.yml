@@ -1,0 +1,17 @@
+name: midterm02_vslam
+services:
+  vslam:
+    image: midterm02_vslam:py39
+    container_name: midterm02_vslam
+    user: "${VSLAM_UID:-1000}:${VSLAM_GID:-1000}"
+    init: true
+    shm_size: '2gb'
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      PYTHONDONTWRITEBYTECODE: '1'
+    volumes:
+      # 整個 repo 唯讀（含 data/ 與 .git，供 create_run.py 讀 Git 狀態）；只有 outputs 可寫
+      - ..:/workspace:ro
+      - ./outputs:/workspace/midterm02/outputs:rw
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+    command: [sleep, infinity]

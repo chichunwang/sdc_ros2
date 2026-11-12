@@ -6,6 +6,7 @@
 
 | 位置 | 用途 |
 | --- | --- |
+| `midterm02/` | **Midterm02 Visual SLAM（目前主要任務，`midterm02/main` 分支）**；開工先讀 [midterm02/AGENTS.md](midterm02/AGENTS.md)，與本檔 Midterm01 規則衝突時以它為準（例如允許閉環／pose graph 回修 pose） |
 | `midterm01/` | CPU 參考版本、共用 data／config、官方題目與交付文件 |
 | `hw2/` | 原有 ROS 2 Humble Docker、感測器分析工具，保留既有用途 |
 | `hw3/` | Markov chain、模擬與穩態分布練習 |

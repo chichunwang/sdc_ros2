@@ -1,0 +1,8 @@
+# 官方 starter 指定套件（Python 3.9）。
+# TODO：取得 data/data_VSLAM-T1/image_slam_starter/README.md 後，依其版本改成固定版本（==），以利助教重現。
+numpy
+open3d
+gtsam
+small_gicp
+opencv-python
+matplotlib
