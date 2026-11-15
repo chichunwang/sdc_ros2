@@ -2,16 +2,19 @@
 
 用前鏡頭影像與官方 LoGeR 點雲，估計 Track01／Track02 每張影像的 camera-to-world pose，提交 Kaggle（Sim(3) 對齊後 ATE，越低越好）。規則重點見 [AGENTS.md](AGENTS.md)，官方規則完整整理見 [doc/01](doc/01_COMPETITION_RULES_20261113.md)。
 
-## 目前狀態（2026-11-13）
+## 目前狀態（2026-11-15）
 
 - 已建立目錄架構、run 建立工具與提交格式檢查工具（含單元測試）。
-- **尚未下載資料與 starter code，尚未實作任何 SLAM 算法，沒有任何分數。**
+- 已從 `Project Assets/Midterm02_data/` 複製官方資料到 `data/data_VSLAM-T1/`，保留素材原件；包含 1,314 張影像、1,314 份點雲、相機內參、IMU 與提交範本。逐檔 SHA256 核對紀錄見 `data/import_manifest.json`。
+- starter 原檔保留於資料包，工作副本已放入 `vslam/`；每個來源檔的路徑與 SHA256 見 [vslam/origin.json](vslam/origin.json)。尚未修改算法、執行 SLAM 或取得分數。
 - Track02 官方尚未公布。
 
 ## 下一步（使用者）
 
-1. 從 Kaggle Track01 的 Data 頁下載資料包，整包原樣解壓到 `midterm02/data/`，應得到 `midterm02/data/data_VSLAM-T1/Track1/data/` 與 `midterm02/data/data_VSLAM-T1/image_slam_starter/`。
-2. 告訴助理，助理會把 starter 複製到 `vslam/`、記錄來源 SHA，並依 starter README 建立環境。
+1. 將本機忽略的 `midterm02/data/` 另行複製到 Ubuntu 工作區相同位置；Git 不會同步資料。
+2. 依 [starter README](vslam/README.md) 準備 Ubuntu Docker 環境，再於 `vslam/` 實作 TODO。starter 列出的安裝套件另含 pandas、scipy、tqdm；套件版本與容器環境尚待建立及驗證。
+
+starter README 最後一段禁止完整 SLAM／SfM 系統產生提交，與已保存的 Kaggle 規則／投影片允許以現成系統為起點的文字有差異；兩份原文均保留，採用此類系統前需釐清。此次僅匯入資料及未修改的 starter。
 
 `data/`、`outputs/` 皆被 `.gitignore` 忽略，不進 Git、不會跨電腦同步。資料只供本課程使用，不得散布（見 [doc/02](doc/02_KAGGLE_RULES_TRACK01_20261113.md)）。
 

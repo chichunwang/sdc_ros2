@@ -1,0 +1,58 @@
+{
+  "source_root": "data/data_VSLAM-T1/image_slam_starter",
+  "source_description": "Official starter supplied in Project Assets/Midterm02_data; copied without algorithm changes",
+  "copied_at": "2026-11-15T16:58:11.8574662+08:00",
+  "sha256_algorithm": "SHA256",
+  "files": [
+    {
+      "path": "main.py",
+      "source": "data/data_VSLAM-T1/image_slam_starter/main.py",
+      "sha256": "78a50b2922966257ddf40d602bff7d2d53dcc2eef6f38c8b4d61c12dbf3d966c"
+    },
+    {
+      "path": "README.md",
+      "source": "data/data_VSLAM-T1/image_slam_starter/README.md",
+      "sha256": "3811d796170fffb820d36c069fa6c4b9e1f3cf905e236042a1ea09dca9de8ff5"
+    },
+    {
+      "path": "process/build_map.py",
+      "source": "data/data_VSLAM-T1/image_slam_starter/process/build_map.py",
+      "sha256": "3b70fa33b59eeafc272098c21c3947f2f1e74ea127f80218b6081cd7fe88b461"
+    },
+    {
+      "path": "utils/ICP.py",
+      "source": "data/data_VSLAM-T1/image_slam_starter/utils/ICP.py",
+      "sha256": "cd258114f188a9f65718ebd24a8929516311650c44a5da29730bd9127e9e3b5c"
+    },
+    {
+      "path": "utils/io.py",
+      "source": "data/data_VSLAM-T1/image_slam_starter/utils/io.py",
+      "sha256": "ef6bfd46cc432770a16880f24691c65b59a538c0b8e10d8eb3efd5568c05ad19"
+    },
+    {
+      "path": "utils/keyframe.py",
+      "source": "data/data_VSLAM-T1/image_slam_starter/utils/keyframe.py",
+      "sha256": "4aed5af735ac2001e12b56b9c9b9c3eb23a404ce03ef825f3e2f1eb5d67fbd1f"
+    },
+    {
+      "path": "utils/loopclosure.py",
+      "source": "data/data_VSLAM-T1/image_slam_starter/utils/loopclosure.py",
+      "sha256": "bbc7337aa9bb5ee9bc5eb35ed3481d81682044cff7277edc23db585c85d7befd"
+    },
+    {
+      "path": "utils/posegraph.py",
+      "source": "data/data_VSLAM-T1/image_slam_starter/utils/posegraph.py",
+      "sha256": "cfe8ae22f9b9bd3a5517f06c6def95e32a2fbcfb4cd158f982ec4c90ee01d469"
+    },
+    {
+      "path": "utils/submap.py",
+      "source": "data/data_VSLAM-T1/image_slam_starter/utils/submap.py",
+      "sha256": "c0e74c7ef1c364302497f3e40d1edb4a25ead9572442fa2538f9b543a15bf384"
+    },
+    {
+      "path": "utils/viz.py",
+      "source": "data/data_VSLAM-T1/image_slam_starter/utils/viz.py",
+      "sha256": "3b0a34e80377448a1d2434fa3666dc809cac3e4582e219b45819080ccf424dfb"
+    }
+  ]
+}
