@@ -1,0 +1,5 @@
+# 選用的學習式視覺前端（SuperPoint + LightGlue）。待 E3 Competition2 QA 確認允許前，只供實驗，不納入正式結果。
+# SuperPoint 權重為 Magic Leap 非商業研究授權；LightGlue 程式為 Apache-2.0。首次使用會從網路下載權重。
+torch==2.8.0
+torchvision==0.23.0
+lightglue @ git+https://github.com/cvg/LightGlue.git

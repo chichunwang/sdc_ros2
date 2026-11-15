@@ -1,17 +1,70 @@
 name: midterm02_vslam
 services:
   vslam:
-    image: midterm02_vslam:py39
+    image: midterm02_vslam:py39-gpu
     container_name: midterm02_vslam
     user: "${VSLAM_UID:-1000}:${VSLAM_GID:-1000}"
     init: true
     shm_size: '2gb'
     environment:
-      DISPLAY: ${DISPLAY:-:0}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
       PYTHONDONTWRITEBYTECODE: '1'
+      # 學習式模型權重快取（唯一可寫位置在 outputs/）
+      TORCH_HOME: /workspace/midterm02/outputs/cache/torch
     volumes:
       # 整個 repo 唯讀（含 data/ 與 .git，供 create_run.py 讀 Git 狀態）；只有 outputs 可寫
       - ..:/workspace:ro
       - ./outputs:/workspace/midterm02/outputs:rw
-      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     command: [sleep, infinity]
+
+  # RViz 顯示用（ROS 2 Humble）：SLAM 容器是 Python 3.9、沒有 ROS，所以另開一個容器跑 rviz2 與 bridge。
+  # 用 profile 隔開：`scripts/dev.sh up` 不會啟動它，`scripts/dev.sh rviz` 或 `slam` 才會。
+  rviz:
+    image: osrf/ros:humble-desktop
+    container_name: midterm02_rviz
+    profiles: [rviz]
+    user: "${VSLAM_UID:-1000}:${VSLAM_GID:-1000}"
+    init: true
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      XAUTHORITY: /tmp/vslam.Xauthority
+      QT_X11_NO_MITSHM: '1'
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+      # 這台主機有 AMD 內顯與 NVIDIA 獨顯。容器內沒有 AMD 的 DRI 裝置（會出現 amdgpu 警告），
+      # 所以指定用 NVIDIA 繪圖（PRIME render offload）。
+      __NV_PRIME_RENDER_OFFLOAD: '1'
+      __GLX_VENDOR_LIBRARY_NAME: nvidia
+      ROS_DOMAIN_ID: '42'
+      ROS_LOCALHOST_ONLY: '1'
+      ROS_LOG_DIR: /tmp/roslog
+      HOME: /tmp/rviz-home
+      PYTHONDONTWRITEBYTECODE: '1'
+    volumes:
+      - ..:/workspace:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - ${VSLAM_XAUTHORITY:-/run/user/1000/gdm/Xauthority}:/tmp/vslam.Xauthority:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # 關掉 RViz 視窗容器就結束；bridge 在背景接收 SLAM 串流（tcp 5600，只在 compose 內部網路）
+    command:
+      - bash
+      - -c
+      - |
+        source /opt/ros/humble/setup.bash
+        mkdir -p /tmp/rviz-home /tmp/roslog
+        python3 /workspace/midterm02/scripts/rviz_bridge.py &
+        exec rviz2 -d /workspace/midterm02/config/vslam.rviz

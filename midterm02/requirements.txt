@@ -1,8 +1,18 @@
-# 官方 starter 指定套件（Python 3.9）。
-# TODO：取得 data/data_VSLAM-T1/image_slam_starter/README.md 後，依其版本改成固定版本（==），以利助教重現。
-numpy
-open3d
-gtsam
-small_gicp
-opencv-python
-matplotlib
+# Midterm02 執行環境（Python 3.9）。官方 starter 指定：numpy pandas scipy tqdm opencv-python open3d gtsam small_gicp。
+# 版本於 2026-11-16 固定；尚未在本機建置驗證（主機未安裝 Docker），第一次 build 若某版本無 cp39 wheel 需調整並記錄。
+numpy==1.26.4
+scipy==1.13.1
+pandas==2.2.3
+tqdm==4.67.1
+matplotlib==3.9.4
+opencv-python==4.10.0.84
+open3d==0.19.0
+gtsam==4.2
+small_gicp==1.0.0
+# GPU：CuPy（自行撰寫的 CUDA 最近鄰／共變異數 kernel 與 ICP/GICP 累加）
+cupy-cuda12x==13.6.0
+nvidia-cuda-nvrtc-cu12==12.8.93
+nvidia-cuda-runtime-cu12==12.8.90
+nvidia-cublas-cu12==12.8.4.1
+nvidia-cusolver-cu12==11.7.3.90
+nvidia-cusparse-cu12==12.5.8.93

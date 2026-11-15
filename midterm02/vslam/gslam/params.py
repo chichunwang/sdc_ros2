@@ -1,0 +1,146 @@
+"""所有可調參數集中在這個檔案（依專案規則：改參數就改這裡，不靠命令列選項或多份設定檔）。
+
+數值目前是依模型的物理意義給的初值，尚未在真實資料上驗證；每次 run 會把整份參數寫進 test_info.json。
+要做消融實驗時，改 EXPERIMENT 選一組覆寫值即可。
+"""
+import copy
+
+PARAMS = dict(
+    seed=0,
+    track=dict(
+        # Track 名稱 -> 資料目錄（相對 midterm02/）與輸出檔名
+        track01=dict(data='data/data_VSLAM-T1/Track1/data', result='result_1.csv', code='01'),
+        track02=dict(data='data/data_VSLAM-T2/Track2/data', result='result_2.csv', code='02'),
+    ),
+    preprocess=dict(
+        min_depth_m=0.3,          # 太近的點多為車體／雜訊
+        max_depth_m=40.0,         # LoGeR 天空與極遠處深度不可靠；超過就丟
+        voxel_m=0.25,             # 體素降採樣邊長
+        radius_outlier=dict(enabled=True, radius_m=0.6, min_neighbors=4),  # 孤立點（飛點）移除
+        sky_color=dict(enabled=False, min_blue_ratio=0.40, min_brightness=0.55, min_height_m=1.0),  # 顏色＋高度的天空遮罩
+        max_points=60000,         # 降採樣後上限（等間隔取樣，結果可重現）
+    ),
+    registration=dict(
+        method='gicp',            # 'gicp' 或 'icp_plane'
+        prior='visual',           # 'visual'（影像特徵 PnP 初值）、'motion'（等速模型）、'identity'（上一幀 pose）
+        stages=[dict(max_corr=1.0, iterations=15), dict(max_corr=0.4, iterations=30)],
+        recovery_stages=[dict(max_corr=2.5, iterations=20), dict(max_corr=1.0, iterations=20),
+                         dict(max_corr=0.4, iterations=30)],
+        robust_k_m=0.10,          # Cauchy 尺度（法向距離，公尺）
+        normal_radius_m=0.75,     # 估計法向／共變異數的鄰域半徑
+        min_neighbors=6,
+        planar_eps=1e-3,
+        index_cell_m=1.0,
+        min_correspondences=300,
+        estimate_scale=False,     # True：每幀多解一個尺度（E10 尺度一致性實驗）
+        scale_prior_weight=25.0,
+    ),
+    scale=dict(
+        mode='none',              # 'none'：不處理（預設）；'ground_height'：以相機離地高度正規化每幀尺度。
+                                  # full Track01 實測後者讓閉環處的 odometry 落差由 2.21 m 變 3.92 m（變差），故預設關閉
+        min_below_m=0.6, max_forward_m=12.0, max_lateral_m=4.0, min_points=200,
+        iterations=150, inlier_m=0.03, min_normal_y=0.9, min_inlier_ratio=0.3,
+        max_change_ratio=0.25,    # 與上一幀尺度差超過這個比例視為地面擬合失敗，沿用上一幀
+    ),
+    fusion=dict(                  # 視覺位姿當作配準最佳化的先驗（confidence-aware fusion）
+        enabled=True,
+        point_sigma_m=0.15,       # 點雲對應的殘差標準差（實測 inlier RMSE 約 0.15–0.2 m）
+        effective_points=50,      # LoGeR 的誤差在鄰近點之間高度相關，數千個對應只算這麼多個獨立量測
+        visual_trans_sigma_m=0.05,
+        visual_rot_sigma_deg=0.2,
+        reference_inliers=300,    # PnP 內點數少於此值時，視覺標準差依 sqrt(reference/inliers) 放大
+    ),
+    gate=dict(                    # 品質閘門：全部通過才接受配準結果
+        min_fitness=0.30,         # 轉彎時視野轉向新區域，與子圖重疊本來就低（實測 0.45–0.7），不能當成失敗
+        max_inlier_rmse_m=0.22,
+        max_translation_from_prior_m=1.0,   # 只在使用視覺初值時檢查
+        max_rotation_from_prior_deg=4.0,
+        max_step_translation_m=2.5,          # 單幀（0.1 s）位移上限，相當於 90 km/h
+        max_step_rotation_deg=12.0,          # 單幀轉角上限
+        max_visual_rotation_disagreement_deg=3.0,   # 配準出的相對旋轉 vs 影像估計（旋轉不受尺度影響）
+        min_normalized_eigenvalue=1e-4,              # 幾何退化指標
+    ),
+    visual=dict(
+        enabled=True,
+        frontend='sift',          # 'sift'、'orb'、'superpoint_lightglue'（實驗，需 build-learned）
+        max_keypoints=3000,
+        ratio=0.8,                # Lowe ratio test
+        mutual=True,
+        essential_threshold_px=1.0,
+        pnp_reprojection_px=2.0,
+        pnp_iterations=300,
+        min_pnp_inliers=40,
+        min_pnp_inlier_ratio=0.35,
+        min_essential_inliers=100,   # Essential 模式：內點數下限
+        min_length_points=50,        # 估計平移長度至少要有這麼多個帶 3D 的內點
+        min_flow_px=2.0,             # 特徵位移中位數低於此值視為幾乎靜止，改用 PnP
+        max_depth_m=30.0,         # 取 3D 對應時的深度上限
+        assoc_stride_px=5,        # 像素→3D 點查表的格距（LoGeR 點雲約每 4.9 px 一點，見 inspect_data）
+        debug_every=50,           # 每幾幀存一張特徵匹配圖（0 = 不存）
+    ),
+    keyframe=dict(
+        translation_m=1.0,
+        rotation_deg=5.0,         # 轉彎時更密集加 keyframe，讓子圖跟上新視野
+        max_frames_between=30,    # 追蹤失敗太久仍強制加 keyframe，避免地圖落後
+    ),
+    submap=dict(
+        window_keyframes=12,      # 局部子圖使用最近幾個 keyframe
+        voxel_m=0.25,
+        max_points=400000,
+    ),
+    loop=dict(
+        enabled=True,
+        min_keyframe_gap=80,      # 與目前 keyframe 至少相隔這麼多個 keyframe 才算重訪
+        min_votes=60,             # 描述子投票數下限
+        vote_similarity=0.80,     # RootSIFT cosine 相似度門檻
+        top_k=3,
+        min_essential_inliers=30,  # 影像門檻只負責篩掉明顯不相干的候選；真正把關的是後面的點雲配準與一致性檢查
+        min_length_points=20,
+        min_pnp_inliers=30,
+        submap_half_window=6,
+        min_fitness=0.55,
+        max_inlier_rmse_m=0.22,
+        max_translation_disagreement_m=1.0,   # 影像估計 vs 點雲配準 的一致性
+        max_rotation_disagreement_deg=4.0,
+        min_keyframes_between_loops=5,
+    ),
+    graph=dict(
+        prior_sigma=1e-4,
+        odom_rot_sigma_rad=0.01, odom_trans_sigma_m=0.05,
+        loop_rot_sigma_rad=0.02, loop_trans_sigma_m=0.15,
+        huber_k=1.345,
+    ),
+    viz=dict(                     # RViz 顯示用（只影響畫面，不影響 pose）
+        max_depth_m=15.0, frame_point_step=2, keyframe_point_step=6, submap_max_points=60000,
+    ),
+    debug=dict(cloud_every=100),  # 每幾幀存一張點雲俯視圖（0 = 不存）
+)
+
+# 消融實驗：名稱 -> 要覆寫的鍵（用 'a.b' 路徑）。EXPERIMENT 指定目前要跑哪一組。
+EXPERIMENTS = {
+    'E2_motion_icp': {'registration.prior': 'motion', 'registration.method': 'icp_plane', 'visual.enabled': False, 'loop.enabled': False},
+    'E3_motion_gicp': {'registration.prior': 'motion', 'registration.method': 'gicp', 'visual.enabled': False, 'loop.enabled': False},
+    'E5_visual_icp': {'registration.prior': 'visual', 'registration.method': 'icp_plane', 'loop.enabled': False, 'fusion.enabled': False},
+    'E6_visual_gicp': {'registration.prior': 'visual', 'registration.method': 'gicp', 'loop.enabled': False, 'fusion.enabled': False},
+    'E8_no_loop': {'loop.enabled': False},
+    'E9_full': {},
+    'E10a_ground_scale': {'scale.mode': 'ground_height'},
+    'E9b_no_fusion': {'fusion.enabled': False},
+    'E10b_scale_dof': {'registration.estimate_scale': True},
+}
+EXPERIMENT = 'E9_full'
+
+
+def load(experiment=None):
+    """回傳套用實驗覆寫後的參數副本與實驗名稱。"""
+    name = experiment or EXPERIMENT
+    params = copy.deepcopy(PARAMS)
+    for path, value in EXPERIMENTS[name].items():
+        node = params
+        keys = path.split('.')
+        for k in keys[:-1]:
+            node = node[k]
+        if keys[-1] not in node:
+            raise KeyError('未知參數 %s' % path)
+        node[keys[-1]] = value
+    return params, name
