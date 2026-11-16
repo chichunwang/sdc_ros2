@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 
 import numpy as np  # noqa: E402
 
-VERSION = 'gslam-0.5.0'
+VERSION = 'gslam-0.9.0'
 
 
 def gpu_snapshot():

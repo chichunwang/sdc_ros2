@@ -123,12 +123,18 @@ def _world_to_camera(poses, obs_frame):
     return Twc[obs_frame, :3, :3], Twc[obs_frame, :3, 3]
 
 
-def project(K, R, t, X):
-    """R、t：每個觀測的 world→camera；X：對應的世界座標點。回傳 (像素, 深度)。"""
+def project(K, R, t, X, dist=None):
+    """R、t：每個觀測的 world→camera；X：對應的世界座標點。回傳 (像素, 深度)。
+    dist：(k1, k2) 徑向畸變（與 GTSAM Cal3DS2、OpenCV 同一模型：x_d = x·(1 + k1·r² + k2·r⁴)）；None = 針孔。"""
     Xc = np.einsum('nij,nj->ni', R, X) + t
     z = Xc[:, 2]
     zs = np.where(np.abs(z) > 1e-6, z, 1e-6)
-    return np.c_[K[0, 0] * Xc[:, 0] / zs + K[0, 2], K[1, 1] * Xc[:, 1] / zs + K[1, 2]], z
+    x, y = Xc[:, 0] / zs, Xc[:, 1] / zs
+    if dist is not None:
+        r2 = x * x + y * y
+        g = 1.0 + dist[0] * r2 + dist[1] * r2 * r2
+        x, y = x * g, y * g
+    return np.c_[K[0, 0] * x + K[0, 2], K[1, 1] * y + K[1, 2]], z
 
 
 def triangulate(K, poses, obs_track, obs_frame, uv, n_tracks, iterations=3, robust_px=3.0):
@@ -212,12 +218,16 @@ def observation_sigma(sizes, cfg):
     return np.clip((np.maximum(sizes, 1e-3) / w['size_ref']) ** w['power'], w['lo'], w['hi'])
 
 
-def solve(K, poses, obs_track, obs_frame, uv, X, between, cfg, log=print, rel_sigma=None):
-    """GTSAM LM。between：[(i, j, T_rel(4×4), noise model)]；rel_sigma：各觀測的像素標準差倍數（None = 全部 1）。
-    回傳 (poses, X, info)。"""
+def solve(K, poses, obs_track, obs_frame, uv, X, between, cfg, log=print, rel_sigma=None, extra=None, calib=None):
+    """GTSAM LM。between：[(i, j, T_rel(4×4), noise model)]；rel_sigma：各觀測的像素標準差倍數（None = 全部 1）；
+    extra：fn(graph, n_poses)，再往圖裡加其他因子（例如 LoGeR 距離因子；3D 點的 key = n_poses + 軌跡編號）。
+    calib：dict(value=[fx, fy, s, cx, cy, k1, k2, p1, p2], sigmas=[...])——相機內參與畸變也當變數一起解（自校正，
+    GTSAM Cal3DS2，key = n_poses + 軌跡數）；None = 內參固定為 K 的針孔模型。
+    回傳 (poses, X, info)；自校正時 info['calibration'] 是解出的 9 個參數。"""
     import gtsam
     n = len(poses)
     cal = gtsam.Cal3_S2(float(K[0, 0]), float(K[1, 1]), 0.0, float(K[0, 2]), float(K[1, 2]))
+    ckey = n + len(X)
 
     def make_pixel(scale):
         return gtsam.noiseModel.Robust.Create(gtsam.noiseModel.mEstimator.Huber.Create(cfg['huber_k']),
@@ -238,14 +248,24 @@ def solve(K, poses, obs_track, obs_frame, uv, X, between, cfg, log=print, rel_si
                                      gtsam.noiseModel.Isotropic.Sigma(6, cfg['prior_sigma'])))
     for i, j, T_rel, noise in between:
         graph.add(gtsam.BetweenFactorPose3(int(i), int(j), gtsam.Pose3(se3.normalize(T_rel)), noise))
-    factor = gtsam.GenericProjectionFactorCal3_S2
-    for k in range(len(obs_track)):
-        graph.add(factor(uv[k], models[int(level[k])], int(obs_frame[k]), n + int(obs_track[k]), cal))
+    if calib is None:
+        factor = gtsam.GenericProjectionFactorCal3_S2
+        for k in range(len(obs_track)):
+            graph.add(factor(uv[k], models[int(level[k])], int(obs_frame[k]), n + int(obs_track[k]), cal))
+    else:
+        c0 = gtsam.Cal3DS2(*[float(v) for v in calib['value']])
+        values.insert(ckey, c0)
+        graph.add(gtsam.PriorFactorCal3DS2(ckey, c0, gtsam.noiseModel.Diagonal.Sigmas(np.asarray(calib['sigmas'], float))))
+        factor = gtsam.GeneralSFMFactor2Cal3DS2
+        for k in range(len(obs_track)):
+            graph.add(factor(gtsam.Point2(*uv[k]), models[int(level[k])], int(obs_frame[k]), n + int(obs_track[k]), ckey))
+    if extra is not None:
+        extra(graph, n)
     params = gtsam.LevenbergMarquardtParams()
     params.setMaxIterations(cfg['max_iterations'])
     params.setRelativeErrorTol(cfg['relative_error_tol'])
     try:   # 先消去 3D 點、最後才消去位姿（Schur 補的順序），填入量最少
-        last = gtsam.KeyVector(list(range(n)))
+        last = gtsam.KeyVector(list(range(n)) + ([ckey] if calib is not None else []))
         params.setOrdering(gtsam.Ordering.ColamdConstrainedLastNonlinearFactorGraph(graph, last))
     except Exception as exc:
         log('BA：無法指定消去順序（%s），使用預設 COLAMD' % exc)
@@ -257,19 +277,28 @@ def solve(K, poses, obs_track, obs_frame, uv, X, between, cfg, log=print, rel_si
                 seconds=time.perf_counter() - t0)
     new_poses = [se3.normalize(result.atPose3(i).matrix()) for i in range(n)]
     new_X = np.stack([result.atPoint3(n + j) for j in range(len(X))]) if len(X) else X
+    if calib is not None:
+        info['calibration'] = [float(v) for v in result.atCal3DS2(ckey).vector()]
     return new_poses, new_X, info
 
 
-def reprojection(K, poses, obs_track, obs_frame, uv, X):
+def calib_to_K(c):
+    """Cal3DS2 的 9 個參數 → (K 3×3, (k1, k2))。"""
+    return np.array([[c[0], c[2], c[3]], [0, c[1], c[4]], [0, 0, 1.0]]), (c[5], c[6])
+
+
+def reprojection(K, poses, obs_track, obs_frame, uv, X, dist=None):
     R, t = _world_to_camera(poses, obs_frame)
-    proj, z = project(K, R, t, X[obs_track])
+    proj, z = project(K, R, t, X[obs_track], dist)
     return np.linalg.norm(proj - uv, axis=1), z
 
 
-def run(K, poses, kpts, links, between, cfg, log=print, sizes=None, descs=None):
+def run(K, poses, kpts, links, between, cfg, log=print, sizes=None, descs=None, depths=None, imu_windows=None):
     """完整流程。poses：每幀初始位姿（camera-to-world）；kpts：每幀特徵像素座標；links：特徵匹配；
     sizes：每幀特徵的 SIFT 尺度（可省略；有給且 cfg['size_weight'] 開啟時，依尺度給每個觀測不同的權重）；
-    descs：每幀描述子（可省略；有給且 cfg['guided'] 開啟時，BA 後用投影引導補觀測再解一次）。
+    descs：每幀描述子（可省略；有給且 cfg['guided'] 開啟時，BA 後用投影引導補觀測再解一次）；
+    depths：每幀特徵的 LoGeR 深度（沒有則 NaN；有給且 cfg['depth'] 開啟時，加上 LoGeR 距離因子，見 depth_factors）；
+    imu_windows：gslam.imu.Windows（只有 Track01 有 IMU；有給且 cfg['imu'] 開啟時，第 2 輪起加上 IMU 平均速度變化因子）。
 
     回傳 (最佳化後每幀位姿, info)。軌跡太少時原樣回傳初始位姿。
     """
@@ -313,18 +342,76 @@ def run(K, poses, kpts, links, between, cfg, log=print, sizes=None, descs=None):
     log('BA：%d 條軌跡、%d 個觀測（跨圈 %d 條），初始重投影誤差中位數 %.2f px' % (
         len(X), len(obs_track), info['tracks_across_laps'], np.median(e)))
 
+    dcfg = cfg.get('depth') or {}
+    use_depth = bool(dcfg.get('enabled')) and depths is not None
+    all_depth = np.concatenate([np.asarray(d, dtype=np.float64).ravel() for d in depths]) if use_depth else None
+    state = dict(s=None)
+    icfg = cfg.get('imu') or {}
+    use_imu = bool(icfg.get('enabled')) and imu_windows is not None
+    if use_imu:
+        from . import imu as imu_mod
+        hold = icfg.get('holdout_block_frames') or 0
+        f_mask = imu_mod.block_mask(hold, keep_even=True) if hold else None   # 驗證用：只用偶數塊，奇數塊留作檢查
+        imu_k1, imu_k2 = imu_mod.factor_pairs(len(poses), imu_windows.h, f_mask)
+        info['imu'] = dict(pairs=int(len(imu_k1)), holdout_block_frames=int(hold), solves=[])
+
+    ccfg = cfg.get('calibration') or {}
+    use_cal = bool(ccfg.get('enabled'))
+    state['cal'] = [K[0, 0], K[1, 1], 0.0, K[0, 2], K[1, 2], 0.0, 0.0, 0.0, 0.0]
+
     def rounds(cur, obs_track, obs_frame, uv, X, label):
-        for r in range(cfg['rounds']):
+        n_solves = cfg['rounds']
+        if use_depth:
+            n_solves = dcfg['solves']
+        if use_imu:
+            n_solves = max(n_solves, icfg['solves'])
+        if use_cal:
+            n_solves = max(n_solves, ccfg['solves'])
+        for r in range(n_solves):
+            extras, n_depth = [], 0
+            # 自校正：第 1 輪用給定的針孔內參；之後把內參與徑向畸變當變數（起點 = 上一輪的解）
+            calib = dict(value=state['cal'], sigmas=ccfg['sigmas']) if use_cal and r > 0 else None
+            if use_depth:   # 先用目前的 BA 解出每幀的 LoGeR 尺度 s_i，再固定 s_i 解 BA（同一目標函數的交替求解）
+                d_obs = all_depth[uv[:, 3].astype(np.int64)]
+                state['s'] = frame_log_scale(K, cur, X, obs_track, obs_frame, d_obs, dcfg, state['s'])
+                fn, n_depth = depth_factors(K, uv, obs_track, obs_frame, d_obs, state['s'], dcfg)
+                extras.append(fn)
+            if use_imu and r > 0:
+                # 第 1 輪是一般 BA；之後依目前軌跡重新擬合 λ、b、g、槓桿臂，再把 IMU 平均速度變化當因子（交替求解）
+                p_cur, R_cur = imu_mod.split_poses(cur)
+                fit = imu_windows.fit(p_cur, R_cur, imu_k1, imu_k2)
+                if 'sigma_m' not in state:   # 雜訊取第一次擬合的垂直殘差（每軸）：路面近似平面，垂直殘差≈IMU 本身的雜訊上限
+                    state['sigma_m'] = icfg['sigma_m'] or max(fit['rms_v'], icfg['min_sigma_m'])
+                fn, iinfo = imu_mod.velocity_factors(imu_windows, cur, imu_k1, imu_k2, state['sigma_m'],
+                                                     icfg['huber_k'], fit)
+                extras.append(fn)
+                info['imu']['solves'].append(iinfo)
+                log('BA：IMU 因子 %d 個，λ=%.3f、|g|=%.2f、槓桿臂 %s m、擬合水平殘差 %.3f m/s、sigma %.3f m/s' % (
+                    iinfo['factors'], iinfo['lam'], iinfo['gravity_norm'], np.round(iinfo['lever'], 2),
+                    iinfo['fit_rms_h'], iinfo['sigma_m']))
+            extra = None
+            if extras:
+                def extra(graph, n_poses, extras=tuple(extras)):
+                    for fn in extras:
+                        fn(graph, n_poses)
             cur, X, round_info = solve(K, cur, obs_track, obs_frame, uv[:, :2], X, between, cfg, log,
-                                       uv[:, 2] if weighted else None)
-            e, z = reprojection(K, cur, obs_track, obs_frame, uv[:, :2], X)
+                                       uv[:, 2] if weighted else None, extra=extra, calib=calib)
+            if 'calibration' in round_info:
+                state['cal'] = round_info['calibration']
+                c = state['cal']
+                log('BA 自校正：fx %.2f fy %.2f cx %.2f cy %.2f k1 %+.5f k2 %+.5f' % (c[0], c[1], c[3], c[4], c[5], c[6]))
+            K_r, dist_r = calib_to_K(state['cal'])
+            e, z = reprojection(K_r, cur, obs_track, obs_frame, uv[:, :2], X, dist_r)
+            if use_depth:
+                round_info.update(depth_factors=n_depth, log_scale_std=float(np.std(state['s'])),
+                                  log_scale_range=[float(state['s'].min()), float(state['s'].max())])
             round_info.update(stage=label, tracks=int(len(X)), observations=int(len(obs_track)),
                               reprojection_px=dict(median=float(np.median(e)), rms=float(np.sqrt(np.mean(e ** 2))),
                                                    p95=float(np.percentile(e, 95))))
             info['rounds'].append(round_info)
             log('BA %s第 %d 輪：%d 次迭代 %.1f s，重投影誤差中位數 %.2f px、95%% %.2f px' % (
                 label, r + 1, round_info['iterations'], round_info['seconds'], np.median(e), np.percentile(e, 95)))
-            if r + 1 < cfg['rounds']:   # 丟掉殘差大或跑到相機後方的觀測，再解一次
+            if r + 1 < n_solves:   # 丟掉殘差大或跑到相機後方的觀測，再解一次
                 good = (e <= cfg['prune_px'] * uv[:, 2]) & (z > 0.1)   # 門檻跟著該觀測的 sigma 倍數放大縮小
                 obs_track, obs_frame, uv, X = _compact(np.ones(len(X), dtype=bool), obs_track, obs_frame, uv, X,
                                                        good, cfg['min_track_length'])
@@ -351,9 +438,61 @@ def run(K, poses, kpts, links, between, cfg, log=print, sizes=None, descs=None):
             len(new_t), gstat['cross_lap'], info['tracks_across_laps'], gstat['tracks_across_laps_after'],
             gstat['seconds']))
         cur, obs_track, obs_frame, uv, X = rounds(cur, obs_track, obs_frame, uv, X, '（補觀測後）')
+    if use_cal:
+        info['calibration'] = dict(zip(['fx', 'fy', 's', 'cx', 'cy', 'k1', 'k2', 'p1', 'p2'],
+                                       [float(v) for v in state['cal']]))
     info['status'] = 'ok'
     info['seconds'] = time.perf_counter() - t0
     return cur, info
+
+
+def frame_log_scale(K, poses, X, obs_track, obs_frame, depth, dcfg, s_init=None):
+    """LoGeR 每幀的尺度偏差 s_i（log）：BA 深度 ≈ exp(s_i) × LoGeR 深度。
+
+    min Σ ρ(log z_ij − log d_ij − s_i) / sigma_d² + Σ (s_i − s_{i−1})² / sigma_s²
+    ρ 為 Huber（IRLS 五次）；第二項是平滑先驗（實測相鄰幀 s 的變化約 0.018）。三對角稀疏線性系統。
+    depth：每個觀測的 LoGeR 深度（沒有則 NaN）。
+    """
+    from scipy.sparse import diags
+    from scipy.sparse.linalg import spsolve
+    n = len(poses)
+    R, t = _world_to_camera(poses, obs_frame)
+    z = (np.einsum('nij,nj->ni', R, X[obs_track]) + t)[:, 2]
+    m = np.isfinite(depth) & (depth > 0) & (z > 0.3)
+    lr = np.log(z[m]) - np.log(depth[m])
+    fr = obs_frame[m]
+    s = np.zeros(n) if s_init is None else np.asarray(s_init, dtype=np.float64).copy()
+    sd = dcfg['sigma_log_depth']
+    lam = 1.0 / dcfg['sigma_log_scale_step'] ** 2
+    main = np.full(n, 2 * lam)
+    main[0] = main[-1] = lam
+    L = diags([np.full(n - 1, -lam), main, np.full(n - 1, -lam)], [-1, 0, 1], format='csc')
+    for _ in range(5):
+        r = lr - s[fr]
+        w = np.minimum(1.0, 1.345 * sd / np.maximum(np.abs(r), 1e-9)) / sd ** 2
+        s = spsolve(L + diags(np.bincount(fr, w, n) + 1e-6, 0, format='csc'), np.bincount(fr, w * lr, n))
+    return s
+
+
+def depth_factors(K, uv, obs_track, obs_frame, depth, s, dcfg):
+    """回傳 fn(graph, n_poses)：每個有 LoGeR 深度的觀測加一個距離因子（相機中心到 3D 點）。
+
+    量測值 = exp(s_i) × LoGeR 深度沿像素視線換算的距離；標準差 = sigma_log_depth × 距離（相對誤差），Huber。
+    """
+    import gtsam
+    m = np.flatnonzero(np.isfinite(depth) & (depth > 0))
+    ray = np.linalg.norm(np.c_[(uv[m, 0] - K[0, 2]) / K[0, 0], (uv[m, 1] - K[1, 2]) / K[1, 1], np.ones(len(m))], axis=1)
+    meas = depth[m] * ray * np.exp(s[obs_frame[m]])
+    level = np.round(np.log(meas * dcfg['sigma_log_depth']) / 0.05).astype(np.int64)   # 標準差分級共用 noise model
+    huber = gtsam.noiseModel.mEstimator.Huber.Create(dcfg['huber_k'])
+    models = {int(v): gtsam.noiseModel.Robust.Create(huber, gtsam.noiseModel.Isotropic.Sigma(1, float(np.exp(v * 0.05))))
+              for v in np.unique(level)}
+    frames, tracks = obs_frame[m], obs_track[m]
+
+    def add(graph, n_poses):
+        for fi, tj, r, lv in zip(frames.tolist(), tracks.tolist(), meas.tolist(), level.tolist()):
+            graph.add(gtsam.RangeFactor3D(fi, n_poses + tj, r, models[lv]))
+    return add, int(len(m))
 
 
 def guided_observations(K, poses, X, obs_track, obs_frame, obs_node, all_kpts, offsets, descs, gcfg):
@@ -473,10 +612,12 @@ def save_input(path, K, poses, kpts, links, between_raw, sizes=None):
 def load_input(path):
     d = np.load(path)
     off = np.concatenate([[0], np.cumsum(d['counts'])])
-    kpts = [d['kpts'][off[i]:off[i + 1]].astype(np.float64) for i in range(len(d['counts']))]
+    kp = d['kpts']
+    kpts = [kp[off[i]:off[i + 1]].astype(np.float64) for i in range(len(off) - 1)]
     links, s = [], 0
+    pairs = d['link_pairs']   # 只讀一次：NpzFile 每次取值都會重新解壓整個陣列，切片 view 又會把整份陣列留在記憶體
     for a, b, m in d['link_frames']:
-        links.append((int(a), int(b), d['link_pairs'][s:s + m]))
+        links.append((int(a), int(b), pairs[s:s + m].copy()))
         s += m
     between_raw = [(int(i), int(j), T, int(kind)) for (i, j, kind), T in zip(d['between_ij'], d['between_T'])]
     return d['K'], list(d['poses']), kpts, links, between_raw

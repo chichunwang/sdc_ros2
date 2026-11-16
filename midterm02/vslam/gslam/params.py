@@ -143,6 +143,23 @@ PARAMS = dict(
         size_weight=dict(enabled=False, size_ref=6.0, power=0.4, lo=0.6, hi=2.5),
         # BA 後的投影引導補觀測：把附近幀（相距 radius_m、夾角 ≤ max_angle_deg，含其他圈）看到的 3D 點投影到本幀，
         # 在 search_px 內找描述子相似度 ≥ min_similarity 且比第二名高 similarity_margin 的特徵，加入後再解一次
+        # LoGeR 深度因子：相機到 3D 點的距離 ≈ exp(s_i) × LoGeR 距離；s_i 是每幀未知的 LoGeR 尺度偏差，相鄰幀平滑。
+        # sigma_log_depth：同一幀內相對深度的誤差（實測 MAD 0.087）；sigma_log_scale_step：相鄰幀 s 的變化（實測 0.018）。
+        # solves：交替求解次數（每次先解 s 再解 BA）
+        depth=dict(enabled=False, sigma_log_depth=0.10, sigma_log_scale_step=0.02, huber_k=1.345, solves=3),
+        # IMU 加速度計的平均速度變化因子（gslam/imu.py；只有 Track01 有 IMU，沒有 imu.csv 時自動略過）。
+        # half_window：平均速度的半窗（幀，5 = 1 s）；offset_s：camera time + offset = imu time（陀螺儀實測 −0.02 s）；
+        # sigma_m：每軸雜訊（m/s），None = 用第一次擬合的垂直殘差（實測約 0.022）；solves：BA 求解次數（第 1 次不加 IMU）；
+        # holdout_block_frames：驗證用，>0 時只在偶數塊加因子，奇數塊留給 IMU 一致性檢查（正式結果用 0）
+        imu=dict(enabled=False, half_window=5, offset_s=-0.02, sigma_m=None, min_sigma_m=0.01, huber_k=1.345,
+                 solves=3, holdout_block_frames=0),
+        # 相機自校正（Cal3DS2）：第 2 輪起把內參與徑向畸變 k1、k2 當變數。sigmas 是先驗標準差，順序
+        # [fx, fy, s, cx, cy, k1, k2, p1, p2]：焦距固定（fx 已由陀螺儀驗證）、主點 5 px、k1/k2 寬鬆、切向畸變固定
+        calibration=dict(enabled=False, solves=3, sigmas=[1e-6, 1e-6, 1e-6, 5.0, 5.0, 0.5, 0.5, 1e-6, 1e-6]),
+        # 學習式特徵軌跡（gslam/learned_tracks.py）：只用在 BA。extractor：'superpoint' 或 'aliked'；
+        # combine_sift：True = SIFT 與學習式特徵兩組軌跡一起進 BA；skip_frames：每幀和前 1…N 幀配對（實測 3 沒有幫助）
+        learned=dict(enabled=False, extractor='superpoint', max_keypoints=4096, skip_frames=1, combine_sift=True,
+                     ransac_px=1.0, min_inliers=30),
         guided=dict(enabled=False, radius_m=5.0, max_angle_deg=30.0, search_px=3.0, min_similarity=0.85,
                     similarity_margin=0.05, max_depth_m=40.0, lap_gap_frames=200),
         rounds=2,
@@ -179,9 +196,25 @@ EXPERIMENTS = {
     # 更多影像配對：三項全開 = 2611161431（Public 0.097，比預設差）
     'E14_bundle_more_pairs': {'bundle.skip_frames': 3, 'bundle.revisit_links': True, 'bundle.resolve_conflicts': True},
     'E16_size_weight': {'bundle.size_weight': dict(enabled=True, size_ref=6.0, power=0.4, lo=0.6, hi=2.5)},
+    'E18_depth': {'bundle.depth': dict(enabled=True, sigma_log_depth=0.10, sigma_log_scale_step=0.02, huber_k=1.345,
+                                       solves=3)},
     'E17_guided': {'bundle.guided': dict(enabled=True, radius_m=5.0, max_angle_deg=30.0, search_px=3.0,
                                          min_similarity=0.85, similarity_margin=0.05, max_depth_m=40.0,
                                          lap_gap_frames=200)},
+    # IMU 平均速度變化因子（gslam/imu.py）。離線（2611161129 的 BA 輸入）：軌跡只移動 0.004 m（132 幀視窗中位數），
+    # IMU 一致性 0.1325 → 0.1282 m/s；影響小於 Public 能分辨的程度，尚未跑 full
+    'E19_imu': {'bundle.imu': dict(enabled=True, half_window=5, offset_s=-0.02, sigma_m=None, min_sigma_m=0.01,
+                                   huber_k=1.345, solves=3, holdout_block_frames=0)},
+    # 學習式特徵（SuperPoint＋LightGlue）與 SIFT 兩組軌跡一起進 BA。離線（2611161129 的 BA 輸入）：
+    # 與基本 BA 差 0.028 m（132 幀視窗中位數），IMU 一致性 0.133 → 0.121 m/s
+    'E20_learned': {'bundle.learned': dict(enabled=True, extractor='superpoint', max_keypoints=4096, skip_frames=1,
+                                           combine_sift=True, ransac_px=1.0, min_inliers=30)},
+    'E20a_learned_aliked': {'bundle.learned': dict(enabled=True, extractor='aliked', max_keypoints=4096, skip_frames=1,
+                                                   combine_sift=False, ransac_px=1.0, min_inliers=30)},
+    # 相機自校正：離線（2611161129 的 BA 輸入）估出 k1≈−0.056、k2≈+0.086、cy −9 px，前後半段各自估計一致；
+    # BA 代價 −12.6%、IMU 一致性 0.135 → 0.124、陀螺儀偏航差 0.0059 → 0.0049 rad/s
+    'E21_selfcalib': {'bundle.calibration': dict(enabled=True, solves=3,
+                                                 sigmas=[1e-6, 1e-6, 1e-6, 5.0, 5.0, 0.5, 0.5, 1e-6, 1e-6])},
     'E15_more_features': {'visual.max_keypoints': 6000},   # 每張影像的 SIFT 特徵數加倍，BA 的觀測更多
     'E14a_bundle_skip_only': {'bundle.skip_frames': 3, 'bundle.resolve_conflicts': True},
     'E14b_bundle_revisit_only': {'bundle.revisit_links': True, 'bundle.resolve_conflicts': True},

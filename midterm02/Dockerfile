@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-# 選用：SuperPoint + LightGlue 實驗前端（待 E3 QA 確認前不納入正式結果）。
+# 選用：學習式特徵（SuperPoint／ALIKED + LightGlue，官方規則允許的公開預訓練模型）。
 # 建置時加 --build-arg INSTALL_LEARNED=1 才安裝。
 ARG INSTALL_LEARNED=0
 COPY requirements-learned.txt /tmp/requirements-learned.txt

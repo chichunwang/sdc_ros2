@@ -90,7 +90,7 @@ def match_descriptors(da, db, ratio=0.8, mutual=True):
 
 
 class LearnedFrontend:
-    """SuperPoint + LightGlue（PyTorch CUDA）。實驗選項：需 `scripts/dev.sh build-learned`，且待 E3 QA 確認。"""
+    """SuperPoint + LightGlue（PyTorch CUDA）。需 `scripts/dev.sh build-learned`（官方規則允許的公開預訓練模型）。"""
 
     def __init__(self, cfg):
         import torch

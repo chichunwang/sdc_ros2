@@ -73,6 +73,32 @@ class BundleTest(unittest.TestCase):
         self.assertTrue(info['size_weighted'])
         self.assertEqual(info['status'], 'ok')
 
+    def test_depth_factors(self):
+        # LoGeR 深度 = 真實深度 × exp(-s_i)（s_i 平滑變化）× 5% 雜訊；應估回 s_i，且 BA 正常收斂
+        import gtsam
+        poses, kpts, links, ids = scene(return_ids=True)
+        rng = np.random.default_rng(5)
+        s_true = 0.1 * np.sin(np.arange(len(poses)) / 3.0)
+        # 用 build_tracks + 三角化取得每個觀測的深度，再組回每幀陣列
+        counts = [len(k) for k in kpts]
+        t, f, k, n = bundle.build_tracks(counts, links, 3)
+        off = np.concatenate([[0], np.cumsum(counts)])
+        X, _, z, _ = bundle.triangulate(K, poses, t, f, np.concatenate(kpts)[off[f] + k], n)
+        flat = np.full(off[-1], np.nan)
+        flat[off[f] + k] = z * np.exp(-s_true[f]) * np.exp(rng.normal(0, 0.05, len(z)))
+        depths = [flat[off[i]:off[i + 1]] for i in range(len(kpts))]
+        dcfg = dict(enabled=True, sigma_log_depth=0.10, sigma_log_scale_step=0.05, huber_k=1.345, solves=3)
+        s = bundle.frame_log_scale(K, poses, X, t, f, flat[off[f] + k], dcfg)
+        self.assertLess(np.abs((s - s.mean()) - (s_true - s_true.mean())).max(), 0.03)
+        loose = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.05] * 3 + [0.2] * 3))
+        between = [(i - 1, i, se3.inv(poses[i - 1]) @ poses[i], loose) for i in range(1, len(poses))]
+        out, info = bundle.run(K, poses, kpts, links, between, dict(CFG, depth=dcfg), log=lambda *_: None,
+                               depths=depths)
+        self.assertEqual(info['status'], 'ok')
+        self.assertEqual(len(info['rounds']), 3)
+        self.assertGreater(info['rounds'][-1]['depth_factors'], 1000)
+        self.assertLess(info['rounds'][-1]['reprojection_px']['median'], 0.6)
+
     def test_guided_observations(self):
         # 第 7 幀的配對全部拿掉：它的觀測原本不屬於任何軌跡；投影引導應該把它們接回「同一個 3D 點」的軌跡
         poses, kpts, links, ids = scene(return_ids=True)

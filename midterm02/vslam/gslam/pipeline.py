@@ -57,7 +57,9 @@ class Slam:
         self.frame_kpts = []       # 每幀的特徵像素座標（BA 用）
         self.links = []            # 特徵匹配：(幀 a, 幀 b, 兩幀的特徵索引對)，含相鄰幀、跨幾幀與閉環
         self.frame_sizes = []      # 每幀特徵的 SIFT 尺度（BA 依它給觀測權重）
+        self.frame_depths = []     # 每幀特徵的 LoGeR 深度（BA 的深度因子用）
         self.frame_feats = []    # 每幀的特徵（描述子在 GPU）；BA 前找跨圈影像對時要用
+        self.frame_ds_index = []   # 本地幀 → 資料集索引（BA 前重讀影像抽學習式特徵用）
         self.link_counts = dict(consecutive=0, skip=0, loop=0, revisit=0)
         self.pose_graph_poses = None
         self.bundle_info = None
@@ -151,6 +153,7 @@ class Slam:
     def process(self, local, i):
         p = self.p
         t_start = time.perf_counter()
+        self.frame_ds_index.append(i)
         xyz, rgb = self.ds.load_cloud(i)
         image = self.ds.load_image(i) if (self.frontend is not None or self.viz is not None) else None
         # ---- 逐幀尺度正規化（相機離地高度）：之後所有幾何（配準、PnP 的 3D 點）都用正規化後的點雲
@@ -347,6 +350,8 @@ class Slam:
                 self.viz.graph([k.T for k in self.keyframes], [(c, q) for c, q, _ in self.loops], sub)
         self.frame_kpts.append(feats.kpts if feats is not None else np.zeros((0, 2)))
         self.frame_sizes.append(feats.size if feats is not None else np.zeros(0))
+        # 每個特徵在該幀 LoGeR 點雲的深度（查不到為 NaN）；BA 的深度因子用
+        self.frame_depths.append(np.where(valid3d, pts3d[:, 2], np.nan) if feats is not None else np.zeros(0))
         self.frame_feats.append(feats if self.p['bundle']['enabled'] else None)
         self.prev_feats, self.prev_pts3d, self.prev_valid, self.prev_img = feats, pts3d, valid3d, image
         rec['total_ms'] = (time.perf_counter() - t_start) * 1000
@@ -613,12 +618,40 @@ class Slam:
             t0 = time.perf_counter()
             self._revisit_links(poses)
             self.log('BA：依位姿補上 %d 對跨圈影像（%.1f s）' % (self.link_counts['revisit'], time.perf_counter() - t0))
+        kpts, links = self.frame_kpts, self.links
+        sizes, depths = self.frame_sizes, self.frame_depths
+        descs = [None if ft is None else ft.desc for ft in self.frame_feats]
+        lcfg = cfg.get('learned') or {}
+        if lcfg.get('enabled'):
+            # 學習式特徵軌跡：相鄰幀＋前端已接受的非相鄰影像對（閉環、跨圈）；SIFT 軌跡依 combine_sift 保留或取代
+            from . import learned_tracks
+            extra = sorted({(a, b) for a, b, _ in self.links if b - a > 1})
+            lk, ll, linfo = learned_tracks.build(lambda j: self.ds.load_image(self.frame_ds_index[j]), len(poses),
+                                                 extra, self.ds.K, lcfg, seed=self.p['seed'], log=self.log)
+            self.learned_info = linfo
+            if lcfg['combine_sift']:
+                kpts, links = learned_tracks.merge(self.frame_kpts, self.links, lk, ll)
+            else:
+                kpts, links = lk, ll
+            sizes = depths = descs = None   # 這三項是逐特徵對齊 SIFT 的（尺度加權、深度因子、投影引導），學習式軌跡不支援
         if self.debug_dir is not None and cfg['save_input']:
-            bundle.save_input(self.debug_dir / 'bundle_input.npz', self.ds.K, poses, self.frame_kpts, self.links, raw,
-                              self.frame_sizes)
+            bundle.save_input(self.debug_dir / 'bundle_input.npz', self.ds.K, poses, kpts, links, raw, sizes)
         between = [(i, j, T, noise[kind]) for i, j, T, kind in raw]
-        out, self.bundle_info = bundle.run(self.ds.K, poses, self.frame_kpts, self.links, between, cfg, self.log,
-                                           sizes=self.frame_sizes,
-                                           descs=[None if ft is None else ft.desc for ft in self.frame_feats])
+        windows = None
+        icfg = cfg.get('imu') or {}
+        if icfg.get('enabled'):
+            if self.ds.imu_path is None or 'R_cam_imu' not in self.ds.camera_info:
+                self.log('BA：這個 Track 沒有 IMU，略過 IMU 因子')
+            else:
+                from . import imu
+                imu_t, f_cam = imu.load(self.ds.imu_path, self.ds.camera_info['R_cam_imu'])
+                frame_ns = np.array([int(r['timestamp_ns']) for r in self.records], dtype=np.int64)
+                if len(frame_ns) != len(poses):
+                    raise RuntimeError('IMU 因子：幀時間 %d 筆與位姿 %d 筆不一致' % (len(frame_ns), len(poses)))
+                windows = imu.Windows(frame_ns, imu_t, f_cam, icfg['half_window'], icfg['offset_s'])
+        out, self.bundle_info = bundle.run(self.ds.K, poses, kpts, links, between, cfg, self.log,
+                                           sizes=sizes, descs=descs, depths=depths, imu_windows=windows)
         self.bundle_info['image_pair_kinds'] = dict(self.link_counts)
+        if lcfg.get('enabled'):
+            self.bundle_info['learned'] = self.learned_info
         return out
