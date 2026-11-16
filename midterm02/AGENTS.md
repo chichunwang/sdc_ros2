@@ -27,7 +27,7 @@
 ## 執行與授權
 
 - 完整 Track SLAM（full）由使用者親自啟動；助理完成開發與必要檢查後提供可直接執行的命令。短段（限定幀數）測試須有明確幀數授權，不得延伸成 full 授權。
-- 修改程式前檢查是否有使用者啟動中的 full；不停止、不重啟、不在執行中換檔。GPU 工作（深度學習模型、CUDA 配準）不得並行爭用同一張 GPU。
+- 修改程式前檢查是否有使用者啟動中的 full；不停止、不重啟、不在執行中換檔。GPU 可以同時跑多個工作（使用者 2026-11-16 決定，取代根目錄 AGENTS.md「GPU 工作不並行」的規定；96 GB 顯示記憶體足夠）。
 - **算法程式從頭重寫（使用者 2026-11-13 決定）**：不搬移、不 import `midterm01/`、`midterm01_gpu/` 的算法程式（配準、濾波、尺度、IMU 等），以官方 starter 為起點自行實作。只沿用 midterm01_gpu 的 run 目錄／輸出格式與證據保存規則。
 - Kaggle 資料包整包原樣解壓到 `data/`（得到 `data/data_VSLAM-T1/Track1/data/…` 與 `data/data_VSLAM-T1/image_slam_starter/`），唯讀，不改名、不重寫、不覆寫。starter 原檔留在資料包內；修改一律在 `vslam/` 的副本進行，並在 `vslam/origin.json` 記錄來源檔與 SHA256。
 - **資料授權**：資料（含 bundle 內 starter code）只供本課程比賽，未經助教許可不得散布。`data/` 永不進 Git；含 starter 衍生程式的 `vslam/` 只能推到私人遠端。

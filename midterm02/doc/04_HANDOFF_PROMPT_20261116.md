@@ -14,7 +14,7 @@
 - 程式只在 Docker 容器 `midterm02_vslam` 裡跑：主機指令要包 `sg docker -c '...'`。
   - 測試：`sg docker -c 'docker exec -i midterm02_vslam python -m unittest discover -s tests'`
   - full（使用者已授權本工作的 full；一定開 RViz）：`sg docker -c './scripts/dev.sh slam --track 01 --experiment <名稱>'`，約 10 分鐘，放背景執行。
-- full 執行中不改程式檔；不可同時跑兩個 GPU 工作。
+- full 執行中不改程式檔（`vslam/`）；GPU 可以同時跑多個工作（使用者 2026-11-16 決定）。
 - Kaggle 提交、選定最終提交、E3 上傳、寄信都由使用者做。使用者回報分數後，記到該 run 的 `test_info.json`（`public_score`、`reported_by: user`、`reported_at`、`score_source`），並更新 doc/03 的分數表。
 - 未經使用者同意不 commit（使用者自己 commit）。`data/` 唯讀、不進 Git。
 - 子代理角色在 `code_base/sdc_ros2/.claude/agents/`（quick-scan、docs-helper、small-fix、run-analysis）；演算法與數值留在主代理。
@@ -71,6 +71,16 @@ E18 的做法：每幀一個未知的 LoGeR 尺度 s_i（相鄰幀平滑，σ=0.
 - DROID-SLAM（獨立容器 `docker/droid/`）的軌跡和基本 BA 只差約 4 cm，代表誤差主要是兩者共有的；兩者共用的是 `camera_info.json` 的針孔內參。
 - BA 自校正發現殘餘徑向畸變（k1≈−0.056、k2≈+0.087，中段約 4.5 px）與 cy 偏約 9 px；前後半段各自估計一致，陀螺儀與 IMU 也支持。
 - `E21_selfcalib`（gslam 0.9.0）full：`outputs/run/track01_full_2611161931/result_1.csv`，與基本 BA 差 5.5 cm。**Kaggle 分數待回報**。詳見 doc/03。
+
+## 待提交候選（2026-11-16 晚；使用者當日提交已滿，12 小時後一次提交 10 個）
+
+完整清單、每個要驗證的事與 IMU 一致性見 doc/03「待提交的候選」：E21、D2、D1、E22、F（E22＋D2）、F（E21＋D2）、E25、E24、F（三方）、M1。
+**E25 狀態**：已完成（`outputs/run/track01_full_2611162103`，submission check OK）。IMU 一致性 0.122，比 E22 的 0.114 差；離 DROID 也比 E22 遠。跨圈配對沒有幫助（E24 對 E21 也是如此），只作為成對比較的候選。
+接手時先看 log 是否有 `submission check: OK`，再用 `outputs/cache/cmp.py`、`dev20_check.py` 和 E22／E24 比較，補進 doc/03 候選表第 7 項。
+注意：第 1 輪初始重投影誤差中位數 2.71 px、95% 4.51 px，比 E22 高（學習式特徵也配對了 1554 對跨圈影像，跨圈軌跡 16.6 萬條），要確認跨圈錯配沒有把軌跡拉壞。
+使用者回報分數後：記到各 run 的 `test_info.json`，更新 doc/03 分數表，依成對比較（E21 vs 0.085、D2 vs D1、E22 vs E21、F vs 來源）決定方向。
+其他新增：DROID（`docker/droid`、`scripts/run_droid.py`）、MASt3R-SLAM（`docker/mast3r`、`scripts/run_mast3r.py`）、融合（`scripts/fuse_trajectories.py`）、深度模型評估（`docker/depth`，結論：不取代 LoGeR）。
+規則變更：學習式特徵等官方允許模型可直接用、GPU 可同時跑多個工作（midterm02/AGENTS.md）。
 
 ## 依 E18 分數決定下一步（已完成：結果「差不多」，經 IMU 檢查後不採用）
 

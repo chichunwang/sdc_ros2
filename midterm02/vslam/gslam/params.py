@@ -215,6 +215,21 @@ EXPERIMENTS = {
     # BA 代價 −12.6%、IMU 一致性 0.135 → 0.124、陀螺儀偏航差 0.0059 → 0.0049 rad/s
     'E21_selfcalib': {'bundle.calibration': dict(enabled=True, solves=3,
                                                  sigmas=[1e-6, 1e-6, 1e-6, 5.0, 5.0, 0.5, 0.5, 1e-6, 1e-6])},
+    # 自校正＋學習式特徵（SuperPoint＋LightGlue 與 SIFT 兩組軌跡）
+    'E22_selfcalib_learned': {
+        'bundle.calibration': dict(enabled=True, solves=3, sigmas=[1e-6, 1e-6, 1e-6, 5.0, 5.0, 0.5, 0.5, 1e-6, 1e-6]),
+        'bundle.learned': dict(enabled=True, extractor='superpoint', max_keypoints=4096, skip_frames=1,
+                               combine_sift=True, ransac_px=1.0, min_inliers=30)},
+    # 自校正＋依位姿的跨圈影像配對（E14b 的跨圈配對，在正確的相機模型下重測；Private 看整條路線的跨圈一致性）
+    'E24_selfcalib_revisit': {
+        'bundle.calibration': dict(enabled=True, solves=3, sigmas=[1e-6, 1e-6, 1e-6, 5.0, 5.0, 0.5, 0.5, 1e-6, 1e-6]),
+        'bundle.revisit_links': True, 'bundle.resolve_conflicts': True},
+    # E22＋E24：自校正＋學習式特徵＋依位姿的跨圈配對（學習式特徵也會配對跨圈影像對）
+    'E25_selfcalib_learned_revisit': {
+        'bundle.calibration': dict(enabled=True, solves=3, sigmas=[1e-6, 1e-6, 1e-6, 5.0, 5.0, 0.5, 0.5, 1e-6, 1e-6]),
+        'bundle.learned': dict(enabled=True, extractor='superpoint', max_keypoints=4096, skip_frames=1,
+                               combine_sift=True, ransac_px=1.0, min_inliers=30),
+        'bundle.revisit_links': True, 'bundle.resolve_conflicts': True},
     'E15_more_features': {'visual.max_keypoints': 6000},   # 每張影像的 SIFT 特徵數加倍，BA 的觀測更多
     'E14a_bundle_skip_only': {'bundle.skip_frames': 3, 'bundle.resolve_conflicts': True},
     'E14b_bundle_revisit_only': {'bundle.revisit_links': True, 'bundle.resolve_conflicts': True},

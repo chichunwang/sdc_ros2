@@ -13,7 +13,7 @@ import shutil
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-FROZEN_FOLDERS = ('vslam', 'scripts', 'config', 'tests')
+FROZEN_FOLDERS = ('vslam', 'scripts', 'config', 'tests', 'docker')
 try:
     from zoneinfo import ZoneInfo
     TZ = ZoneInfo('Asia/Taipei')
