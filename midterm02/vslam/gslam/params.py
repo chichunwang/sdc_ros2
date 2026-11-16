@@ -93,7 +93,12 @@ PARAMS = dict(
         min_keyframe_gap=80,      # 與目前 keyframe 至少相隔這麼多個 keyframe 才算重訪
         min_votes=60,             # 描述子投票數下限
         vote_similarity=0.80,     # RootSIFT cosine 相似度門檻
-        top_k=3,
+        top_k=2,                  # 最多幾群候選（每群對應較早的一圈）
+        per_cluster=2,            # 每群最多驗證幾個 keyframe
+        cluster_separation=40,    # keyframe 編號相差超過這個值才算不同圈
+        max_loops_per_keyframe=2,
+        scale_dof=dict(enabled=True, prior_weight=0.0),   # 閉環配準時多解一個尺度（不加先驗），吸收兩圈點雲的尺度差
+        fuse_visual=True,         # 閉環相對位姿以影像幾何為先驗
         min_essential_inliers=30,  # 影像門檻只負責篩掉明顯不相干的候選；真正把關的是後面的點雲配準與一致性檢查
         min_length_points=20,
         min_pnp_inliers=30,
@@ -102,11 +107,19 @@ PARAMS = dict(
         max_inlier_rmse_m=0.22,
         max_translation_disagreement_m=1.0,   # 影像估計 vs 點雲配準 的一致性
         max_rotation_disagreement_deg=4.0,
-        min_keyframes_between_loops=5,
+        min_keyframes_between_loops=1,   # 1 = 每個 keyframe 都嘗試閉環（密集跨圈約束）
+    ),
+    scale_graph=dict(             # 結束時用相鄰幀深度比＋閉環尺度比解每幀尺度，修正里程計長度
+        enabled=True,
+        sequential_sigma=0.01,    # 相鄰幀深度比（log）的標準差
+        loop_sigma=0.03,          # 閉環尺度比（log）的標準差
+        missing_sigma=0.05,       # 沒有量測的相鄰幀：假設尺度不變，但信心低
+        min_ratio=0.8,            # 深度比超出 [0.8, 1.25] 視為離群
     ),
     graph=dict(
         prior_sigma=1e-4,
-        odom_rot_sigma_rad=0.01, odom_trans_sigma_m=0.05,
+        odom_rot_sigma_rad=0.01, odom_trans_sigma_m=0.03,
+        odom_scale_sigma=0.10,    # 里程計長度的比例誤差（同地點跨圈的 LoGeR 深度比實測標準差約 8%）
         loop_rot_sigma_rad=0.02, loop_trans_sigma_m=0.15,
         huber_k=1.345,
     ),
@@ -124,6 +137,12 @@ EXPERIMENTS = {
     'E6_visual_gicp': {'registration.prior': 'visual', 'registration.method': 'gicp', 'loop.enabled': False, 'fusion.enabled': False},
     'E8_no_loop': {'loop.enabled': False},
     'E9_full': {},
+    'E9d_sparse_loops': {'loop.min_keyframes_between_loops': 5, 'loop.max_loops_per_keyframe': 1, 'loop.top_k': 1,
+                         'loop.per_cluster': 3, 'loop.fuse_visual': False, 'graph.odom_scale_sigma': 0.0, 'graph.odom_trans_sigma_m': 0.05,
+                         'loop.scale_dof': {'enabled': False, 'prior_weight': 0.0}},   # 2611160111（Public 0.369）的設定
+    'E9e_isotropic_odom': {'graph.odom_scale_sigma': 0.0, 'graph.odom_trans_sigma_m': 0.05},
+    'E9f_loop_icp_only': {'loop.fuse_visual': False, 'loop.scale_dof': {'enabled': False, 'prior_weight': 0.0}},
+    'E11_no_scale_graph': {'scale_graph.enabled': False},
     'E10a_ground_scale': {'scale.mode': 'ground_height'},
     'E9b_no_fusion': {'fusion.enabled': False},
     'E10b_scale_dof': {'registration.estimate_scale': True},

@@ -35,6 +35,9 @@ class Slam:
         self.frontend = vis_mod.make_frontend(params['visual']) if params['visual']['enabled'] else None
         self.keyframes = []
         self.loops = []            # 已接受的閉環邊：(match_kf, query_kf, T_rel)
+        self.loop_scale = {}       # (match_kf, query_kf) -> 閉環配準量到的點雲尺度比
+        self.sigma = None          # 尺度圖解出的每幀 log 尺度
+        self.odom_scaled = None
         self.loop_rows = []        # 所有候選的紀錄
         self.records = []
         self.odom = []
@@ -94,8 +97,11 @@ class Slam:
         wr = (f['point_sigma_m'] / (np.deg2rad(f['visual_rot_sigma_deg']) * grow)) ** 2 / f['effective_points']
         return T_visual, (wt, wr)
 
-    def _register(self, src, src_cov, model, T_init, stages, scale_init, prior_T=None, prior_weights=None):
-        reg = self.p['registration']
+    def _register(self, src, src_cov, model, T_init, stages, scale_init, prior_T=None, prior_weights=None,
+                  scale_dof=None):
+        reg = dict(self.p['registration'])
+        if scale_dof is not None:   # 閉環配準可單獨決定要不要解尺度
+            reg.update(estimate_scale=scale_dof['enabled'], scale_prior_weight=scale_dof['prior_weight'])
         return register(src, model, T_init, method=reg['method'], stages=stages, robust_k=reg['robust_k_m'],
                         src_cov=src_cov, scale_init=scale_init, estimate_scale=reg['estimate_scale'],
                         scale_prior_weight=reg['scale_prior_weight'],
@@ -356,16 +362,32 @@ class Slam:
         if self.bank is None:
             return ''
         votes = vis_mod.vote_candidates(kf.feats.desc, self.bank, self.bank_owner, upto, cfg['vote_similarity'])
-        candidates = [int(c) for c in np.argsort(-votes, kind='stable')[:cfg['top_k']] if votes[c] >= cfg['min_votes']]
-        if not candidates:
+        # 候選分群：票數高的 keyframe 通常是同一圈裡相鄰的幾個；相隔夠遠的才算另一圈。每群取票數最高的幾個。
+        clusters = []
+        for c in np.argsort(-votes, kind='stable'):
+            c = int(c)
+            if votes[c] < cfg['min_votes']:
+                break
+            for group in clusters:
+                if abs(group[0] - c) < cfg['cluster_separation']:
+                    if len(group) < cfg['per_cluster']:
+                        group.append(c)
+                    break
+            else:
+                if len(clusters) < cfg['top_k']:
+                    clusters.append([c])
+        if not clusters:
             return 'no_candidate'
+        accepted_count = 0
         vcfg = dict(self.p['visual'], min_pnp_inliers=cfg['min_pnp_inliers'], min_flow_px=0.0,
                     min_essential_inliers=cfg['min_essential_inliers'], min_length_points=cfg['min_length_points'])
-        for c in candidates:
+        for c in [c for group in clusters for c in group]:
+            if any(abs(c - a) < cfg['cluster_separation'] for a, q, _ in self.loops if q == kf.id):
+                continue   # 這一群已經有被接受的閉環
             cand = self.keyframes[c]
             row = dict(query_kf=kf.id, match_kf=c, accepted=0, fitness='', inlier_rmse='', reason='', votes=int(votes[c]),
                        matches=0, essential_inliers=0, pnp_inliers=0, translation_disagreement_m='',
-                       rotation_disagreement_deg='', T_rel='')
+                       rotation_disagreement_deg='', T_rel='', relative_scale='')
             self.loop_rows.append(row)
             matches = self.frontend.match(cand.feats, kf.feats)
             v = vis_mod.estimate_relative_pose(cand.feats.kpts, kf.feats.kpts, matches, cand.pts3d, cand.valid3d,
@@ -386,7 +408,11 @@ class Slam:
             except ValueError:
                 row['reason'] = 'candidate_submap_failed'
                 continue
-            result = self._register(kf.src, kf.src_cov, model, T_init, self.p['registration']['stages'], kf.scale)
+            # 影像估計當先驗（兩個 keyframe 相距很近，深度誤差對它影響小）；點雲配準放開尺度，吸收兩圈點雲的尺度差
+            fuse_T, fuse_w = self._fusion(v, T_init) if cfg['fuse_visual'] else (None, None)
+            result = self._register(kf.src, kf.src_cov, model, T_init, self.p['registration']['stages'], kf.scale,
+                                    fuse_T, fuse_w, scale_dof=cfg['scale_dof'])
+            row['relative_scale'] = result['scale'] / kf.scale
             dt, dr = se3.relative_error(T_init, result['T'])
             row.update(fitness=result['fitness'], inlier_rmse=result['inlier_rmse'], translation_disagreement_m=dt,
                        rotation_disagreement_deg=float(np.rad2deg(dr)))
@@ -399,12 +425,15 @@ class Slam:
             T_rel = se3.normalize(se3.inv(cand.T) @ result['T'])
             row.update(accepted=1, reason='accepted', T_rel=' '.join('%.9g' % x for x in T_rel[:3].ravel()))
             self.loops.append((c, kf.id, T_rel))
+            self.loop_scale[(c, kf.id)] = float(row['relative_scale'])
             self.last_loop_kf = kf.id
-            return 'accepted'
-        return 'rejected'
+            accepted_count += 1
+            if accepted_count >= cfg['max_loops_per_keyframe']:
+                break
+        return 'accepted' if accepted_count else 'rejected'
 
     # ------------------------------------------------------------ pose graph
-    def optimize(self):
+    def optimize(self, odom=None, loops=None, from_odometry=False):
         """以 GTSAM（CPU）最佳化 keyframe pose graph，並把結果寫回 keyframe。
 
         節點：keyframe pose（SE(3)）。第 0 個 keyframe 加先驗固定規範自由度（gauge）。
@@ -412,21 +441,31 @@ class Slam:
         """
         import gtsam
         g = self.p['graph']
+        odom = self.odom if odom is None else odom
+        loops = self.loops if loops is None else loops
         graph = gtsam.NonlinearFactorGraph()
         initial = gtsam.Values()
         sig = lambda r, t: np.array([r, r, r, t, t, t], dtype=np.float64)  # GTSAM Pose3 順序：旋轉在前
-        graph.add(gtsam.PriorFactorPose3(0, gtsam.Pose3(self.odom[self.keyframes[0].idx]),
+        graph.add(gtsam.PriorFactorPose3(0, gtsam.Pose3(odom[self.keyframes[0].idx]),
                                          gtsam.noiseModel.Diagonal.Sigmas(sig(g['prior_sigma'], g['prior_sigma']))))
-        odom_noise = gtsam.noiseModel.Diagonal.Sigmas(sig(g['odom_rot_sigma_rad'], g['odom_trans_sigma_m']))
         loop_noise = gtsam.noiseModel.Robust.Create(
             gtsam.noiseModel.mEstimator.Huber.Create(g['huber_k']),
             gtsam.noiseModel.Diagonal.Sigmas(sig(g['loop_rot_sigma_rad'], g['loop_trans_sigma_m'])))
         for kf in self.keyframes:
-            initial.insert(kf.id, gtsam.Pose3(se3.normalize(kf.T)))
+            initial.insert(kf.id, gtsam.Pose3(se3.normalize(odom[kf.idx] if from_odometry else kf.T)))
         for a, b in zip(self.keyframes[:-1], self.keyframes[1:]):
-            rel = se3.normalize(se3.inv(self.odom[a.idx]) @ self.odom[b.idx])
-            graph.add(gtsam.BetweenFactorPose3(a.id, b.id, gtsam.Pose3(rel), odom_noise))
-        for c, q, T_rel in self.loops:
+            rel = se3.normalize(se3.inv(odom[a.idx]) @ odom[b.idx])
+            # 里程計邊的不確定度：橫向與旋轉很準（來自 Essential matrix），沿行進方向的長度來自 LoGeR 深度、
+            # 有比例誤差，所以沿行進方向的標準差 = max(橫向標準差, 比例 × 位移長度)。
+            # GTSAM 的 BetweenFactor 平移誤差表示在第二個 pose 的座標，行進方向在該座標是 R_relᵀ·t̂。
+            cov = np.diag(sig(g['odom_rot_sigma_rad'], g['odom_trans_sigma_m']) ** 2)
+            length = float(np.linalg.norm(rel[:3, 3]))
+            along = max(g['odom_trans_sigma_m'], g['odom_scale_sigma'] * length)
+            if length > 1e-6:
+                d = rel[:3, :3].T @ (rel[:3, 3] / length)
+                cov[3:, 3:] += (along ** 2 - g['odom_trans_sigma_m'] ** 2) * np.outer(d, d)
+            graph.add(gtsam.BetweenFactorPose3(a.id, b.id, gtsam.Pose3(rel), gtsam.noiseModel.Gaussian.Covariance(cov)))
+        for c, q, T_rel in loops:
             graph.add(gtsam.BetweenFactorPose3(c, q, gtsam.Pose3(T_rel), loop_noise))
         result = gtsam.LevenbergMarquardtOptimizer(graph, initial).optimize()
         for kf in self.keyframes:
@@ -434,11 +473,59 @@ class Slam:
         self.optimizations += 1
         return dict(initial_error=float(graph.error(initial)), final_error=float(graph.error(result)))
 
+    def solve_scales(self):
+        """尺度圖：解每幀點雲的 log 尺度 σ_i（點雲 = e^{σ_i} × 真實幾何），線性最小平方。
+
+        觀察：同一地點不同圈的 LoGeR 深度可差 2–3 成，里程計每段的長度（由上一幀深度決定）跟著偏。
+        量測：
+        - 相鄰幀：影像匹配點的深度比 r_i = z(上一幀尺度)/z(本幀尺度) → σ_i − σ_{i−1} = −log r_i
+        - 閉環：配準時把 query 點雲乘上 s 才貼合較早那圈的子圖 → σ_query − σ_match = −log s
+        - 規範：σ_0 = 0（整體尺度任意，評分會做 Sim(3) 對齊）
+        相鄰幀的量測連乘會漂移；閉環把不同圈的同一地點綁在一起，也把一整圈的累積漂移攤平。
+        """
+        cfg = self.p['scale_graph']
+        n = len(self.odom)
+        rows = []
+        for i in range(1, n):
+            r = self.records[i]['visual_scale_ratio']
+            if r != '' and cfg['min_ratio'] < r < 1.0 / cfg['min_ratio']:
+                rows.append((i - 1, i, -np.log(r), 1.0 / cfg['sequential_sigma']))
+            else:
+                rows.append((i - 1, i, 0.0, 1.0 / cfg['missing_sigma']))
+        for (c, q), sc in self.loop_scale.items():
+            rows.append((self.keyframes[c].idx, self.keyframes[q].idx, -np.log(sc), 1.0 / cfg['loop_sigma']))
+        A = np.zeros((len(rows) + 1, n))
+        b = np.zeros(len(rows) + 1)
+        for k, (i, j, value, w) in enumerate(rows):
+            A[k, i], A[k, j], b[k] = -w, w, w * value
+        A[-1, 0] = 1e3
+        sigma = np.linalg.lstsq(A, b, rcond=None)[0]
+        return sigma - np.median(sigma)
+
     def finalize(self):
-        """回傳 (odometry poses, optimized poses)。沒有閉環時兩者相同。"""
+        """回傳 (odometry poses, optimized poses, info)。沒有閉環時兩者相同。"""
         odom = [T.copy() for T in self.odom]
         if not self.loops:
             return odom, [T.copy() for T in odom], None
-        info = self.optimize()
-        optimized = se3.distribute_corrections(odom, [kf.idx for kf in self.keyframes], [kf.T for kf in self.keyframes])
+        if not self.p['scale_graph']['enabled']:
+            info = self.optimize()
+            return odom, se3.distribute_corrections(odom, [kf.idx for kf in self.keyframes],
+                                                    [kf.T for kf in self.keyframes]), info
+        # 先用尺度圖修正每段里程計的長度（第 i 步的長度由第 i−1 幀的深度決定），再做 pose graph
+        self.sigma = self.solve_scales()
+        scaled = [odom[0].copy()]
+        for i in range(1, len(odom)):
+            rel = se3.inv(odom[i - 1]) @ odom[i]
+            rel[:3, 3] *= np.exp(-self.sigma[i - 1])
+            scaled.append(se3.normalize(scaled[-1] @ rel))
+        loops = []
+        for c, q, T_rel in self.loops:
+            T = T_rel.copy()
+            T[:3, 3] *= np.exp(-self.sigma[self.keyframes[c].idx])
+            loops.append((c, q, T))
+        self.odom_scaled = scaled
+        info = self.optimize(odom=scaled, loops=loops, from_odometry=True)
+        info['scale_graph'] = dict(sigma_min=float(self.sigma.min()), sigma_max=float(self.sigma.max()),
+                                   sigma_std=float(self.sigma.std()))
+        optimized = se3.distribute_corrections(scaled, [kf.idx for kf in self.keyframes], [kf.T for kf in self.keyframes])
         return odom, optimized, info

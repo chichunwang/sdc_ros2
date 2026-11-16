@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 
 import numpy as np  # noqa: E402
 
-VERSION = 'gslam-0.1.0'
+VERSION = 'gslam-0.2.0'
 
 
 def gpu_snapshot():
@@ -106,6 +106,10 @@ def main():
         outputs.write_rows(run / 'loop_candidates.csv', outputs.LOOP_DETAIL_COLUMNS, slam.loop_rows)
         outputs.write_poses(run / 'poses_odometry.csv', timestamps, odom)
         outputs.write_poses(run / 'poses_optimized.csv', timestamps, optimized)
+        if slam.odom_scaled is not None:   # 尺度圖修正長度後、尚未做 pose graph 的里程計
+            outputs.write_poses(run / 'poses_odometry_scaled.csv', timestamps, slam.odom_scaled)
+            outputs.write_rows(run / 'scale_graph.csv', ['idx', 'timestamp_ns', 'log_scale'],
+                               [[i, timestamps[i], float(v)] for i, v in enumerate(slam.sigma)])
 
         kf_indices = [kf.idx for kf in slam.keyframes]
         outputs.save_trajectory(str(run / 'debug' / 'trajectory_preview'), odom, optimized, kf_indices, slam.loops,

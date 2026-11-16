@@ -19,7 +19,8 @@ FRAME_COLUMNS = ['idx', 'timestamp_ns', 'points_raw', 'points_used', 'keypoints'
                  'visual_length_mad_m', 'pnp_length_m']
 LOOP_COLUMNS = ['query_kf', 'match_kf', 'accepted', 'fitness', 'inlier_rmse', 'reason']
 LOOP_DETAIL_COLUMNS = LOOP_COLUMNS + ['votes', 'matches', 'essential_inliers', 'pnp_inliers',
-                                      'translation_disagreement_m', 'rotation_disagreement_deg', 'T_rel']
+                                      'translation_disagreement_m', 'rotation_disagreement_deg', 'T_rel',
+                                      'relative_scale']
 
 
 def _fmt(v):

@@ -4,8 +4,9 @@
     python scripts/lap_consistency.py outputs/run/<run> [--poses poses_optimized.csv] [--window 132]
 
 做法：用該 run 已接受的閉環配對（match_kf 在較早的圈、query_kf 在較晚的圈）當作「同一地點」的錨點。
-以每個錨點為中心各取一段軌跡（晚的那圈取 window 幀，早的那圈取寬一點），把晚的那段用 Sim(3) 對齊到早的那段的
-折線上（最近點迭代＋Umeyama），回報對齊後的 RMSE。
+以每個錨點為中心各取一段軌跡（晚的那圈取 window 幀，早的那圈取寬一點），回報兩個數：
+- local：把晚的那段用 Sim(3) 對齊到早的那段的折線上（最近點迭代＋Umeyama）後的 RMSE——局部形狀是否一致。
+- global：完全不重新對齊，直接量晚的那段到早的那段的距離——整條軌跡跨圈是否疊合。
 
 意義與限制：
 - 這量的是「重複性」不是精度：兩圈若有相同的系統性變形，這裡看不出來。
@@ -74,12 +75,17 @@ def main():
         if lo < e_hi or hi > len(xyz) or e_lo < 0:
             continue
         rmse, scale = align_rmse(xyz[lo:hi], xyz[e_lo:e_hi])
-        out.append((early, late, rmse, scale))
+        ref = densify(xyz[e_lo:e_hi])
+        raw = float(np.sqrt(np.mean(((xyz[lo:hi][:, None, :] - ref[None]) ** 2).sum(-1).min(axis=1))))  # 不重新對齊
+        out.append((early, late, rmse, scale, raw))
         print('early %4d  late %4d  rmse %.3f m  scale(late→early) %.3f' % (early, late, rmse, scale))
     if out:
         r = np.array([o[2] for o in out]); s = np.array([o[3] for o in out])
-        print('%s %s: n=%d  rmse median %.3f  mean %.3f  max %.3f | scale median %.3f  min %.3f  max %.3f' % (
-            run.name, a.poses, len(out), np.median(r), r.mean(), r.max(), np.median(s), s.min(), s.max()))
+        g = np.array([o[4] for o in out])
+        print('%s %s: n=%d  local rmse median %.3f  mean %.3f  max %.3f | scale median %.3f  min %.3f  max %.3f'
+              ' | global (no re-alignment) median %.3f  max %.3f' % (
+                  run.name, a.poses, len(out), np.median(r), r.mean(), r.max(), np.median(s), s.min(), s.max(),
+                  np.median(g), g.max()))
 
 
 if __name__ == '__main__':
