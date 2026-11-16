@@ -55,7 +55,10 @@ class Slam:
         self.h_ref = None
         self.cloud_scale_prev = 1.0
         self.frame_kpts = []       # 每幀的特徵像素座標（BA 用）
-        self.links = []            # 特徵匹配：(幀 a, 幀 b, 兩幀的特徵索引對)，含相鄰幀與閉環
+        self.links = []            # 特徵匹配：(幀 a, 幀 b, 兩幀的特徵索引對)，含相鄰幀、跨幾幀與閉環
+        self.frame_sizes = []      # 每幀特徵的 SIFT 尺度（BA 依它給觀測權重）
+        self.frame_feats = []    # 每幀的特徵（描述子在 GPU）；BA 前找跨圈影像對時要用
+        self.link_counts = dict(consecutive=0, skip=0, loop=0, revisit=0)
         self.pose_graph_poses = None
         self.bundle_info = None
 
@@ -230,6 +233,8 @@ class Slam:
                 link_mask = visual['essential_mask'] if visual['mode'] == 'essential' else visual['pnp_mask']
                 if visual['ok'] and link_mask is not None:
                     self.links.append((local - 1, local, matches[link_mask]))
+                    self.link_counts['consecutive'] += 1
+            self._skip_links(local, feats)
 
             # ---- 初值候選
             priors = {}
@@ -341,6 +346,8 @@ class Slam:
                     sub = cp.asnumpy(pts[::max(1, len(pts) // p['viz']['submap_max_points'])])
                 self.viz.graph([k.T for k in self.keyframes], [(c, q) for c, q, _ in self.loops], sub)
         self.frame_kpts.append(feats.kpts if feats is not None else np.zeros((0, 2)))
+        self.frame_sizes.append(feats.size if feats is not None else np.zeros(0))
+        self.frame_feats.append(feats if self.p['bundle']['enabled'] else None)
         self.prev_feats, self.prev_pts3d, self.prev_valid, self.prev_img = feats, pts3d, valid3d, image
         rec['total_ms'] = (time.perf_counter() - t_start) * 1000
         self.records.append(rec)
@@ -439,6 +446,7 @@ class Slam:
             link_mask = v['essential_mask'] if v['mode'] == 'essential' else v['pnp_mask']
             if link_mask is not None:   # 跨圈的特徵匹配：BA 會把兩圈看到的同一個點合併成一條軌跡
                 self.links.append((cand.idx, kf.idx, matches[link_mask]))
+                self.link_counts['loop'] += 1
             self.last_loop_kf = kf.id
             accepted_count += 1
             if accepted_count >= cfg['max_loops_per_keyframe']:
@@ -515,6 +523,43 @@ class Slam:
         sigma = np.linalg.lstsq(A, b, rcond=None)[0]
         return sigma - np.median(sigma)
 
+    def _skip_links(self, local, feats):
+        """BA 用：目前這幀再和前第 2…skip_frames 幀比對，讓同一個特徵點的軌跡更長、中間斷掉時接得回來。"""
+        cfg = self.p['bundle']
+        if feats is None or not cfg['enabled']:
+            return
+        for gap in range(2, cfg['skip_frames'] + 1):
+            j = local - gap
+            if j < 0 or self.frame_feats[j] is None:
+                continue
+            old = self.frame_feats[j]
+            good = vis_mod.verify_matches(old.kpts, feats.kpts, self.frontend.match(old, feats), self.ds.K,
+                                          cfg['link_ransac_px'], cfg['link_min_inliers'],
+                                          seed=self.p['seed'] + local + 100000 * gap)
+            if good is not None:
+                self.links.append((j, local, good))
+                self.link_counts['skip'] += 1
+
+    def _revisit_links(self, poses):
+        """BA 用：依 pose graph 的結果找出經過同一地點的影像對（不同圈），比對特徵並做幾何驗證。
+
+        閉環偵測只在 keyframe 之間、每個 keyframe 最多接受一兩對；這裡每一幀都找，
+        讓不同圈看到的同一個點盡量合併成同一條軌跡，BA 才能把各圈綁在同一份地圖上。
+        """
+        from . import bundle
+        cfg = self.p['bundle']
+        have = {(a, b) for a, b, _ in self.links}
+        for j, i in bundle.revisit_pairs(poses, cfg['lap_gap_frames'], cfg['revisit_radius_m'],
+                                         float(np.cos(np.deg2rad(cfg['revisit_max_angle_deg'])))):
+            fa, fb = self.frame_feats[j], self.frame_feats[i]
+            if fa is None or fb is None or (j, i) in have:
+                continue
+            good = vis_mod.verify_matches(fa.kpts, fb.kpts, self.frontend.match(fa, fb), self.ds.K,
+                                          cfg['link_ransac_px'], cfg['link_min_inliers'], seed=self.p['seed'] + i)
+            if good is not None:
+                self.links.append((j, i, good))
+                self.link_counts['revisit'] += 1
+
     def finalize(self):
         """回傳 (odometry poses, 最終 poses, info)。
 
@@ -564,8 +609,16 @@ class Slam:
                  1: gtsam.noiseModel.Robust.Create(
                      gtsam.noiseModel.mEstimator.Huber.Create(g['huber_k']),
                      gtsam.noiseModel.Diagonal.Sigmas(sig(g['loop_rot_sigma_rad'], g['loop_trans_sigma_m'])))}
+        if cfg['revisit_links']:
+            t0 = time.perf_counter()
+            self._revisit_links(poses)
+            self.log('BA：依位姿補上 %d 對跨圈影像（%.1f s）' % (self.link_counts['revisit'], time.perf_counter() - t0))
         if self.debug_dir is not None and cfg['save_input']:
-            bundle.save_input(self.debug_dir / 'bundle_input.npz', self.ds.K, poses, self.frame_kpts, self.links, raw)
+            bundle.save_input(self.debug_dir / 'bundle_input.npz', self.ds.K, poses, self.frame_kpts, self.links, raw,
+                              self.frame_sizes)
         between = [(i, j, T, noise[kind]) for i, j, T, kind in raw]
-        out, self.bundle_info = bundle.run(self.ds.K, poses, self.frame_kpts, self.links, between, cfg, self.log)
+        out, self.bundle_info = bundle.run(self.ds.K, poses, self.frame_kpts, self.links, between, cfg, self.log,
+                                           sizes=self.frame_sizes,
+                                           descs=[None if ft is None else ft.desc for ft in self.frame_feats])
+        self.bundle_info['image_pair_kinds'] = dict(self.link_counts)
         return out

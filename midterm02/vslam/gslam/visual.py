@@ -17,8 +17,10 @@ from . import se3
 class Features:
     """一張影像的特徵：kpts (N,2) 像素座標、desc（GPU，已正規化的 float32）、原始資料 raw（學習式前端用）。"""
 
-    def __init__(self, kpts, desc, raw=None):
+    def __init__(self, kpts, desc, raw=None, size=None):
         self.kpts = np.asarray(kpts, dtype=np.float64).reshape(-1, 2)
+        # 特徵被偵測到的尺度（px）；BA 用它估計定位誤差。沒有這項資訊的前端一律當 6 px（權重 1）
+        self.size = np.full(len(self.kpts), 6.0) if size is None else np.asarray(size, dtype=np.float64)
         self.desc = desc
         self.raw = raw
 
@@ -45,7 +47,7 @@ class ClassicFrontend:
         if desc is None or len(kp) == 0:
             return Features(np.zeros((0, 2)), cp.zeros((0, 128 if self.kind == 'sift' else 256), dtype=cp.float32))
         pts = np.array([k.pt for k in kp], dtype=np.float64)
-        return Features(pts, normalize_descriptors(desc, self.kind))
+        return Features(pts, normalize_descriptors(desc, self.kind), size=[k.size for k in kp])
 
     def match(self, fa, fb):
         return match_descriptors(fa.desc, fb.desc, self.cfg['ratio'], self.cfg['mutual'])
@@ -214,6 +216,22 @@ def translation_length(R, t_dir, pts3d_ref, kpts_cur, K):
     lam = np.sum(a[keep] * b[keep], axis=1) / np.maximum(aa[keep], 1e-12)
     med = float(np.median(lam))
     return med, float(np.median(np.abs(lam - med))), int(keep.sum())
+
+
+def verify_matches(kpts_a, kpts_b, matches, K, threshold_px, min_inliers, seed=0):
+    """只做幾何驗證（Essential matrix RANSAC），回傳通過的匹配 (M,2)；不夠 min_inliers 回傳 None。
+
+    給 BA 補充影像對用（跨幾幀、跨圈）：這裡不需要相對位姿，只要挑出符合同一組對極幾何的匹配。
+    """
+    if len(matches) < max(8, min_inliers):
+        return None
+    cv2.setRNGSeed(int(seed))
+    _, mask = cv2.findEssentialMat(kpts_a[matches[:, 0]], kpts_b[matches[:, 1]], K, method=cv2.RANSAC, prob=0.999,
+                                   threshold=threshold_px)
+    if mask is None:
+        return None
+    keep = mask.ravel().astype(bool)
+    return matches[keep] if keep.sum() >= min_inliers else None
 
 
 def estimate_relative_pose(kpts_ref, kpts_cur, matches, pts3d_ref, valid_ref, K, cfg,

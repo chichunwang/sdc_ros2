@@ -5,7 +5,7 @@
 ## 目前狀態（2026-11-16）
 
 - 新增自寫的 GPU 視覺引導幾何 SLAM `vslam/gslam/`（入口 `vslam/run_slam.py`）、GPU 版 Dockerfile／compose、`scripts/gpu_check.py`、`scripts/inspect_data.py` 與測試。設計、GPU／CPU 分工、執行順序見 [doc/03](doc/03_GSLAM_DESIGN_AND_STATUS_20261116.md)。
-- 容器 `midterm02_vslam:py39-gpu` 已建置；GPU 驗證與 32 項合成測試通過。第一版 full（`track01_full_2611160111`）Kaggle Public **0.369**（baseline 0.955）。第二版（密集閉環＋尺度處理，`track01_full_2611160533`）Public **0.144**。第三版加上多幀重投影最佳化（bundle adjustment），在 `outputs/run/track01_full_2611161129/result_1.csv`，**尚未提交**。
+- 容器 `midterm02_vslam:py39-gpu` 已建置；GPU 驗證與 34 項合成測試通過。第一版 full（`track01_full_2611160111`）Kaggle Public **0.369**（baseline 0.955）。第二版（密集閉環＋尺度處理，`track01_full_2611160533`）Public **0.144**。第三版（加上多幀重投影最佳化 bundle adjustment，`track01_full_2611161129`）Public **0.085**。第四版（BA 再加跨幀與跨圈配對，`outputs/run/track01_full_2611161431/result_1.csv`）**尚未提交**。
 - **手動執行一律用 `./scripts/dev.sh slam --track 01`**：會自動開 RViz 視窗（相機影像、特徵匹配、點雲地圖、軌跡、keyframe、閉環），說明見 doc/03 的「用 RViz 觀看執行過程」。
 - 參數集中在 `vslam/gslam/params.py`；容器映像改名為 `midterm02_vslam:py39-gpu`。
 

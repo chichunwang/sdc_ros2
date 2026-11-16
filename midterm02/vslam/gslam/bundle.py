@@ -20,12 +20,15 @@ import numpy as np
 from . import se3
 
 
-def build_tracks(counts, links, min_length=3):
+def build_tracks(counts, links, min_length=3, resolve=True):
     """把兩兩影像的特徵匹配連成軌跡。
 
     counts：每幀的特徵數；links：[(frame_a, frame_b, pairs(M,2))]，pairs 是兩幀各自的特徵索引。
     每個特徵是圖上一個節點、每個匹配是一條邊；一個連通元件就是「同一個 3D 點在各幀的觀測」。
-    同一元件若在同一幀出現兩個不同特徵，代表中間有錯誤匹配，整條丟掉。
+    同一元件若在同一幀出現兩個不同特徵（錯誤匹配，或 SIFT 在同一位置給了兩個方向不同的特徵）：
+    - resolve=True：只對這些元件依 links 的順序重新逐條合併，會造成「同一幀兩個特徵」的那條匹配就跳過。
+      所以 links 要把比較可靠的匹配排前面（run() 依兩幀的間隔由小到大排）。
+    - resolve=False：整條丟掉。
     回傳 (obs_track, obs_frame, obs_feat, n_tracks)，依軌跡編號排序。
     """
     from scipy.sparse import coo_matrix
@@ -46,7 +49,18 @@ def build_tracks(counts, links, min_length=3):
     # 同一軌跡、同一幀只能有一個特徵
     pair_id = lab.astype(np.int64) * len(counts) + frame
     distinct = np.bincount(lab[np.unique(pair_id, return_index=True)[1]], minlength=len(size))
-    good = (size >= min_length) & (distinct == size)
+    conflict = distinct != size
+    if resolve and np.any(conflict & (size >= min_length)):
+        lab = lab.copy()
+        on = conflict[label[a]]
+        root = _merge_without_conflict(a[on], b[on], offsets)
+        mine = conflict[lab]
+        # 重新編號：衝突元件裡的節點改用「合併後的根節點」當軌跡編號（接在原編號之後，不會撞號）
+        lab[mine] = len(size) + np.array([root[int(x)] for x in nodes[mine]], dtype=np.int64)
+        size = np.bincount(lab)
+        good = size >= min_length
+    else:
+        good = (size >= min_length) & ~conflict
     keep = good[lab]
     nodes, lab, frame = nodes[keep], lab[keep], frame[keep]
     order = np.argsort(lab, kind='stable')
@@ -54,6 +68,54 @@ def build_tracks(counts, links, min_length=3):
     _, track = np.unique(lab, return_inverse=True)
     return track.astype(np.int64), frame.astype(np.int64), (nodes - offsets[frame]).astype(np.int64), \
         int(track.max() + 1) if len(track) else 0
+
+
+def _merge_without_conflict(a, b, offsets):
+    """依序處理每條匹配 (a[k], b[k])：兩邊所屬的軌跡沒有共同的幀才合併。回傳 {節點: 根節點}。"""
+    nodes = np.unique(np.concatenate([a, b]))
+    frame_of = dict(zip(nodes.tolist(), (np.searchsorted(offsets, nodes, side='right') - 1).tolist()))
+    parent = {x: x for x in frame_of}
+    frames = {x: {f} for x, f in frame_of.items()}
+
+    def find(x):
+        r = x
+        while parent[r] != r:
+            r = parent[r]
+        while parent[x] != r:
+            parent[x], x = r, parent[x]
+        return r
+
+    for u, v in zip(a.tolist(), b.tolist()):
+        ru, rv = find(u), find(v)
+        if ru == rv:
+            continue
+        fu, fv = frames[ru], frames[rv]
+        if not fu.isdisjoint(fv):
+            continue
+        if len(fu) < len(fv):
+            ru, rv, fu, fv = rv, ru, fv, fu
+        parent[rv] = ru
+        fu |= fv
+        del frames[rv]
+    return {x: find(x) for x in parent}
+
+
+def revisit_pairs(poses, min_gap, radius_m, min_cos, cluster_gap=30):
+    """依目前位姿找「重訪」的影像對：幀 j 比幀 i 早至少 min_gap 幀、相機位置相距 radius_m 以內、
+    光軸方向夾角餘弦 ≥ min_cos。符合的 j 若連成好幾段（代表經過同一地點好幾次），每段只取位置最近的一幀。
+    回傳 [(j, i)]，j < i。"""
+    P = np.stack(poses)
+    xyz, fwd = P[:, :3, 3], P[:, :3, 2]
+    idx = np.arange(len(P))
+    pairs = []
+    for i in range(len(P)):
+        d = np.linalg.norm(xyz - xyz[i], axis=1)
+        js = np.flatnonzero((idx <= i - min_gap) & (d < radius_m) & (fwd @ fwd[i] >= min_cos))
+        if len(js) == 0:
+            continue
+        for grp in np.split(js, np.flatnonzero(np.diff(js) > cluster_gap) + 1):
+            pairs.append((int(grp[np.argmin(d[grp])]), i))
+    return pairs
 
 
 def _world_to_camera(poses, obs_frame):
@@ -137,13 +199,35 @@ def _compact(keep_track, obs_track, obs_frame, uv, X, keep_obs, min_length):
     return new_id[obs_track[keep_obs]], obs_frame[keep_obs], uv[keep_obs], X[alive]
 
 
-def solve(K, poses, obs_track, obs_frame, uv, X, between, cfg, log=print):
-    """GTSAM LM。between：[(i, j, T_rel(4×4), noise model)]。回傳 (poses, X, info)。"""
+def observation_sigma(sizes, cfg):
+    """每個觀測的像素標準差（相對於 pixel_sigma 的倍數）。
+
+    SIFT 特徵的 size 是它被偵測到的尺度（px）。尺度大的特徵是在模糊、降解析度的影像上找到的，定位比較不準：
+    實測重投影誤差中位數由 size<2.5 的 0.23 px 增加到 size>30 的 0.75 px，大致是 size 的 0.4 次方。
+    所以 sigma = (size / size_ref) ** power，夾在 [lo, hi]；size_weight 關閉或沒有 size 時全部為 1。
+    """
+    w = cfg.get('size_weight')
+    if not w or not w.get('enabled') or sizes is None:
+        return None
+    return np.clip((np.maximum(sizes, 1e-3) / w['size_ref']) ** w['power'], w['lo'], w['hi'])
+
+
+def solve(K, poses, obs_track, obs_frame, uv, X, between, cfg, log=print, rel_sigma=None):
+    """GTSAM LM。between：[(i, j, T_rel(4×4), noise model)]；rel_sigma：各觀測的像素標準差倍數（None = 全部 1）。
+    回傳 (poses, X, info)。"""
     import gtsam
     n = len(poses)
     cal = gtsam.Cal3_S2(float(K[0, 0]), float(K[1, 1]), 0.0, float(K[0, 2]), float(K[1, 2]))
-    pixel = gtsam.noiseModel.Robust.Create(gtsam.noiseModel.mEstimator.Huber.Create(cfg['huber_k']),
-                                           gtsam.noiseModel.Isotropic.Sigma(2, cfg['pixel_sigma']))
+
+    def make_pixel(scale):
+        return gtsam.noiseModel.Robust.Create(gtsam.noiseModel.mEstimator.Huber.Create(cfg['huber_k']),
+                                              gtsam.noiseModel.Isotropic.Sigma(2, cfg['pixel_sigma'] * scale))
+    if rel_sigma is None:
+        level = np.zeros(len(obs_track), dtype=np.int64)
+        models = [make_pixel(1.0)]
+    else:   # 量化成 0.05 一級，同一級共用一個 noise model
+        level = np.round(rel_sigma / 0.05).astype(np.int64)
+        models = {int(v): make_pixel(v * 0.05) for v in np.unique(level)}
     graph = gtsam.NonlinearFactorGraph()
     values = gtsam.Values()
     for i, T in enumerate(poses):
@@ -156,7 +240,7 @@ def solve(K, poses, obs_track, obs_frame, uv, X, between, cfg, log=print):
         graph.add(gtsam.BetweenFactorPose3(int(i), int(j), gtsam.Pose3(se3.normalize(T_rel)), noise))
     factor = gtsam.GenericProjectionFactorCal3_S2
     for k in range(len(obs_track)):
-        graph.add(factor(uv[k], pixel, int(obs_frame[k]), n + int(obs_track[k]), cal))
+        graph.add(factor(uv[k], models[int(level[k])], int(obs_frame[k]), n + int(obs_track[k]), cal))
     params = gtsam.LevenbergMarquardtParams()
     params.setMaxIterations(cfg['max_iterations'])
     params.setRelativeErrorTol(cfg['relative_error_tol'])
@@ -182,21 +266,32 @@ def reprojection(K, poses, obs_track, obs_frame, uv, X):
     return np.linalg.norm(proj - uv, axis=1), z
 
 
-def run(K, poses, kpts, links, between, cfg, log=print):
-    """完整流程。poses：每幀初始位姿（camera-to-world）；kpts：每幀特徵像素座標；links：特徵匹配。
+def run(K, poses, kpts, links, between, cfg, log=print, sizes=None, descs=None):
+    """完整流程。poses：每幀初始位姿（camera-to-world）；kpts：每幀特徵像素座標；links：特徵匹配；
+    sizes：每幀特徵的 SIFT 尺度（可省略；有給且 cfg['size_weight'] 開啟時，依尺度給每個觀測不同的權重）；
+    descs：每幀描述子（可省略；有給且 cfg['guided'] 開啟時，BA 後用投影引導補觀測再解一次）。
 
     回傳 (最佳化後每幀位姿, info)。軌跡太少時原樣回傳初始位姿。
     """
     t0 = time.perf_counter()
     counts = [len(k) for k in kpts]
-    obs_track, obs_frame, obs_feat, n_tracks = build_tracks(counts, links, cfg['min_track_length'])
-    info = dict(tracks_raw=n_tracks, observations_raw=int(len(obs_track)))
+    links = sorted(links, key=lambda link: link[1] - link[0])   # 穩定排序：間隔小（較可靠）的匹配先合併
+    obs_track, obs_frame, obs_feat, n_tracks = build_tracks(counts, links, cfg['min_track_length'],
+                                                            cfg.get('resolve_conflicts', True))
+    info = dict(tracks_raw=n_tracks, observations_raw=int(len(obs_track)), image_pairs=len(links))
     if n_tracks < cfg['min_tracks']:
         info['status'] = 'too_few_tracks'
         return [T.copy() for T in poses], info
-    uv = np.concatenate([np.asarray(k, dtype=np.float64).reshape(-1, 2) for k in kpts])[
-        np.concatenate([[0], np.cumsum(counts)])[obs_frame] + obs_feat]
-    X, err, z, parallax = triangulate(K, poses, obs_track, obs_frame, uv, n_tracks)
+    offsets = np.concatenate([[0], np.cumsum(counts)]).astype(np.int64)
+    node = offsets[obs_frame] + obs_feat
+    all_kpts = np.concatenate([np.asarray(k, dtype=np.float64).reshape(-1, 2) for k in kpts])
+    uv = all_kpts[node]
+    all_rel = observation_sigma(None if sizes is None else np.concatenate(
+        [np.asarray(s, dtype=np.float64).ravel() for s in sizes]), cfg)
+    weighted = all_rel is not None
+    # 第三欄：每個觀測的 sigma 倍數；第四欄：特徵的全域索引。兩欄跟著篩選一起走；幾何運算只用前兩欄
+    uv = np.c_[uv, all_rel[node] if weighted else np.ones(len(uv)), node]
+    X, err, z, parallax = triangulate(K, poses, obs_track, obs_frame, uv[:, :2], n_tracks)
     obs_track, obs_frame, uv, X = select(obs_track, obs_frame, uv, X, err, z, parallax, cfg)
     if cfg['max_observations'] and len(obs_track) > cfg['max_observations']:
         # 觀測太多時等間隔抽掉整條軌跡（固定規則，結果可重現）
@@ -209,38 +304,165 @@ def run(K, poses, kpts, links, between, cfg, log=print):
     lo = np.full(len(X), 10 ** 9, dtype=np.int64)
     np.maximum.at(span, obs_track, obs_frame)
     np.minimum.at(lo, obs_track, obs_frame)
-    e, _ = reprojection(K, poses, obs_track, obs_frame, uv, X)
-    info.update(tracks=int(len(X)), observations=int(len(obs_track)),
+    e, _ = reprojection(K, poses, obs_track, obs_frame, uv[:, :2], X)
+    info.update(size_weighted=bool(weighted), tracks=int(len(X)), observations=int(len(obs_track)),
                 tracks_across_laps=int(np.sum(span - lo > cfg['lap_gap_frames'])),
                 frames_with_observations=int(len(np.unique(obs_frame))),
                 reprojection_px_initial=dict(median=float(np.median(e)), rms=float(np.sqrt(np.mean(e ** 2)))),
                 prepare_seconds=time.perf_counter() - t0, rounds=[])
     log('BA：%d 條軌跡、%d 個觀測（跨圈 %d 條），初始重投影誤差中位數 %.2f px' % (
         len(X), len(obs_track), info['tracks_across_laps'], np.median(e)))
-    cur = [T.copy() for T in poses]
-    for r in range(cfg['rounds']):
-        cur, X, round_info = solve(K, cur, obs_track, obs_frame, uv, X, between, cfg, log)
-        e, z = reprojection(K, cur, obs_track, obs_frame, uv, X)
-        round_info.update(tracks=int(len(X)), observations=int(len(obs_track)),
-                          reprojection_px=dict(median=float(np.median(e)), rms=float(np.sqrt(np.mean(e ** 2))),
-                                               p95=float(np.percentile(e, 95))))
-        info['rounds'].append(round_info)
-        log('BA 第 %d 輪：%d 次迭代 %.1f s，重投影誤差中位數 %.2f px、95%% %.2f px' % (
-            r + 1, round_info['iterations'], round_info['seconds'], np.median(e), np.percentile(e, 95)))
-        if r + 1 < cfg['rounds']:   # 丟掉殘差大或跑到相機後方的觀測，再解一次
-            good = (e <= cfg['prune_px']) & (z > 0.1)
-            obs_track, obs_frame, uv, X = _compact(np.ones(len(X), dtype=bool), obs_track, obs_frame, uv, X, good,
-                                                   cfg['min_track_length'])
+
+    def rounds(cur, obs_track, obs_frame, uv, X, label):
+        for r in range(cfg['rounds']):
+            cur, X, round_info = solve(K, cur, obs_track, obs_frame, uv[:, :2], X, between, cfg, log,
+                                       uv[:, 2] if weighted else None)
+            e, z = reprojection(K, cur, obs_track, obs_frame, uv[:, :2], X)
+            round_info.update(stage=label, tracks=int(len(X)), observations=int(len(obs_track)),
+                              reprojection_px=dict(median=float(np.median(e)), rms=float(np.sqrt(np.mean(e ** 2))),
+                                                   p95=float(np.percentile(e, 95))))
+            info['rounds'].append(round_info)
+            log('BA %s第 %d 輪：%d 次迭代 %.1f s，重投影誤差中位數 %.2f px、95%% %.2f px' % (
+                label, r + 1, round_info['iterations'], round_info['seconds'], np.median(e), np.percentile(e, 95)))
+            if r + 1 < cfg['rounds']:   # 丟掉殘差大或跑到相機後方的觀測，再解一次
+                good = (e <= cfg['prune_px'] * uv[:, 2]) & (z > 0.1)   # 門檻跟著該觀測的 sigma 倍數放大縮小
+                obs_track, obs_frame, uv, X = _compact(np.ones(len(X), dtype=bool), obs_track, obs_frame, uv, X,
+                                                       good, cfg['min_track_length'])
+        return cur, obs_track, obs_frame, uv, X
+
+    cur, obs_track, obs_frame, uv, X = rounds([T.copy() for T in poses], obs_track, obs_frame, uv, X, '')
+    gcfg = cfg.get('guided') or {}
+    if gcfg.get('enabled') and descs is not None:
+        # 用 BA 解出的位姿與 3D 點回頭補觀測（含其他圈經過同地點的幀），再解一次
+        tg = time.perf_counter()
+        new_t, new_f, new_n, gstat = guided_observations(K, cur, X, obs_track, obs_frame, uv[:, 3].astype(np.int64),
+                                                         all_kpts, offsets, descs, gcfg)
+        if len(new_t):
+            add = np.c_[all_kpts[new_n], all_rel[new_n] if weighted else np.ones(len(new_n)), new_n]
+            obs_track, obs_frame, uv = np.r_[obs_track, new_t], np.r_[obs_frame, new_f], np.r_[uv, add]
+        lo2 = np.full(len(X), 10 ** 9, dtype=np.int64)
+        hi2 = np.zeros(len(X), dtype=np.int64)
+        np.minimum.at(lo2, obs_track, obs_frame)
+        np.maximum.at(hi2, obs_track, obs_frame)
+        gstat.update(seconds=time.perf_counter() - tg, observations_after=int(len(obs_track)),
+                     tracks_across_laps_after=int(np.sum(hi2 - lo2 > cfg['lap_gap_frames'])))
+        info['guided'] = gstat
+        log('BA：投影引導補上 %d 個觀測（跨圈 %d 個），跨圈軌跡 %d → %d 條（%.1f s）' % (
+            len(new_t), gstat['cross_lap'], info['tracks_across_laps'], gstat['tracks_across_laps_after'],
+            gstat['seconds']))
+        cur, obs_track, obs_frame, uv, X = rounds(cur, obs_track, obs_frame, uv, X, '（補觀測後）')
     info['status'] = 'ok'
     info['seconds'] = time.perf_counter() - t0
     return cur, info
 
 
+def guided_observations(K, poses, X, obs_track, obs_frame, obs_node, all_kpts, offsets, descs, gcfg):
+    """投影引導補觀測：把附近幀看到的 3D 點投影到每一幀，在投影位置附近找描述子相近的特徵。
+
+    為什麼不用「再多配幾對影像＋Essential RANSAC」：對極幾何只檢查點到對極線的距離，沿線方向的錯配擋不掉
+    （實測隔 2–3 幀的這類配對，誤差是正常觀測的 2–3 倍，Public 由 0.085 變差為 0.122）。
+    這裡驗證的是完整的 3D 位置：投影誤差 ≤ search_px，且描述子相似度 ≥ min_similarity、明顯優於第二名。
+
+    附近的幀：相機相距 radius_m 以內、光軸夾角 ≤ max_angle_deg（同一圈前後幀與其他圈經過同地點的幀）。
+    每個特徵最多屬於一條軌跡；已屬於其他軌跡的特徵不動；每條軌跡每幀最多一個觀測。
+    descs：每幀描述子（NumPy 或 CuPy，列已正規化）。回傳 (新觀測的軌跡, 幀, 特徵全域索引, 統計)。
+    """
+    from scipy.spatial import cKDTree
+    n_frames, n_tracks = len(poses), len(X)
+    P = np.stack(poses)
+    xyz, fwd = P[:, :3, 3], P[:, :3, 2]
+    Twc = np.stack([se3.inv(T) for T in poses])
+    w, h = 2.0 * K[0, 2], 2.0 * K[1, 2]
+    order = np.argsort(obs_frame, kind='stable')
+    bounds = np.searchsorted(obs_frame[order], np.arange(n_frames + 1))
+    tracks_in = [np.unique(obs_track[order[bounds[i]:bounds[i + 1]]]) for i in range(n_frames)]
+    dim = None
+    tdesc = None
+    for i in range(n_frames):   # 軌跡描述子 = 各觀測描述子的平均（再正規化）
+        sel = order[bounds[i]:bounds[i + 1]]
+        if not len(sel):
+            continue
+        d = _as_numpy(descs[i])
+        if tdesc is None:
+            dim = d.shape[1]
+            tdesc = np.zeros((n_tracks, dim), dtype=np.float32)
+        np.add.at(tdesc, obs_track[sel], d[obs_node[sel] - offsets[i]])
+    tdesc /= np.linalg.norm(tdesc, axis=1, keepdims=True) + 1e-9
+    owner = np.full(int(offsets[-1]), -1, dtype=np.int64)
+    owner[obs_node] = obs_track
+    have = set(zip(obs_track.tolist(), obs_frame.tolist()))
+    cos_max = np.cos(np.deg2rad(gcfg['max_angle_deg']))
+    out_t, out_f, out_n, out_s = [], [], [], []
+    stat = dict(candidates=0, taken_by_other_track=0)
+    for i in range(n_frames):
+        k = int(offsets[i + 1] - offsets[i])
+        if k < 2:
+            continue
+        near = np.flatnonzero((np.linalg.norm(xyz - xyz[i], axis=1) < gcfg['radius_m']) & (fwd @ fwd[i] >= cos_max))
+        near = near[near != i]
+        if not len(near):
+            continue
+        cand = np.unique(np.concatenate([tracks_in[j] for j in near]))
+        Xc = X[cand] @ Twc[i, :3, :3].T + Twc[i, :3, 3]
+        ok = (Xc[:, 2] > 0.5) & (Xc[:, 2] < gcfg['max_depth_m'])
+        cand, Xc = cand[ok], Xc[ok]
+        pr = np.c_[K[0, 0] * Xc[:, 0] / Xc[:, 2] + K[0, 2], K[1, 1] * Xc[:, 1] / Xc[:, 2] + K[1, 2]]
+        ok = (pr[:, 0] >= 0) & (pr[:, 0] < w) & (pr[:, 1] >= 0) & (pr[:, 1] < h)
+        cand, pr = cand[ok], pr[ok]
+        if not len(cand):
+            continue
+        stat['candidates'] += len(cand)
+        kp = all_kpts[offsets[i]:offsets[i + 1]]
+        dist, idx = cKDTree(kp).query(pr, k=4, distance_upper_bound=gcfg['search_px'])
+        valid = np.isfinite(dist)
+        idx = np.where(valid, idx, 0)
+        d = _as_numpy(descs[i])
+        sims = np.where(valid, np.einsum('nd,nkd->nk', tdesc[cand], d[idx]), -2.0)
+        rows = np.arange(len(cand))
+        best = np.argmax(sims, axis=1)
+        s1 = sims[rows, best]
+        sims[rows, best] = -2.0
+        s2 = sims.max(axis=1)
+        acc = (s1 >= gcfg['min_similarity']) & ((s2 < -1.0) | (s1 - s2 > gcfg['similarity_margin']))
+        for c, ft, s in zip(cand[acc], idx[rows, best][acc], s1[acc]):
+            if (int(c), i) in have:
+                continue
+            if owner[offsets[i] + ft] >= 0:
+                stat['taken_by_other_track'] += 1
+                continue
+            out_t.append(int(c)); out_f.append(i); out_n.append(int(offsets[i] + ft)); out_s.append(float(s))
+    if not out_t:
+        z = np.zeros(0, dtype=np.int64)
+        return z, z, z, dict(stat, accepted=0, cross_lap=0)
+    out_t, out_f, out_n, out_s = map(np.array, (out_t, out_f, out_n, out_s))
+    seen_n, seen_tf, keep = set(), set(), []
+    for q in np.argsort(-out_s, kind='stable'):   # 衝突時留相似度最高的
+        a, b = int(out_n[q]), (int(out_t[q]), int(out_f[q]))
+        if a in seen_n or b in seen_tf:
+            continue
+        seen_n.add(a); seen_tf.add(b); keep.append(q)
+    keep = np.sort(np.array(keep, dtype=np.int64))
+    out_t, out_f, out_n = out_t[keep], out_f[keep], out_n[keep]
+    lo = np.full(n_tracks, 10 ** 9, dtype=np.int64)
+    hi = np.zeros(n_tracks, dtype=np.int64)
+    np.minimum.at(lo, obs_track, obs_frame)
+    np.maximum.at(hi, obs_track, obs_frame)
+    cross = (np.abs(out_f - lo[out_t]) > gcfg['lap_gap_frames']) & (np.abs(out_f - hi[out_t]) > gcfg['lap_gap_frames'])
+    stat.update(accepted=int(len(out_t)), cross_lap=int(cross.sum()))
+    return out_t.astype(np.int64), out_f.astype(np.int64), out_n.astype(np.int64), stat
+
+
+def _as_numpy(d):
+    return d.get() if hasattr(d, 'get') else np.asarray(d, dtype=np.float32)
+
+
 # ---------------------------------------------------------------- 開發用：把 BA 的輸入存檔，之後可以不重跑前端直接試 BA
-def save_input(path, K, poses, kpts, links, between_raw):
+def save_input(path, K, poses, kpts, links, between_raw, sizes=None):
     counts = np.array([len(k) for k in kpts], dtype=np.int64)
     np.savez_compressed(
         path, K=K, poses=np.stack(poses), counts=counts,
+        sizes=np.concatenate([np.asarray(s, dtype=np.float32).ravel() for s in sizes]) if sizes is not None
+        else np.zeros(0, dtype=np.float32),
         kpts=np.concatenate([np.asarray(k, dtype=np.float32).reshape(-1, 2) for k in kpts]),
         link_frames=np.array([[a, b, len(p)] for a, b, p in links], dtype=np.int64).reshape(-1, 3),
         link_pairs=np.concatenate([p for _, _, p in links]) if links else np.zeros((0, 2), dtype=np.int64),

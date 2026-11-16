@@ -133,6 +133,21 @@ class VisualTest(unittest.TestCase):
         self.assertTrue(np.allclose(found[:2, 2], expect, atol=1e-6))
         self.assertTrue(np.allclose(project(found[:2]), q[:2], atol=1e-6))    # 3D 點投影回特徵點本身
 
+    def test_verify_matches_rejects_outliers(self):
+        from gslam import visual as vis
+        rng = np.random.default_rng(3)
+        K = np.array([[1000.0, 0, 700], [0, 1000.0, 450], [0, 0, 1]])
+        pts = np.c_[rng.uniform(-6, 6, 300), rng.uniform(-2, 2, 300), rng.uniform(5, 25, 300)]
+        a = pts[:, :2] / pts[:, 2:] * 1000 + K[:2, 2]
+        moved = pts - np.array([0.2, 0.0, 0.6])
+        b = moved[:, :2] / moved[:, 2:] * 1000 + K[:2, 2]
+        b[:60] += rng.uniform(-80, 80, (60, 2))            # 前 60 個是錯誤匹配
+        matches = np.c_[np.arange(300), np.arange(300)]
+        good = vis.verify_matches(a, b, matches, K, 1.0, 30, seed=1)
+        self.assertGreater(len(good), 200)
+        self.assertLess(np.sum(good[:, 0] < 60), 6)
+        self.assertIsNone(vis.verify_matches(a, b, matches[:20], K, 1.0, 30))
+
     def test_vote_candidates(self):
         from gslam.visual import vote_candidates
         bank = self.rng.normal(size=(3000, 128)).astype(np.float32)

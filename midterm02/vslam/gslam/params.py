@@ -126,6 +126,12 @@ PARAMS = dict(
     bundle=dict(                  # 收尾時對全部幀做 bundle adjustment（多幀特徵軌跡的重投影最佳化），見 gslam/bundle.py
         enabled=True,
         min_track_length=3,       # 一個特徵至少要在 3 幀被看到才用
+        # 以下三項是 gslam 0.4.0 試的「更多影像配對」，三項全開時 Public 由 0.085 變差為 0.097，所以預設關閉（見 E14*）
+        skip_frames=1,            # 每幀除了和前一幀，也和前第 2…N 幀比對（1 = 只比前一幀）
+        revisit_links=False,      # BA 前依 pose graph 的位姿，替每一幀找其他圈經過同一地點的幀來比對
+        revisit_radius_m=3.0, revisit_max_angle_deg=37.0,   # 「同一地點」：相機相距 3 m 內、光軸夾角 37° 內
+        link_ransac_px=1.0, link_min_inliers=30,   # 補充影像對的幾何驗證（Essential RANSAC）
+        resolve_conflicts=False,  # 軌跡在同一幀出現兩個特徵時：True = 逐條匹配重新合併；False = 整條丟掉
         min_tracks=500,
         min_parallax_deg=1.0,     # 視差太小的點深度定不出來，不用
         triangulation_gate_px=6.0,   # 以初始位姿三角化後，重投影誤差中位數超過就丟（多半是錯誤匹配或動態物體）
@@ -133,6 +139,12 @@ PARAMS = dict(
         pixel_sigma=1.0,          # SIFT 特徵定位誤差（px）
         huber_k=1.345,
         prune_px=4.0,             # 第一輪後丟掉重投影誤差超過這個值的觀測
+        # 依 SIFT 尺度給觀測不同權重：sigma = pixel_sigma × clip((size/size_ref)^power, lo, hi)
+        size_weight=dict(enabled=False, size_ref=6.0, power=0.4, lo=0.6, hi=2.5),
+        # BA 後的投影引導補觀測：把附近幀（相距 radius_m、夾角 ≤ max_angle_deg，含其他圈）看到的 3D 點投影到本幀，
+        # 在 search_px 內找描述子相似度 ≥ min_similarity 且比第二名高 similarity_margin 的特徵，加入後再解一次
+        guided=dict(enabled=False, radius_m=5.0, max_angle_deg=30.0, search_px=3.0, min_similarity=0.85,
+                    similarity_margin=0.05, max_depth_m=40.0, lap_gap_frames=200),
         rounds=2,
         max_iterations=40, relative_error_tol=1e-5,
         prior_sigma=1e-4,
@@ -162,6 +174,17 @@ EXPERIMENTS = {
     'E9f_loop_icp_only': {'loop.fuse_visual': False, 'loop.scale_dof': {'enabled': False, 'prior_weight': 0.0}},
     'E11_no_scale_graph': {'scale_graph.enabled': False},
     'E12_no_bundle': {'bundle.enabled': False},   # gslam 0.2.0（2611160533，Public 0.144）的設定
+    # 預設的 BA（2611161129，Public 0.085）：只用相鄰幀與閉環的匹配。E13 明確寫出來，等同預設
+    'E13_bundle_basic': {'bundle.skip_frames': 1, 'bundle.revisit_links': False, 'bundle.resolve_conflicts': False},
+    # 更多影像配對：三項全開 = 2611161431（Public 0.097，比預設差）
+    'E14_bundle_more_pairs': {'bundle.skip_frames': 3, 'bundle.revisit_links': True, 'bundle.resolve_conflicts': True},
+    'E16_size_weight': {'bundle.size_weight': dict(enabled=True, size_ref=6.0, power=0.4, lo=0.6, hi=2.5)},
+    'E17_guided': {'bundle.guided': dict(enabled=True, radius_m=5.0, max_angle_deg=30.0, search_px=3.0,
+                                         min_similarity=0.85, similarity_margin=0.05, max_depth_m=40.0,
+                                         lap_gap_frames=200)},
+    'E15_more_features': {'visual.max_keypoints': 6000},   # 每張影像的 SIFT 特徵數加倍，BA 的觀測更多
+    'E14a_bundle_skip_only': {'bundle.skip_frames': 3, 'bundle.resolve_conflicts': True},
+    'E14b_bundle_revisit_only': {'bundle.revisit_links': True, 'bundle.resolve_conflicts': True},
     'E10a_ground_scale': {'scale.mode': 'ground_height'},
     'E9b_no_fusion': {'fusion.enabled': False},
     'E10b_scale_dof': {'registration.estimate_scale': True},
