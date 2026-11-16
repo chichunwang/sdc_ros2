@@ -54,6 +54,10 @@ class Slam:
         self.optimizations = 0
         self.h_ref = None
         self.cloud_scale_prev = 1.0
+        self.frame_kpts = []       # 每幀的特徵像素座標（BA 用）
+        self.links = []            # 特徵匹配：(幀 a, 幀 b, 兩幀的特徵索引對)，含相鄰幀與閉環
+        self.pose_graph_poses = None
+        self.bundle_info = None
 
     # ------------------------------------------------------------ 子圖
     def _world_points(self, kf):
@@ -222,6 +226,11 @@ class Slam:
                                          text='matches %d  E-inliers %d  PnP-inliers %d' % (
                                              visual['matches'], visual['essential_inliers'], visual['pnp_inliers']))
 
+                # 通過幾何驗證的匹配留給 BA 連成多幀軌跡
+                link_mask = visual['essential_mask'] if visual['mode'] == 'essential' else visual['pnp_mask']
+                if visual['ok'] and link_mask is not None:
+                    self.links.append((local - 1, local, matches[link_mask]))
+
             # ---- 初值候選
             priors = {}
             priors['motion'] = se3.normalize(self.T_prev @ self.velocity)
@@ -331,6 +340,7 @@ class Slam:
                     pts = self.model.points
                     sub = cp.asnumpy(pts[::max(1, len(pts) // p['viz']['submap_max_points'])])
                 self.viz.graph([k.T for k in self.keyframes], [(c, q) for c, q, _ in self.loops], sub)
+        self.frame_kpts.append(feats.kpts if feats is not None else np.zeros((0, 2)))
         self.prev_feats, self.prev_pts3d, self.prev_valid, self.prev_img = feats, pts3d, valid3d, image
         rec['total_ms'] = (time.perf_counter() - t_start) * 1000
         self.records.append(rec)
@@ -426,6 +436,9 @@ class Slam:
             row.update(accepted=1, reason='accepted', T_rel=' '.join('%.9g' % x for x in T_rel[:3].ravel()))
             self.loops.append((c, kf.id, T_rel))
             self.loop_scale[(c, kf.id)] = float(row['relative_scale'])
+            link_mask = v['essential_mask'] if v['mode'] == 'essential' else v['pnp_mask']
+            if link_mask is not None:   # 跨圈的特徵匹配：BA 會把兩圈看到的同一個點合併成一條軌跡
+                self.links.append((cand.idx, kf.idx, matches[link_mask]))
             self.last_loop_kf = kf.id
             accepted_count += 1
             if accepted_count >= cfg['max_loops_per_keyframe']:
@@ -503,29 +516,56 @@ class Slam:
         return sigma - np.median(sigma)
 
     def finalize(self):
-        """回傳 (odometry poses, optimized poses, info)。沒有閉環時兩者相同。"""
+        """回傳 (odometry poses, 最終 poses, info)。
+
+        順序：尺度圖修正里程計長度 → keyframe pose graph（閉環）→ 把修正分配給所有幀 → 全部幀的 BA。
+        pose graph 的結果另存在 self.pose_graph_poses（BA 的初值，也用來比較 BA 前後）。
+        """
         odom = [T.copy() for T in self.odom]
-        if not self.loops:
-            return odom, [T.copy() for T in odom], None
-        if not self.p['scale_graph']['enabled']:
-            info = self.optimize()
-            return odom, se3.distribute_corrections(odom, [kf.idx for kf in self.keyframes],
-                                                    [kf.T for kf in self.keyframes]), info
-        # 先用尺度圖修正每段里程計的長度（第 i 步的長度由第 i−1 幀的深度決定），再做 pose graph
-        self.sigma = self.solve_scales()
-        scaled = [odom[0].copy()]
-        for i in range(1, len(odom)):
-            rel = se3.inv(odom[i - 1]) @ odom[i]
-            rel[:3, 3] *= np.exp(-self.sigma[i - 1])
-            scaled.append(se3.normalize(scaled[-1] @ rel))
-        loops = []
-        for c, q, T_rel in self.loops:
-            T = T_rel.copy()
-            T[:3, 3] *= np.exp(-self.sigma[self.keyframes[c].idx])
-            loops.append((c, q, T))
-        self.odom_scaled = scaled
-        info = self.optimize(odom=scaled, loops=loops, from_odometry=True)
-        info['scale_graph'] = dict(sigma_min=float(self.sigma.min()), sigma_max=float(self.sigma.max()),
-                                   sigma_std=float(self.sigma.std()))
-        optimized = se3.distribute_corrections(scaled, [kf.idx for kf in self.keyframes], [kf.T for kf in self.keyframes])
-        return odom, optimized, info
+        base, loops, info = odom, list(self.loops), None
+        if self.loops and self.p['scale_graph']['enabled']:
+            # 先用尺度圖修正每段里程計的長度（第 i 步的長度由第 i−1 幀的深度決定），再做 pose graph
+            self.sigma = self.solve_scales()
+            base = [odom[0].copy()]
+            for i in range(1, len(odom)):
+                rel = se3.inv(odom[i - 1]) @ odom[i]
+                rel[:3, 3] *= np.exp(-self.sigma[i - 1])
+                base.append(se3.normalize(base[-1] @ rel))
+            loops = []
+            for c, q, T_rel in self.loops:
+                T = T_rel.copy()
+                T[:3, 3] *= np.exp(-self.sigma[self.keyframes[c].idx])
+                loops.append((c, q, T))
+            self.odom_scaled = base
+        if self.loops:
+            info = self.optimize(odom=base, loops=loops, from_odometry=True)
+            if self.sigma is not None:
+                info['scale_graph'] = dict(sigma_min=float(self.sigma.min()), sigma_max=float(self.sigma.max()),
+                                           sigma_std=float(self.sigma.std()))
+            poses = se3.distribute_corrections(base, [kf.idx for kf in self.keyframes], [kf.T for kf in self.keyframes])
+        else:
+            poses = [T.copy() for T in base]
+        self.pose_graph_poses = poses
+        if self.p['bundle']['enabled'] and self.frontend is not None:
+            poses = self._bundle(base, loops, poses)
+            info = dict(info or {}, bundle=self.bundle_info)
+        return odom, poses, info
+
+    def _bundle(self, base, loops, poses):
+        """全部幀的 BA。里程計與閉環邊以很鬆的權重留著：固定整體尺度、撐住靜止或特徵太少的幀。"""
+        import gtsam
+        from . import bundle
+        cfg, g = self.p['bundle'], self.p['graph']
+        raw = [(i - 1, i, se3.inv(base[i - 1]) @ base[i], 0) for i in range(1, len(base))]
+        if cfg['use_loop_edges']:
+            raw += [(self.keyframes[c].idx, self.keyframes[q].idx, T, 1) for c, q, T in loops]
+        sig = lambda r, t: np.array([r, r, r, t, t, t], dtype=np.float64)
+        noise = {0: gtsam.noiseModel.Diagonal.Sigmas(sig(cfg['odom_rot_sigma_rad'], cfg['odom_trans_sigma_m'])),
+                 1: gtsam.noiseModel.Robust.Create(
+                     gtsam.noiseModel.mEstimator.Huber.Create(g['huber_k']),
+                     gtsam.noiseModel.Diagonal.Sigmas(sig(g['loop_rot_sigma_rad'], g['loop_trans_sigma_m'])))}
+        if self.debug_dir is not None and cfg['save_input']:
+            bundle.save_input(self.debug_dir / 'bundle_input.npz', self.ds.K, poses, self.frame_kpts, self.links, raw)
+        between = [(i, j, T, noise[kind]) for i, j, T, kind in raw]
+        out, self.bundle_info = bundle.run(self.ds.K, poses, self.frame_kpts, self.links, between, cfg, self.log)
+        return out

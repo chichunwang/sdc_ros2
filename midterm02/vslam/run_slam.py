@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 
 import numpy as np  # noqa: E402
 
-VERSION = 'gslam-0.2.0'
+VERSION = 'gslam-0.3.0'
 
 
 def gpu_snapshot():
@@ -106,6 +106,8 @@ def main():
         outputs.write_rows(run / 'loop_candidates.csv', outputs.LOOP_DETAIL_COLUMNS, slam.loop_rows)
         outputs.write_poses(run / 'poses_odometry.csv', timestamps, odom)
         outputs.write_poses(run / 'poses_optimized.csv', timestamps, optimized)
+        if slam.bundle_info is not None:    # BA 之前（只有 pose graph）的結果，用來比較 BA 的效果
+            outputs.write_poses(run / 'poses_pose_graph.csv', timestamps, slam.pose_graph_poses)
         if slam.odom_scaled is not None:   # 尺度圖修正長度後、尚未做 pose graph 的里程計
             outputs.write_poses(run / 'poses_odometry_scaled.csv', timestamps, slam.odom_scaled)
             outputs.write_rows(run / 'scale_graph.csv', ['idx', 'timestamp_ns', 'log_scale'],

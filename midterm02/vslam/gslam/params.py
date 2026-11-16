@@ -123,6 +123,24 @@ PARAMS = dict(
         loop_rot_sigma_rad=0.02, loop_trans_sigma_m=0.15,
         huber_k=1.345,
     ),
+    bundle=dict(                  # 收尾時對全部幀做 bundle adjustment（多幀特徵軌跡的重投影最佳化），見 gslam/bundle.py
+        enabled=True,
+        min_track_length=3,       # 一個特徵至少要在 3 幀被看到才用
+        min_tracks=500,
+        min_parallax_deg=1.0,     # 視差太小的點深度定不出來，不用
+        triangulation_gate_px=6.0,   # 以初始位姿三角化後，重投影誤差中位數超過就丟（多半是錯誤匹配或動態物體）
+        max_observations=0,       # 觀測數上限（0 = 不限）
+        pixel_sigma=1.0,          # SIFT 特徵定位誤差（px）
+        huber_k=1.345,
+        prune_px=4.0,             # 第一輪後丟掉重投影誤差超過這個值的觀測
+        rounds=2,
+        max_iterations=40, relative_error_tol=1e-5,
+        prior_sigma=1e-4,
+        odom_rot_sigma_rad=0.01, odom_trans_sigma_m=0.05,   # 相鄰幀里程計邊：刻意很鬆（長度來自 LoGeR 深度，不可靠）
+        use_loop_edges=True,
+        lap_gap_frames=200,       # 一條軌跡的首尾幀相隔超過這個數，統計上算「跨圈」
+        save_input=True,          # 把 BA 輸入存到 debug/bundle_input.npz（開發時可不重跑前端）
+    ),
     viz=dict(                     # RViz 顯示用（只影響畫面，不影響 pose）
         max_depth_m=15.0, frame_point_step=2, keyframe_point_step=6, submap_max_points=60000,
     ),
@@ -143,6 +161,7 @@ EXPERIMENTS = {
     'E9e_isotropic_odom': {'graph.odom_scale_sigma': 0.0, 'graph.odom_trans_sigma_m': 0.05},
     'E9f_loop_icp_only': {'loop.fuse_visual': False, 'loop.scale_dof': {'enabled': False, 'prior_weight': 0.0}},
     'E11_no_scale_graph': {'scale_graph.enabled': False},
+    'E12_no_bundle': {'bundle.enabled': False},   # gslam 0.2.0（2611160533，Public 0.144）的設定
     'E10a_ground_scale': {'scale.mode': 'ground_height'},
     'E9b_no_fusion': {'fusion.enabled': False},
     'E10b_scale_dof': {'registration.estimate_scale': True},
