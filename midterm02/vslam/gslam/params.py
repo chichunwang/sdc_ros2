@@ -160,6 +160,13 @@ PARAMS = dict(
         # combine_sift：True = SIFT 與學習式特徵兩組軌跡一起進 BA；skip_frames：每幀和前 1…N 幀配對（實測 3 沒有幫助）
         learned=dict(enabled=False, extractor='superpoint', max_keypoints=4096, skip_frames=1, combine_sift=True,
                      ransac_px=1.0, min_inliers=30),
+        # 跨圈點雲疊合（使用者 2026-11-16 的想法）：BA 解完後，把後面幾圈每個 keyframe 的 LoGeR 點雲，
+        # 配準到較早一圈附近 keyframe 拼成的子圖（位姿用 BA 結果、放開尺度），通過品質閘門的當成相對位姿邊，再解一次 BA。
+        # 「同一地點」：相機相距 radius_m、光軸夾角 max_angle_deg 內；子圖取最近 keyframe 前後 window_keyframes 個。
+        # 離線檢查（outputs/cache/dev39、dev40）：這些修正和影像對極幾何不一致，預期會變差；保留為驗證實驗。
+        cloud_overlap=dict(enabled=False, radius_m=3.0, max_angle_deg=30.0, window_keyframes=6, min_fitness=0.6,
+                           max_rmse_m=0.25, max_correction_m=2.0, scale_prior_weight=0.5,
+                           rot_sigma_deg=0.5, trans_sigma_m=0.15, huber_k=None),
         guided=dict(enabled=False, radius_m=5.0, max_angle_deg=30.0, search_px=3.0, min_similarity=0.85,
                     similarity_margin=0.05, max_depth_m=40.0, lap_gap_frames=200),
         rounds=2,
@@ -230,6 +237,19 @@ EXPERIMENTS = {
         'bundle.learned': dict(enabled=True, extractor='superpoint', max_keypoints=4096, skip_frames=1,
                                combine_sift=True, ransac_px=1.0, min_inliers=30),
         'bundle.revisit_links': True, 'bundle.resolve_conflicts': True},
+    # E21＋跨圈點雲疊合邊（見 bundle.cloud_overlap）：BA 後依點雲疊合再解一次
+    'E26_selfcalib_cloud_overlap': {
+        'bundle.calibration': dict(enabled=True, solves=3, sigmas=[1e-6, 1e-6, 1e-6, 5.0, 5.0, 0.5, 0.5, 1e-6, 1e-6]),
+        'bundle.cloud_overlap': dict(enabled=True, radius_m=3.0, max_angle_deg=30.0, window_keyframes=6,
+                                     min_fitness=0.6, max_rmse_m=0.25, max_correction_m=2.0, scale_prior_weight=0.5,
+                                     rot_sigma_deg=0.5, trans_sigma_m=0.15)},
+    # E26 的點雲邊（σ 0.15、Huber 1.345）對上幾百萬個影像觀測幾乎沒有作用（軌跡只動約 1 cm）。
+    # E26b：讓點雲疊合真的主導跨圈關係——平移 σ 0.02、旋轉 0.1°，Huber 門檻放到 1000（等於不截斷），檢驗想法本身
+    'E26b_selfcalib_cloud_overlap_strong': {
+        'bundle.calibration': dict(enabled=True, solves=3, sigmas=[1e-6, 1e-6, 1e-6, 5.0, 5.0, 0.5, 0.5, 1e-6, 1e-6]),
+        'bundle.cloud_overlap': dict(enabled=True, radius_m=3.0, max_angle_deg=30.0, window_keyframes=6,
+                                     min_fitness=0.6, max_rmse_m=0.25, max_correction_m=2.0, scale_prior_weight=0.5,
+                                     rot_sigma_deg=0.1, trans_sigma_m=0.02, huber_k=1000.0)},
     'E15_more_features': {'visual.max_keypoints': 6000},   # 每張影像的 SIFT 特徵數加倍，BA 的觀測更多
     'E14a_bundle_skip_only': {'bundle.skip_frames': 3, 'bundle.resolve_conflicts': True},
     'E14b_bundle_revisit_only': {'bundle.revisit_links': True, 'bundle.resolve_conflicts': True},

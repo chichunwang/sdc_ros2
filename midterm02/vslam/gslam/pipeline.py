@@ -15,7 +15,7 @@ import cupy as cp
 
 from . import se3
 from .gpu_cloud import TargetModel, sync, voxel_downsample
-from .gpu_registration import register, source_covariances
+from .gpu_registration import evaluate, register, source_covariances
 from .preprocess import preprocess
 from . import visual as vis_mod
 from .scale import ground_height
@@ -601,6 +601,85 @@ class Slam:
             info = dict(info or {}, bundle=self.bundle_info)
         return odom, poses, info
 
+    def _cloud_overlap_factors(self, poses, ocfg):
+        """跨圈點雲疊合邊（BA 用）：回傳 ([(i, j, T_ij, noise)], info)。
+
+        對每個 keyframe q，找較早一圈（相隔 ≥ lap_gap_frames 幀）位置與朝向相近的 keyframe；每一圈取最近的 c，
+        把 c 前後 window_keyframes 個 keyframe 的點雲用 BA 位姿拼成子圖，q 的點雲從 BA 位姿出發做 GICP（放開尺度，
+        吸收 LoGeR 每幀的尺度浮動）。通過品質閘門的結果 T_q 變成邊 c → q：T_cq = T_c⁻¹·T_q。
+        """
+        import gtsam
+        reg, gate = self.p['registration'], self.p['gate']
+        kfs = self.keyframes
+        P = np.stack(poses)
+        kidx = np.array([k.idx for k in kfs])
+        pos, fwd = P[kidx, :3, 3], P[kidx, :3, 2]
+        gap = self.p['bundle']['lap_gap_frames']
+        min_cos = float(np.cos(np.deg2rad(ocfg['max_angle_deg'])))
+        w = ocfg['window_keyframes']
+        r_sig, t_sig = np.deg2rad(ocfg['rot_sigma_deg']), ocfg['trans_sigma_m']
+        noise = gtsam.noiseModel.Robust.Create(
+            gtsam.noiseModel.mEstimator.Huber.Create(ocfg.get('huber_k') or self.p['graph']['huber_k']),
+            gtsam.noiseModel.Diagonal.Sigmas(np.array([r_sig] * 3 + [t_sig] * 3, dtype=np.float64)))
+        factors, rows = [], []
+        for q in kfs:
+            if q.src_cov is None or len(q.src) < reg['min_correspondences']:
+                continue
+            d = np.linalg.norm(pos - pos[q.id], axis=1)
+            cand = np.flatnonzero((kidx <= q.idx - gap) & (d < ocfg['radius_m']) & (fwd @ fwd[q.id] >= min_cos))
+            if len(cand) == 0:
+                continue
+            for grp in np.split(cand, np.flatnonzero(np.diff(kidx[cand]) > gap // 2) + 1):   # 每一圈一組
+                c = int(grp[np.argmin(d[grp])])
+                ids = [k for k in range(c - w, c + w + 1) if 0 <= k < len(kfs) and kidx[k] <= q.idx - gap]
+                pts = [kfs[k].scale * (kfs[k].src @ cp.asarray(P[kidx[k], :3, :3]).T) + cp.asarray(P[kidx[k], :3, 3])
+                       for k in ids]
+                row = dict(query_kf=q.id, query_idx=int(q.idx), match_kf=c, match_idx=int(kidx[c]), accepted=0)
+                rows.append(row)
+                try:
+                    model = TargetModel(voxel_downsample(cp.concatenate(pts), self.p['submap']['voxel_m']),
+                                        reg['index_cell_m'], reg['normal_radius_m'], reg['min_neighbors'], reg['planar_eps'])
+                except ValueError:
+                    row['reason'] = 'submap_failed'
+                    continue
+                e0 = evaluate(q.src, model, P[q.idx], q.scale, reg['stages'][-1]['max_corr'])
+                r = register(q.src, model, P[q.idx], method=reg['method'], stages=reg['stages'], robust_k=reg['robust_k_m'],
+                             src_cov=q.src_cov, scale_init=q.scale, estimate_scale=True,
+                             scale_prior_weight=ocfg['scale_prior_weight'], min_correspondences=reg['min_correspondences'])
+                D = se3.inv(P[q.idx]) @ r['T']
+                corr = float(np.linalg.norm(D[:3, 3]))
+                rot = float(np.rad2deg(se3.rotation_angle(D[:3, :3])))
+                eig = r['normalized_min_eigenvalue']
+                row.update(fitness_before=e0['fitness'], rmse_before=e0['inlier_rmse'], fitness=r['fitness'],
+                           rmse=r['inlier_rmse'], correction=corr, rotation_deg=rot, scale=r['scale'] / q.scale,
+                           dx=D[0, 3], dy=D[1, 3], dz=D[2, 3], min_eigenvalue='' if eig is None else eig)
+                if r['reason'] in ('insufficient_correspondences', 'singular_system'):
+                    row['reason'] = r['reason']
+                elif r['fitness'] < ocfg['min_fitness'] or not r['inlier_rmse'] <= ocfg['max_rmse_m']:
+                    row['reason'] = 'registration_quality'
+                elif eig is not None and eig < gate['min_normalized_eigenvalue']:
+                    row['reason'] = 'degenerate_geometry'
+                elif corr > ocfg['max_correction_m']:
+                    row['reason'] = 'correction_too_large'
+                else:
+                    row.update(accepted=1, reason='accepted')
+                    factors.append((int(kidx[c]), int(q.idx), se3.normalize(se3.inv(P[kidx[c]]) @ r['T']), noise))
+        if self.debug_dir is not None and rows:
+            import csv
+            cols = ['query_kf', 'query_idx', 'match_kf', 'match_idx', 'accepted', 'reason', 'fitness_before', 'rmse_before',
+                    'fitness', 'rmse', 'correction', 'rotation_deg', 'scale', 'dx', 'dy', 'dz', 'min_eigenvalue']
+            with open(self.debug_dir / 'cloud_overlap.csv', 'w', newline='') as f:
+                wr = csv.DictWriter(f, cols, extrasaction='ignore')
+                wr.writeheader()
+                wr.writerows(rows)
+        acc = [r for r in rows if r['accepted']]
+        info = dict(candidates=len(rows), accepted=len(acc),
+                    median_correction=float(np.median([r['correction'] for r in acc])) if acc else 0.0,
+                    median_rotation_deg=float(np.median([r['rotation_deg'] for r in acc])) if acc else 0.0,
+                    median_scale=float(np.median([r['scale'] for r in acc])) if acc else 1.0,
+                    reasons={k: sum(1 for r in rows if r.get('reason') == k) for k in {r.get('reason') for r in rows}})
+        return factors, info
+
     def _bundle(self, base, loops, poses):
         """全部幀的 BA。里程計與閉環邊以很鬆的權重留著：固定整體尺度、撐住靜止或特徵太少的幀。"""
         import gtsam
@@ -651,6 +730,18 @@ class Slam:
                 windows = imu.Windows(frame_ns, imu_t, f_cam, icfg['half_window'], icfg['offset_s'])
         out, self.bundle_info = bundle.run(self.ds.K, poses, kpts, links, between, cfg, self.log,
                                            sizes=sizes, descs=descs, depths=depths, imu_windows=windows)
+        ocfg = cfg.get('cloud_overlap') or {}
+        if ocfg.get('enabled'):
+            t0 = time.perf_counter()
+            extra, oinfo = self._cloud_overlap_factors(out, ocfg)
+            self.log('BA：跨圈點雲疊合 %d 個候選、接受 %d 個（修正量中位數 %.3f、旋轉 %.2f°，%.1f s），再解一次 BA' % (
+                oinfo['candidates'], oinfo['accepted'], oinfo['median_correction'], oinfo['median_rotation_deg'],
+                time.perf_counter() - t0))
+            first = self.bundle_info
+            out, self.bundle_info = bundle.run(self.ds.K, out, kpts, links, between + extra, cfg, self.log,
+                                               sizes=sizes, descs=descs, depths=depths, imu_windows=windows)
+            oinfo['first_pass_calibration'] = first.get('calibration')
+            self.bundle_info['cloud_overlap'] = oinfo
         self.bundle_info['image_pair_kinds'] = dict(self.link_counts)
         if lcfg.get('enabled'):
             self.bundle_info['learned'] = self.learned_info

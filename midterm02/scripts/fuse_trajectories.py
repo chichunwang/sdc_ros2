@@ -71,6 +71,8 @@ def main():
                 summary=dict(base_other_rms_m=float(np.sqrt(np.mean(d ** 2))), base_other_max_m=float(d.max())),
                 submission=dict(check_returncode=chk.returncode, check_output=chk.stdout[-1000:] + chk.stderr[-1000:]))
     info_path.write_text(json.dumps(info, ensure_ascii=False, indent=2) + '\n')
+    # 成功的 full 自動產生唯讀圖表（失敗只記 analysis_status.json，不影響定位結果）
+    subprocess.run([sys.executable, str(ROOT / 'scripts/analyze_external_run.py'), str(run)])
     print('run:', run)
     print('submission check:', 'OK' if chk.returncode == 0 else 'FAILED')
 

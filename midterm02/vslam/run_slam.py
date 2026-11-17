@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 
 import numpy as np  # noqa: E402
 
-VERSION = 'gslam-0.9.0'
+VERSION = 'gslam-0.10.0'
 
 
 def gpu_snapshot():
@@ -95,7 +95,8 @@ def main():
         odom, optimized, graph_info = slam.finalize()
         graph_seconds = time.perf_counter() - t_graph
         if viz is not None:
-            viz.graph([kf.T for kf in slam.keyframes], [(c, q) for c, q, _ in slam.loops])
+            # 地圖改用最終（BA）位姿重排，畫面上的點雲疊合才代表輸出的軌跡（原本是 pose graph 的 keyframe 位姿）
+            viz.graph([optimized[kf.idx] for kf in slam.keyframes], [(c, q) for c, q, _ in slam.loops])
             viz.final(odom, optimized)
 
         outputs.write_rows(run / 'timings.csv', outputs.TIMING_COLUMNS, slam.records)

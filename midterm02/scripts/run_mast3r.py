@@ -215,6 +215,8 @@ def main():
                              factor_graph_edges=int(len(factor_graph.ii))),
                 submission=dict(check_output=chk_out))
     info_path.write_text(json.dumps(info, ensure_ascii=False, indent=2) + '\n')
+    # 成功的 full 自動產生唯讀圖表（失敗只記 analysis_status.json，不影響定位結果）
+    subprocess.run([sys.executable, str(ROOT / 'scripts/analyze_external_run.py'), str(run)])
     print('run:', run)
     print('submission check:', status, chk_out[-200:])
 

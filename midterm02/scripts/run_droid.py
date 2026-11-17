@@ -29,6 +29,11 @@ from create_run import create_run, digest  # noqa: E402
 EXPERIMENTS = {
     'D1_droid': dict(scale=0.5, calib=False),            # 原樣：給定的針孔內參
     'D2_droid_selfcalib': dict(scale=0.5, calib=True),   # 影像先用自校正的畸變校正
+    # 同 D2，提高影像解析度（光流更細）。前端的整張相關體積在高解析度超過 int32 上限，
+    # 改用官方後端本來就用的 alt 相關（逐點即時計算，同一個相關值，只是不預先存整張體積）
+    'D2a_droid_selfcalib_alt': dict(scale=0.5, calib=True, alt_corr=True),   # 驗證：alt 相關在 D2 的解析度應與 D2 幾乎相同
+    'D3_droid_selfcalib_s075': dict(scale=0.75, calib=True, alt_corr=True),
+    'D4_droid_selfcalib_s100': dict(scale=1.0, calib=True, alt_corr=True, buffer=512),   # 原解析度時 1024 張特徵圖超過 int32 元素上限
 }
 DROID_DEFAULTS = dict(buffer=1024, beta=0.3, filter_thresh=2.4, warmup=8, keyframe_thresh=4.0, frontend_thresh=16.0,
                       frontend_window=25, frontend_radius=2, frontend_nms=1, backend_thresh=22.0, backend_radius=2,
@@ -84,8 +89,9 @@ def main():
         w.writerow(['idx', 'timestamp_ns', 'image', 'ply'])
         for i, name in enumerate(ts):
             w.writerow([i, name, 'images/%s.jpg' % name, 'raw_ply/%s.ply' % name])
-    params = dict(experiment=a.experiment, image_scale=s, image_size=[w1, h1], intrinsics=intr.tolist(),
-                  calibration=calib, calib_from=a.calib_from, droid=DROID_DEFAULTS, droid_commit='2dfd39f',
+    droid_cfg = dict(DROID_DEFAULTS, buffer=exp.get('buffer', DROID_DEFAULTS['buffer']))
+    params = dict(experiment=a.experiment, alt_corr=bool(exp.get('alt_corr')), image_scale=s, image_size=[w1, h1], intrinsics=intr.tolist(),
+                  calibration=calib, calib_from=a.calib_from, droid=droid_cfg, droid_commit='2dfd39f',
                   weights=a.weights, weights_sha256=digest(ROOT / a.weights))
     info.update(status='running', version='droid-2dfd39f', experiment=a.experiment, parameters=params, seed=0,
                 frame_count=len(ts), command=' '.join(sys.argv))
@@ -93,7 +99,30 @@ def main():
     (run / 'debug').mkdir(exist_ok=True)
 
     from droid import Droid
-    args = argparse.Namespace(weights=str(ROOT / a.weights), image_size=[h1, w1], **DROID_DEFAULTS)
+    if exp.get('alt_corr'):
+        import factor_graph
+        init0 = factor_graph.FactorGraph.__init__
+
+        update0 = factor_graph.FactorGraph.update
+
+        def init_alt(self, *args_, **kw):
+            kw['corr_impl'] = 'alt'
+            init0(self, *args_, **kw)
+
+        def update_alt(self, *args_, **kw):
+            # 前端的 update() 會呼叫 self.corr(coords)；alt 模式下改成即時計算 fmaps[ii]·fmaps[jj] 的相關（單眼 rig=1）
+            num, rig, ch, ht, wd = self.video.fmaps.shape
+            op = factor_graph.AltCorrBlock(self.video.fmaps.view(1, num * rig, ch, ht, wd))
+            ii, jj = self.ii, self.jj
+
+            def corr(coords, n=16):   # 分批計算，避免 CUDA kernel 的 int32 索引上限
+                return torch.cat([op(coords[:, k:k + n], ii[k:k + n], jj[k:k + n]) for k in range(0, len(ii), n)], 1)
+            self.corr = corr
+            self.inp = self.video.inps[ii].to(self.device).unsqueeze(0)   # volume 模式在 add_factors 裡存的同一個量
+            return update0(self, *args_, **kw)
+        factor_graph.FactorGraph.__init__ = init_alt
+        factor_graph.FactorGraph.update = update_alt
+    args = argparse.Namespace(weights=str(ROOT / a.weights), image_size=[h1, w1], **droid_cfg)
     droid = Droid(args)
     t0 = time.time()
     for t, img, k in stream():
@@ -119,6 +148,8 @@ def main():
                 summary=dict(keyframes=int(n_kf)), submission=dict(check_returncode=chk.returncode,
                                                                     check_output=chk.stdout[-2000:] + chk.stderr[-2000:]))
     info_path.write_text(json.dumps(info, ensure_ascii=False, indent=2) + '\n')
+    # 成功的 full 自動產生唯讀圖表（失敗只記 analysis_status.json，不影響定位結果）
+    subprocess.run([sys.executable, str(ROOT / 'scripts/analyze_external_run.py'), str(run)])
     print('run:', run)
     print('submission check:', 'OK' if chk.returncode == 0 else 'FAILED', chk.stdout[-300:], chk.stderr[-300:])
 
