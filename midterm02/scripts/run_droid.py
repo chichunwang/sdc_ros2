@@ -16,6 +16,17 @@
   LoGeR／視覺速度比與 LoGeR 估的相機離地高度相關 0.958（dev47_loger_height.py）：相機固定在車上、高度不變，
   所以 LoGeR 高度的起伏（0.8–1.24 倍）就是它的尺度偏差。每幀深度乘 s_i = median(h)/h̃_i，h̃ 為 ±15 幀中位數
   （每幀地面擬合約 ±10% 雜訊，偏差以數百幀尺度變化；擬合失敗的幀用鄰近值）。地面擬合用 gslam.scale.ground_height 與 params 的 scale 設定。
+- D7：D6＋閉環邊（2026-11-17）。觀察：D6 與 D2 在任何 421 幀視窗差 ≤1.6 m，Public 誤差大部分兩者共有；
+  Private（3785 幀一次對齊）看全域一致性，而 DROID 的全域 BA 只連「目前估計中相近」的 keyframe，Track2 的重訪點漂開後連不上
+  （頭尾差約 33 m，影像顯示 10–15 m）。做法：E21 在 --calib-from run 找到、影像幾何驗證通過的閉環（loop_candidates.csv 的
+  accepted 與 registration_quality：後者是 ICP 品質不足，但影像已確認重疊，含終點→起點 3 對），對應到最近的 DROID keyframe，
+  在兩次全域 BA 都強制加入雙向光流邊；邊的信心值由 DROID 網路決定，對不上的邊權重自然很低。
+- D8：D7＋閉環 pose graph 粗修（2026-11-17）。D7 的起點↔終點閉環因估計位置差約 34 m、光流初值太遠而沒接上。
+  做法（scripts/droid_loops.py）：每對閉環 keyframe 用去畸變全解析度影像 SIFT＋b 幀的 LoGeR 深度（相機高度正規化，
+  與 DROID 同單位）＋PnP 量測 T_ab；SE(3) pose graph（相鄰邊＝DROID 目前估計，σ ∝ √距離；閉環邊＝量測，邊級 Huber）
+  修正 keyframe 位姿後寫回 DROID，再跑 D7 的全域 BA＋閉環光流邊。σ 依 Track2 觀察量級（PGO_SIGMAS 註解）。
+- D9：D8，但深度先驗只用在光軸以下（去畸變影像 v > cy）（2026-11-17）。觀察：LoGeR 把天空當成約 10–15 m 外的圓頂
+  （dev44_sky_depth.py），D6–D8 對整張影像都套先驗。天空只在地平線以上；高度正規化本身就是用地面校正的，地面在光軸以下。
 - 權重 outputs/cache/droid/droid.pth（官方 Google Drive，SHA256 46476ef6…）。
 """
 import argparse
@@ -45,7 +56,23 @@ EXPERIMENTS = {
     'D4_droid_selfcalib_s100': dict(scale=1.0, calib=True, alt_corr=True, buffer=512),   # 原解析度時 1024 張特徵圖超過 int32 元素上限
     'D5_droid_selfcalib_depth': dict(scale=0.5, calib=True, depth=True),   # D2＋LoGeR 深度先驗（RGB-D 模式）
     'D6_droid_selfcalib_depth_hnorm': dict(scale=0.5, calib=True, depth=True, height_norm=True),   # D5＋相機高度正規化
+    'D7_droid_selfcalib_depth_hnorm_loops': dict(scale=0.5, calib=True, depth=True, height_norm=True, loops=True),   # D6＋閉環邊
+    'D8_droid_selfcalib_depth_hnorm_loops_pgo': dict(scale=0.5, calib=True, depth=True, height_norm=True, loops=True, pgo=True),
+    'D9_droid_selfcalib_depth_hnorm_loops_pgo_below': dict(scale=0.5, calib=True, depth=True, height_norm=True, loops=True, pgo=True,
+                                                           depth_below_axis=True),
 }
+# pose graph 的標準差（單位：DROID＝相機高度正規化的 LoGeR 單位，約公尺）
+# 相鄰邊（每 √單位）：Track2 約 1700 單位沒有閉環的路段累積約 25 m 偏差 → 平移 0.6；回程約 1000 單位偏斜約 4° → 旋轉 0.0022 rad。
+# 閉環邊：E21 的 PnP 與 ICP 相差 4–8 cm、0.15–0.3° → 平移 0.1、旋轉 0.005 rad。
+PGO_SIGMAS = dict(sigma_rot_per_unit=0.0022, sigma_trans_per_unit=0.6, loop_sigma_rot=0.005, loop_sigma_trans=0.1)
+LOOP_REASONS = ('accepted', 'registration_quality')   # 影像幾何（Essential＋PnP）已通過的閉環候選
+
+
+def loop_frame_pairs(calib_run):
+    """E21 run 的閉環候選 → (query 幀, match 幀) 列表（只取影像幾何驗證通過者）。"""
+    kf = {int(r['kf_id']): int(r['idx']) for r in csv.DictReader(open(calib_run / 'keyframes.csv'))}
+    return [(kf[int(r['query_kf'])], kf[int(r['match_kf'])]) for r in csv.DictReader(open(calib_run / 'loop_candidates.csv'))
+            if r['reason'] in LOOP_REASONS]
 HEIGHT_MEDIAN_HALF = 15   # 相機高度的時間中位數半窗（幀）：壓掉單幀地面擬合的離群值，遠小於 LoGeR 偏差的變化尺度
 
 
@@ -114,6 +141,59 @@ DROID_DEFAULTS = dict(buffer=1024, beta=0.3, filter_thresh=2.4, warmup=8, keyfra
                       frontend_device='cuda', backend_device='cuda')
 
 
+def run_pgo(droid, kp, kt, ts, data, K0, Kc, dist, maps, hscale, run):
+    """閉環 PnP 量測 → SE(3) pose graph → 寫回 DROID keyframe 位姿（video.poses 是 Tcw：[t, q(xyzw)]）。"""
+    from scipy.spatial.transform import Rotation
+    import droid_loops as dl
+    t0 = time.time()
+    n = droid.video.counter.value
+    P = droid.video.poses[:n].cpu().numpy().astype(np.float64)
+    Tcw = np.repeat(np.eye(4)[None], n, 0)
+    Tcw[:, :3, :3] = Rotation.from_quat(P[:, 3:7]).as_matrix()
+    Tcw[:, :3, 3] = P[:, :3]
+    Twc = dl.inv(Tcw)
+    cache = {}
+
+    def gray(f):
+        if ('g', f) not in cache:
+            img = cv2.imread(str(data / 'images' / ('%s.jpg' % ts[f])))
+            if maps is not None:
+                img = cv2.remap(img, maps[0], maps[1], cv2.INTER_LINEAR)
+            cache[('g', f)] = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        return cache[('g', f)]
+
+    rows, loops = [], []
+    for i, j in kp:
+        fi, fj = int(kt[i]), int(kt[j])
+        depth = dl.depth_cells(read_ply_xyz(data / 'raw_ply' / ('%s.ply' % ts[fj])), K0, Kc, dist, (gray(fj).shape[1], gray(fj).shape[0]))
+        if hscale is not None:
+            depth = depth * hscale[fj]
+        T, st = dl.relative_pose_pnp(gray(fi), gray(fj), depth, Kc, seed=i * 100003 + j)
+        cur = dl.inv(Twc[i]) @ Twc[j]
+        row = dict(kf_a=i, kf_b=j, frame_a=fi, frame_b=fj, **st)
+        if T is not None:
+            E = np.linalg.inv(T) @ cur
+            row.update(meas_dist=float(np.linalg.norm(T[:3, 3])), est_dist=float(np.linalg.norm(cur[:3, 3])),
+                       diff_trans=float(np.linalg.norm(E[:3, 3])), diff_rot_deg=float(np.degrees(Rotation.from_matrix(E[:3, :3]).magnitude())))
+            loops.append((i, j, T))
+        rows.append(row)
+    keys = ['kf_a', 'kf_b', 'frame_a', 'frame_b', 'reason', 'matches', 'inliers', 'meas_dist', 'est_dist', 'diff_trans', 'diff_rot_deg']
+    with open(run / 'debug' / 'loop_measurements.csv', 'w', newline='') as f:
+        w = csv.DictWriter(f, keys, extrasaction='ignore')
+        w.writeheader()
+        w.writerows(rows)
+    Twc2, info = dl.pose_graph(Twc, loops, **PGO_SIGMAS)
+    Tcw2 = dl.inv(Twc2)
+    P2 = np.c_[Tcw2[:, :3, 3], Rotation.from_matrix(Tcw2[:, :3, :3]).as_quat()]
+    droid.video.poses[:n] = torch.as_tensor(P2, dtype=droid.video.poses.dtype, device=droid.video.poses.device)
+    droid.video.dirty[:n] = True
+    d = np.array([r['diff_trans'] for r in rows if 'diff_trans' in r])
+    info.update(measured=len(loops), failed=len(rows) - len(loops), sigmas=PGO_SIGMAS, seconds=time.time() - t0,
+                meas_vs_est_trans_median=float(np.median(d)) if len(d) else None, meas_vs_est_trans_max=float(d.max()) if len(d) else None)
+    print('pose graph: %s' % json.dumps(info), flush=True)
+    return info
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--experiment', required=True, choices=sorted(EXPERIMENTS))
@@ -178,6 +258,8 @@ def main():
             return None
         xyz = read_ply_xyz(data / 'raw_ply' / ('%s.ply' % ts[t]))
         d = loger_depth(xyz, K0, K, dist, (w0, h0), (w1, h1))   # 截斷判斷用原始深度；投影與尺度無關，最後再乘係數
+        if exp.get('depth_below_axis'):
+            d[:int(np.ceil(K[1, 2] * h1 / h0))] = 0.0          # 光軸以上（可能是天空）不給先驗
         return torch.as_tensor(d * np.float32(hscale[t]) if hscale is not None else d)
 
     with open(run / 'frame_manifest.csv', 'w', newline='') as f:
@@ -189,6 +271,7 @@ def main():
     params = dict(experiment=a.experiment, alt_corr=bool(exp.get('alt_corr')), image_scale=s, image_size=[w1, h1], intrinsics=intr.tolist(),
                   calibration=calib, calib_from=a.calib_from,
                   depth_prior=('LoGeR raw_ply, median per 1/8 cell, z < %.1f m' % LOGER_CLIP_M) if exp.get('depth') else None,
+                  depth_below_axis=bool(exp.get('depth_below_axis')),
                   height_norm=dict(median_half_frames=HEIGHT_MEDIAN_HALF, ground='gslam.scale.ground_height + PARAMS.scale',
                                    file='debug/loger_height.csv') if exp.get('height_norm') else None, droid=droid_cfg, droid_commit='2dfd39f',
                   weights=a.weights, weights_sha256=digest(ROOT / a.weights))
@@ -227,6 +310,43 @@ def main():
     for t, img, k in stream():
         droid.track(t, img, depth=depth_of(t), intrinsics=k)
     n_kf = droid.video.counter.value
+    loop_stats = []
+    pgo_info = None
+    if exp.get('loops'):
+        import droid_backend
+        from factor_graph import FactorGraph
+        kt = droid.video.tstamp[:n_kf].cpu().numpy()
+        pairs = loop_frame_pairs(ROOT / a.calib_from)
+        kp = sorted({(int(np.abs(kt - fa).argmin()), int(np.abs(kt - fb).argmin())) for fa, fb in pairs})
+        kp = [(i, j) for i, j in kp if abs(i - j) > 2]
+        if exp.get('pgo'):
+            pgo_info = run_pgo(droid, kp, kt, ts, data, K0, K, dist, maps if calib is not None else None, hscale, run)
+        li = torch.as_tensor([i for i, j in kp] + [j for i, j in kp], dtype=torch.long, device='cuda')
+        lj = torch.as_tensor([j for i, j in kp] + [i for i, j in kp], dtype=torch.long, device='cuda')
+        print('loop edges: %d frame pairs → %d keyframe pairs' % (len(pairs), len(kp)), flush=True)
+
+        @torch.no_grad()
+        def backend_with_loops(self, steps=12, normalize=True):
+            # 與 DroidBackend.__call__ 相同，只在鄰近邊之後加入閉環邊（有深度先驗時本來就不做 normalize）
+            t = self.video.counter.value
+            if normalize and not self.video.stereo and not torch.any(self.video.disps_sens):
+                self.video.normalize()
+            graph = FactorGraph(self.video, self.update_op, corr_impl='alt', max_factors=16 * t, upsample=self.upsample)
+            graph.add_proximity_factors(rad=self.backend_radius, nms=self.backend_nms, thresh=self.backend_thresh, beta=self.beta)
+            n0 = graph.ii.shape[0]
+            graph.add_factors(li, lj)
+            graph.update_lowmem(steps=steps)
+            w = graph.weight[0, n0:].mean(dim=(1, 2, 3)) if graph.ii.shape[0] > n0 else torch.zeros(0)
+            wp = graph.weight[0, :n0].mean(dim=(1, 2, 3))
+            loop_stats.append(dict(steps=steps, proximity_edges=int(n0), loop_edges_added=int(graph.ii.shape[0] - n0),
+                                   loop_weight_median=float(w.median()) if len(w) else None,
+                                   loop_weight_frac_gt_0_1=float((w > 0.1).float().mean()) if len(w) else None,
+                                   proximity_weight_median=float(wp.median())))
+            print('backend(%d): proximity %d, loop edges %d, weight median loop %.3f / proximity %.3f' % (
+                steps, n0, graph.ii.shape[0] - n0, loop_stats[-1]['loop_weight_median'] or 0, loop_stats[-1]['proximity_weight_median']), flush=True)
+            graph.clear_edges()
+            self.video.dirty[:t] = True
+        droid_backend.DroidBackend.__call__ = backend_with_loops
     t1 = time.time()
     traj = droid.terminate(stream())    # (N,7) camera-to-world
     t2 = time.time()
@@ -244,7 +364,7 @@ def main():
                           str(data / 'sample_submission.csv')], capture_output=True, text=True)
     info.update(status='success' if chk.returncode == 0 else 'failed',
                 timings_seconds=dict(tracking=t1 - t0, global_ba_and_fill=t2 - t1),
-                summary=dict(keyframes=int(n_kf)), submission=dict(check_returncode=chk.returncode,
+                summary=dict(keyframes=int(n_kf), loop_backend=loop_stats or None, pose_graph=pgo_info), submission=dict(check_returncode=chk.returncode,
                                                                     check_output=chk.stdout[-2000:] + chk.stderr[-2000:]))
     info_path.write_text(json.dumps(info, ensure_ascii=False, indent=2) + '\n')
     # 成功的 full 自動產生唯讀圖表（失敗只記 analysis_status.json，不影響定位結果）
