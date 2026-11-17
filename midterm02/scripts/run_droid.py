@@ -7,6 +7,11 @@
 - 建立 outputs/run/track01_full_YYMMDDHHmm（程式快照、Git 狀態、test_info.json、frame_manifest.csv、result_1.csv）。
 - D2：先用自校正估出的主點與徑向畸變（讀 --calib-from 那個 run 的 test_info.json → summary.graph.bundle.calibration）
   校正影像，再以針孔模型交給 DROID。DROID 演算法與參數維持原樣（commit 2dfd39f，預設參數）。
+- D5：D2＋LoGeR 深度當 DROID 的 RGB-D 深度先驗（2026-11-17，Track2）。觀察：Track2 是長直路、幾乎不重複，
+  單眼 DROID 的尺度沿路漂移（D1 Public 25.1、D2 3.32，baseline 0.658）；LoGeR 每幀各自估深度（約公尺、不累積）。
+  點雲是官方針孔內參從 315×196 像素網格反投影而來（dev42_ply_grid.py），所以先用官方內參投影回原始像素，
+  再用自校正的畸變校正到 D2 的影像座標，每個 DROID 1/8 網格取深度中位數；50 m 截斷值的點（天空）不用。
+  DROID 原本的 RGB-D 模式把它當成視差先驗（ba 的 alpha=0.05），不是硬約束，也不再做單眼的尺度正規化。
 - 權重 outputs/cache/droid/droid.pth（官方 Google Drive，SHA256 46476ef6…）。
 """
 import argparse
@@ -34,7 +39,48 @@ EXPERIMENTS = {
     'D2a_droid_selfcalib_alt': dict(scale=0.5, calib=True, alt_corr=True),   # 驗證：alt 相關在 D2 的解析度應與 D2 幾乎相同
     'D3_droid_selfcalib_s075': dict(scale=0.75, calib=True, alt_corr=True),
     'D4_droid_selfcalib_s100': dict(scale=1.0, calib=True, alt_corr=True, buffer=512),   # 原解析度時 1024 張特徵圖超過 int32 元素上限
+    'D5_droid_selfcalib_depth': dict(scale=0.5, calib=True, depth=True),   # D2＋LoGeR 深度先驗（RGB-D 模式）
 }
+LOGER_CLIP_M = 49.5   # LoGeR 點雲的深度在 50 m 截斷（最大值 49.9）；截斷處不是真實深度，不當先驗
+
+
+def read_ply_xyz(path):
+    """官方 raw_ply（binary little endian：float x y z、uchar r g b）→ (N,3) float64，相機座標。"""
+    raw = open(path, 'rb').read()
+    end = raw.index(b'end_header\n') + len(b'end_header\n')
+    n = int([l for l in raw[:end].decode().splitlines() if l.startswith('element vertex')][0].split()[-1])
+    a = np.frombuffer(raw[end:end + n * 15], dtype=np.dtype([('x', '<f4'), ('y', '<f4'), ('z', '<f4'),
+                                                           ('r', 'u1'), ('g', 'u1'), ('b', 'u1')]))
+    return np.stack([a['x'], a['y'], a['z']], 1).astype(np.float64)
+
+
+def loger_depth(xyz, K0, Kc, dist, size0, size1):
+    """LoGeR 點雲 → DROID 輸入解析度的深度圖（只填 DROID 取樣的 [3::8, 3::8] 網格點，其他為 0＝無資料）。
+
+    xyz：相機座標點（官方針孔 K0 從原始像素網格反投影）。Kc、dist：自校正的內參與畸變（D2 的去畸變用同一組）。
+    """
+    z = xyz[:, 2]
+    keep = np.isfinite(z) & (z > 0.1) & (z < LOGER_CLIP_M)
+    xyz, z = xyz[keep], z[keep]
+    uv = (xyz @ K0.T)[:, :2] / z[:, None]                       # 原始（有畸變）像素
+    if dist is not None:
+        uv = cv2.undistortPoints(uv.reshape(-1, 1, 2), Kc, dist, P=Kc).reshape(-1, 2)   # → 去畸變後影像的像素
+    (w0, h0), (w1, h1) = size0, size1
+    u1, v1 = uv[:, 0] * w1 / w0, uv[:, 1] * h1 / h0
+    gw, gh = w1 // 8, h1 // 8
+    c, r = np.floor(u1 / 8).astype(int), np.floor(v1 / 8).astype(int)
+    ok = (c >= 0) & (c < gw) & (r >= 0) & (r < gh)
+    cell, z = r[ok] * gw + c[ok], z[ok]
+    order = np.lexsort((z, cell))
+    cell, z = cell[order], z[order]
+    starts = np.flatnonzero(np.r_[True, np.diff(cell) > 0])
+    counts = np.diff(np.r_[starts, len(cell)])
+    med = z[starts + (counts - 1) // 2]                          # 每格深度中位數
+    grid = np.zeros(gh * gw, dtype=np.float32)
+    grid[cell[starts]] = med
+    depth = np.zeros((h1, w1), dtype=np.float32)
+    depth[3::8, 3::8][:gh, :gw] = grid.reshape(gh, gw)
+    return depth
 DROID_DEFAULTS = dict(buffer=1024, beta=0.3, filter_thresh=2.4, warmup=8, keyframe_thresh=4.0, frontend_thresh=16.0,
                       frontend_window=25, frontend_radius=2, frontend_nms=1, backend_thresh=22.0, backend_radius=2,
                       backend_nms=3, upsample=False, stereo=False, disable_vis=True, asynchronous=False,
@@ -65,6 +111,8 @@ def main():
     w0, h0 = ci['width'], ci['height']
     K = np.array([[ci['fx'], 0, ci['cx']], [0, ci['fy'], ci['cy']], [0, 0, 1.0]])
     calib = None
+    K0 = K.copy()                       # 官方針孔內參（LoGeR 點雲反投影用的）
+    dist = None
     if exp['calib']:
         if not a.calib_from:
             raise SystemExit('D2 需要 --calib-from（自校正 run 的目錄）')
@@ -86,6 +134,12 @@ def main():
             img = cv2.resize(img, (w1, h1), interpolation=cv2.INTER_AREA)
             yield t, torch.as_tensor(img).permute(2, 0, 1)[None], intr.clone()
 
+    def depth_of(t):
+        if not exp.get('depth'):
+            return None
+        xyz = read_ply_xyz(data / 'raw_ply' / ('%s.ply' % ts[t]))
+        return torch.as_tensor(loger_depth(xyz, K0, K, dist, (w0, h0), (w1, h1)))
+
     with open(run / 'frame_manifest.csv', 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['idx', 'timestamp_ns', 'image', 'ply'])
@@ -93,7 +147,8 @@ def main():
             w.writerow([i, name, 'images/%s.jpg' % name, 'raw_ply/%s.ply' % name])
     droid_cfg = dict(DROID_DEFAULTS, buffer=a.buffer or exp.get('buffer', DROID_DEFAULTS['buffer']))
     params = dict(experiment=a.experiment, alt_corr=bool(exp.get('alt_corr')), image_scale=s, image_size=[w1, h1], intrinsics=intr.tolist(),
-                  calibration=calib, calib_from=a.calib_from, droid=droid_cfg, droid_commit='2dfd39f',
+                  calibration=calib, calib_from=a.calib_from,
+                  depth_prior=('LoGeR raw_ply, median per 1/8 cell, z < %.1f m' % LOGER_CLIP_M) if exp.get('depth') else None, droid=droid_cfg, droid_commit='2dfd39f',
                   weights=a.weights, weights_sha256=digest(ROOT / a.weights))
     info.update(status='running', version='droid-2dfd39f', experiment=a.experiment, parameters=params, seed=0,
                 frame_count=len(ts), command=' '.join(sys.argv))
@@ -128,7 +183,7 @@ def main():
     droid = Droid(args)
     t0 = time.time()
     for t, img, k in stream():
-        droid.track(t, img, intrinsics=k)
+        droid.track(t, img, depth=depth_of(t), intrinsics=k)
     n_kf = droid.video.counter.value
     t1 = time.time()
     traj = droid.terminate(stream())    # (N,7) camera-to-world
