@@ -12,6 +12,10 @@
   點雲是官方針孔內參從 315×196 像素網格反投影而來（dev42_ply_grid.py），所以先用官方內參投影回原始像素，
   再用自校正的畸變校正到 D2 的影像座標，每個 DROID 1/8 網格取深度中位數；50 m 截斷值的點（天空）不用。
   DROID 原本的 RGB-D 模式把它當成視差先驗（ba 的 alpha=0.05），不是硬約束，也不再做單眼的尺度正規化。
+- D6：D5 的 LoGeR 深度先用「相機離地高度」正規化（2026-11-17）。觀察：D5 Public 11.46（比 D2 3.32 差）；
+  LoGeR／視覺速度比與 LoGeR 估的相機離地高度相關 0.958（dev47_loger_height.py）：相機固定在車上、高度不變，
+  所以 LoGeR 高度的起伏（0.8–1.24 倍）就是它的尺度偏差。每幀深度乘 s_i = median(h)/h̃_i，h̃ 為 ±15 幀中位數
+  （每幀地面擬合約 ±10% 雜訊，偏差以數百幀尺度變化；擬合失敗的幀用鄰近值）。地面擬合用 gslam.scale.ground_height 與 params 的 scale 設定。
 - 權重 outputs/cache/droid/droid.pth（官方 Google Drive，SHA256 46476ef6…）。
 """
 import argparse
@@ -40,7 +44,30 @@ EXPERIMENTS = {
     'D3_droid_selfcalib_s075': dict(scale=0.75, calib=True, alt_corr=True),
     'D4_droid_selfcalib_s100': dict(scale=1.0, calib=True, alt_corr=True, buffer=512),   # 原解析度時 1024 張特徵圖超過 int32 元素上限
     'D5_droid_selfcalib_depth': dict(scale=0.5, calib=True, depth=True),   # D2＋LoGeR 深度先驗（RGB-D 模式）
+    'D6_droid_selfcalib_depth_hnorm': dict(scale=0.5, calib=True, depth=True, height_norm=True),   # D5＋相機高度正規化
 }
+HEIGHT_MEDIAN_HALF = 15   # 相機高度的時間中位數半窗（幀）：壓掉單幀地面擬合的離群值，遠小於 LoGeR 偏差的變化尺度
+
+
+def _height_job(args):
+    path, seed = args
+    sys.path.insert(0, str(ROOT / 'vslam'))
+    from gslam.params import PARAMS
+    from gslam.scale import ground_height
+    h, _ = ground_height(read_ply_xyz(path), PARAMS['scale'], seed=seed)
+    return np.nan if h is None else h
+
+
+def height_scales(paths, half=HEIGHT_MEDIAN_HALF):
+    """每幀 LoGeR 相機離地高度 → 尺度係數 s_i = median(h̃)/h̃_i（h̃：±half 幀中位數，跳過擬合失敗的幀）。"""
+    from multiprocessing import Pool
+    with Pool(12) as pool:
+        h = np.array(pool.map(_height_job, [(p, i) for i, p in enumerate(paths)], chunksize=20))
+    hs = np.array([np.nanmedian(h[max(0, i - half):i + half + 1]) for i in range(len(h))])
+    if np.isnan(hs).any():   # 整個視窗都失敗：用最近的有效值
+        ok = np.flatnonzero(~np.isnan(hs))
+        hs = hs[ok[np.abs(np.arange(len(hs))[:, None] - ok[None]).argmin(1)]]
+    return h, hs, np.median(hs) / hs
 LOGER_CLIP_M = 49.5   # LoGeR 點雲的深度在 50 m 截斷（最大值 49.9）；截斷處不是真實深度，不當先驗
 
 
@@ -134,11 +161,24 @@ def main():
             img = cv2.resize(img, (w1, h1), interpolation=cv2.INTER_AREA)
             yield t, torch.as_tensor(img).permute(2, 0, 1)[None], intr.clone()
 
+    hscale = None
+    if exp.get('height_norm'):
+        h_raw, h_med, hscale = height_scales([data / 'raw_ply' / ('%s.ply' % n) for n in ts])
+        (run / 'debug').mkdir(exist_ok=True)
+        with open(run / 'debug' / 'loger_height.csv', 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['idx', 'timestamp_ns', 'height_raw', 'height_median', 'depth_scale'])
+            for i, n in enumerate(ts):
+                w.writerow([i, n, h_raw[i], h_med[i], hscale[i]])
+        print('LoGeR height: fit ok %.1f%%, scale p5/p95 %.3f/%.3f' % (
+            100 * np.isfinite(h_raw).mean(), np.percentile(hscale, 5), np.percentile(hscale, 95)), flush=True)
+
     def depth_of(t):
         if not exp.get('depth'):
             return None
         xyz = read_ply_xyz(data / 'raw_ply' / ('%s.ply' % ts[t]))
-        return torch.as_tensor(loger_depth(xyz, K0, K, dist, (w0, h0), (w1, h1)))
+        d = loger_depth(xyz, K0, K, dist, (w0, h0), (w1, h1))   # 截斷判斷用原始深度；投影與尺度無關，最後再乘係數
+        return torch.as_tensor(d * np.float32(hscale[t]) if hscale is not None else d)
 
     with open(run / 'frame_manifest.csv', 'w', newline='') as f:
         w = csv.writer(f)
@@ -148,7 +188,9 @@ def main():
     droid_cfg = dict(DROID_DEFAULTS, buffer=a.buffer or exp.get('buffer', DROID_DEFAULTS['buffer']))
     params = dict(experiment=a.experiment, alt_corr=bool(exp.get('alt_corr')), image_scale=s, image_size=[w1, h1], intrinsics=intr.tolist(),
                   calibration=calib, calib_from=a.calib_from,
-                  depth_prior=('LoGeR raw_ply, median per 1/8 cell, z < %.1f m' % LOGER_CLIP_M) if exp.get('depth') else None, droid=droid_cfg, droid_commit='2dfd39f',
+                  depth_prior=('LoGeR raw_ply, median per 1/8 cell, z < %.1f m' % LOGER_CLIP_M) if exp.get('depth') else None,
+                  height_norm=dict(median_half_frames=HEIGHT_MEDIAN_HALF, ground='gslam.scale.ground_height + PARAMS.scale',
+                                   file='debug/loger_height.csv') if exp.get('height_norm') else None, droid=droid_cfg, droid_commit='2dfd39f',
                   weights=a.weights, weights_sha256=digest(ROOT / a.weights))
     info.update(status='running', version='droid-2dfd39f', experiment=a.experiment, parameters=params, seed=0,
                 frame_count=len(ts), command=' '.join(sys.argv))
