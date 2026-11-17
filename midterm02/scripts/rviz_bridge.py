@@ -15,11 +15,17 @@ Topics（frame）：
   /vslam/path_live、/vslam/path_odometry、/vslam/path_optimized
   /vslam/keyframes（PoseArray）、/vslam/markers（閉環邊、相機視錐）
   TF：map → world_cv → camera
+
+執行緒（2026-11-17）：接收執行緒只做便宜的事（目前影像／點雲／TF、記下 keyframe 與位姿），
+路徑與整張地圖改由定時執行緒發佈（路徑每 PATH_PERIOD_S 秒、地圖每 MAP_PERIOD_S 秒最多一次，點數上限 MAP_MAX_POINTS）。
+以前每 10 幀就在接收執行緒裡重組並發佈整張地圖：Track2 到 1000 多個 keyframe 時一次要約 8 秒，
+這段時間不讀 socket，SLAM 的送出就被卡住，整體慢了一倍以上。
 """
 import json
 import socket
 import struct
 import threading
+import time
 
 import numpy as np
 import rclpy
@@ -35,6 +41,9 @@ PORT = 5600
 WORLD, CAMERA = 'world_cv', 'camera'
 # p_map = M · p_cv：map 的 x = cv 的 z（前），y = −x（左），z = −y（上）
 M_MAP_CV = np.array([[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]])
+PATH_PERIOD_S = 1.0          # 路徑（live／odometry）重發間隔
+MAP_PERIOD_S = 5.0           # 整張地圖重組的最短間隔（閉環修正後也遵守）
+MAP_MAX_POINTS = 3_000_000   # 地圖點數上限：超過時每個 keyframe 等間隔取樣（只影響顯示）
 
 
 def quaternion(R):
@@ -106,18 +115,21 @@ class Bridge(Node):
         q = quaternion(M_MAP_CV)
         static.transform.rotation.x, static.transform.rotation.y, static.transform.rotation.z, static.transform.rotation.w = q
         self.static_tf.sendTransform(static)
+        self.lock = threading.Lock()
         self.reset(None)
         threading.Thread(target=self.serve, daemon=True).start()
+        threading.Thread(target=self.publish_loop, daemon=True).start()
         self.get_logger().info('waiting for SLAM on tcp port %d' % PORT)
 
     # ------------------------------------------------------------ 狀態
     def reset(self, meta):
+        self.final_sent = False
         self.info = meta
         self.kf_clouds = {}            # kf_id -> (xyz, rgb)（相機座標）
         self.kf_poses = np.zeros((0, 4, 4))
         self.live, self.odom = [], []
         self.map_dirty = False
-        self.last_map_frame = -100
+        self.path_dirty = False
 
     def serve(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -226,25 +238,20 @@ class Bridge(Node):
             info.p = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
             self.pub_info.publish(info)
         self.pub_cloud.publish(self.cloud_msg(CAMERA, a['cloud_xyz'], a['cloud_rgb'], stamp))
-        self.live.append(T.copy())
-        self.odom.append(a['odom_T'].copy())
-        self.pub_live.publish(self.path_msg(self.live))
-        self.pub_odom.publish(self.path_msg(self.odom))
+        with self.lock:
+            self.live.append(T.copy())
+            self.odom.append(a['odom_T'].copy())
+            self.path_dirty = True
         self.publish_frustum()
-        if self.map_dirty and meta['idx'] - self.last_map_frame >= 10:
-            self.publish_map()
-            self.last_map_frame = meta['idx']
 
     def on_keyframe(self, meta, a):
-        self.kf_clouds[meta['kf_id']] = (a['xyz'].copy(), a['rgb'].copy())
+        with self.lock:
+            self.kf_clouds[meta['kf_id']] = (a['xyz'].copy(), a['rgb'].copy())
 
     def on_graph(self, meta, a):
-        moved = len(a['kf_poses']) == len(self.kf_poses) or (
-            len(self.kf_poses) and not np.allclose(a['kf_poses'][:len(self.kf_poses)], self.kf_poses, atol=1e-6))
-        self.kf_poses = a['kf_poses'].copy()
-        self.map_dirty = True
-        if moved:   # 閉環後 keyframe 被修正：即時軌跡改用修正後的 keyframe 重新對齊，並立刻重畫地圖
-            self.last_map_frame = -100
+        with self.lock:
+            self.kf_poses = a['kf_poses'].copy()
+            self.map_dirty = True
         poses = PoseArray()
         poses.header = self.header(WORLD)
         poses.poses = [to_pose(T) for T in self.kf_poses]
@@ -264,20 +271,48 @@ class Bridge(Node):
         self.pub_marker.publish(MarkerArray(markers=[marker]))
 
     def on_final(self, meta, a):
+        with self.lock:
+            self.path_dirty = False      # 最終路徑由這裡發，定時執行緒不要再用 live／odom 蓋掉
+            self.final_sent = True
         self.pub_odom.publish(self.path_msg(a['odom']))
         self.pub_opt.publish(self.path_msg(a['optimized']))
         self.publish_map()
 
+    def publish_loop(self):
+        """定時執行緒：路徑與地圖的重發不佔用接收執行緒。"""
+        last_path = last_map = 0.0
+        while rclpy.ok():
+            time.sleep(0.2)
+            now = time.time()
+            try:
+                if self.path_dirty and now - last_path >= PATH_PERIOD_S and not getattr(self, 'final_sent', False):
+                    with self.lock:
+                        live, odom = list(self.live), list(self.odom)
+                        self.path_dirty = False
+                    self.pub_live.publish(self.path_msg(live))
+                    self.pub_odom.publish(self.path_msg(odom))
+                    last_path = now
+                if self.map_dirty and now - last_map >= MAP_PERIOD_S:
+                    self.publish_map()
+                    last_map = time.time()
+            except Exception as exc:  # noqa: BLE001  顯示端出錯不應中斷
+                self.get_logger().error('publish error: %r' % exc)
+
     def publish_map(self):
+        with self.lock:
+            items = sorted(self.kf_clouds.items())
+            poses = self.kf_poses
+            self.map_dirty = False
+        items = [(k, p, c) for k, (p, c) in items if k < len(poses)]
+        total = sum(len(p) for _, p, _ in items)
+        step = max(1, int(np.ceil(total / MAP_MAX_POINTS)))
         xyz, rgb = [], []
-        for k, (p, c) in sorted(self.kf_clouds.items()):
-            if k < len(self.kf_poses):
-                T = self.kf_poses[k]
-                xyz.append(p @ T[:3, :3].T.astype(np.float32) + T[:3, 3].astype(np.float32))
-                rgb.append(c)
+        for k, p, c in items:
+            T = poses[k]
+            xyz.append(p[::step] @ T[:3, :3].T.astype(np.float32) + T[:3, 3].astype(np.float32))
+            rgb.append(c[::step])
         if xyz:
             self.pub_map.publish(self.cloud_msg(WORLD, np.concatenate(xyz), np.concatenate(rgb)))
-        self.map_dirty = False
 
     def publish_frustum(self):
         """相機視錐（在 camera frame，跟著 TF 移動）。"""

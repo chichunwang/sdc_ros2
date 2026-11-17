@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 
 import numpy as np  # noqa: E402
 
-VERSION = 'gslam-0.10.0'
+VERSION = 'gslam-0.10.1'
 
 
 def gpu_snapshot():
@@ -83,6 +83,8 @@ def main():
             viz = VizStream(a.rviz, ds.K, ds.size)
             print('RViz stream:', a.rviz, flush=True)
         slam = Slam(ds, params, debug_dir=run / 'debug', viz=viz)
+        if params['runtime']['prefetch_workers']:   # 背景執行緒預先讀圖＋抽 SIFT（只改速度，結果相同）
+            slam.prefetch(indices, workers=params['runtime']['prefetch_workers'])
         for local, i in enumerate(indices):
             rec = slam.process(local, i)
             if local % 20 == 0 or rec['tracking_status'] == 'tracking_failure' or rec['loop_status'] == 'accepted':

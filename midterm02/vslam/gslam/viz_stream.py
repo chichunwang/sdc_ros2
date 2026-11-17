@@ -3,10 +3,16 @@
 SLAM 容器是 Python 3.9、沒有 ROS；RViz 在另一個 ROS 2 Humble 容器。兩者用 TCP 傳「JSON 標頭＋原始陣列」：
     [4 bytes 標頭長度][JSON 標頭][陣列 1 bytes][陣列 2 bytes]...
 視覺化只讀取 SLAM 狀態，不影響任何 pose；連線中斷時印出警告並停止串流，SLAM 繼續執行。
+
+送出在背景執行緒進行（2026-11-17）：以前 SLAM 直接 sendall，bridge 忙著重組大地圖時 TCP 緩衝區塞滿，
+SLAM 就停下來等（Track2 有 456 幀因此超過 1 秒，合計約 35 分鐘）。現在 SLAM 只把訊息放進佇列；
+bridge 來不及時丟掉還沒送出的舊 'frame'（純畫面，下一幀會取代），狀態訊息（reset／keyframe／graph／final）一律保留。
 """
+import collections
 import json
 import socket
 import struct
+import threading
 import time
 
 import cv2
@@ -26,7 +32,14 @@ class VizStream:
                 time.sleep(1.0)
         if self.sock is None:
             raise ConnectionError('連不上 RViz bridge %s（先執行 scripts/dev.sh rviz）' % address)
+        self.sock.settimeout(None)            # 送出在背景執行緒，阻塞不影響 SLAM
+        self.queue = collections.deque()      # (kind, bytes)
+        self.cond = threading.Condition()
+        self.dropped_frames = 0
+        threading.Thread(target=self._sender, daemon=True).start()
         self.send('reset', dict(K=np.asarray(K, dtype=np.float64).tolist(), width=int(size[0]), height=int(size[1])))
+
+    MAX_PENDING_FRAMES = 2    # 佇列裡最多留幾個還沒送出的 'frame'；更舊的丟掉
 
     def send(self, kind, meta=None, **arrays):
         if self.sock is None:
@@ -38,11 +51,39 @@ class VizStream:
             header['arrays'].append(dict(name=name, dtype=str(a.dtype), shape=list(a.shape)))
             blobs.append(a.tobytes())
         head = json.dumps(header).encode()
-        try:
-            self.sock.sendall(struct.pack('>I', len(head)) + head + b''.join(blobs))
-        except OSError as exc:
-            self.log('警告：RViz 串流中斷（%s），SLAM 繼續執行但不再更新畫面' % exc)
-            self.sock = None
+        data = struct.pack('>I', len(head)) + head + b''.join(blobs)
+        with self.cond:
+            if kind == 'frame':
+                pending = [k for k, (kk, _) in enumerate(self.queue) if kk == 'frame']
+                if len(pending) >= self.MAX_PENDING_FRAMES:
+                    del self.queue[pending[0]]
+                    self.dropped_frames += 1
+            self.queue.append((kind, data))
+            self.cond.notify()
+
+    def _sender(self):
+        while True:
+            with self.cond:
+                while not self.queue:
+                    self.cond.wait()
+                _, data = self.queue.popleft()
+                self.cond.notify_all()
+            try:
+                self.sock.sendall(data)
+            except (OSError, AttributeError) as exc:
+                self.log('警告：RViz 串流中斷（%s），SLAM 繼續執行但不再更新畫面' % exc)
+                self.sock = None
+                with self.cond:
+                    self.queue.clear()
+                    self.cond.notify_all()
+                return
+
+    def flush(self, timeout=120.0):
+        """等佇列送完（結束前呼叫，否則程式結束時背景執行緒會被中止，最後的地圖送不出去）。"""
+        end = time.time() + timeout
+        with self.cond:
+            while self.queue and self.sock is not None and time.time() < end:
+                self.cond.wait(timeout=1.0)
 
     # ------------------------------------------------------------ 各種訊息
     @staticmethod
@@ -88,3 +129,6 @@ class VizStream:
 
     def final(self, odom, optimized):
         self.send('final', None, odom=np.asarray(odom, dtype=np.float64), optimized=np.asarray(optimized, dtype=np.float64))
+        self.flush()
+        if self.dropped_frames:
+            self.log('RViz：bridge 忙碌時略過 %d 個畫面幀（只影響顯示）' % self.dropped_frames)

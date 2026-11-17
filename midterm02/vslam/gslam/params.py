@@ -181,6 +181,8 @@ PARAMS = dict(
         max_depth_m=15.0, frame_point_step=2, keyframe_point_step=6, submap_max_points=60000,
     ),
     debug=dict(cloud_every=100),  # 每幾幀存一張點雲俯視圖（0 = 不存）
+    # 只影響速度、不影響結果：背景執行緒預先讀圖＋抽 SIFT 的執行緒數（0 = 關閉，在主執行緒逐幀計算）
+    runtime=dict(prefetch_workers=8),
 )
 
 # 消融實驗：名稱 -> 要覆寫的鍵（用 'a.b' 路徑）。EXPERIMENT 指定目前要跑哪一組。
@@ -256,6 +258,10 @@ EXPERIMENTS = {
     'E10a_ground_scale': {'scale.mode': 'ground_height'},
     'E9b_no_fusion': {'fusion.enabled': False},
     'E10b_scale_dof': {'registration.estimate_scale': True},
+    # （不是消融）速度改動的等價檢查：E21 但關掉背景預先抽 SIFT；短段結果應與 E21 逐位元相同
+    'Z21_selfcalib_no_prefetch': {
+        'bundle.calibration': dict(enabled=True, solves=3, sigmas=[1e-6, 1e-6, 1e-6, 5.0, 5.0, 0.5, 0.5, 1e-6, 1e-6]),
+        'runtime.prefetch_workers': 0},
 }
 EXPERIMENT = 'E9_full'
 

@@ -47,6 +47,8 @@ def main():
     ap.add_argument('--track', default='01')
     ap.add_argument('--calib-from', default=None, help='讀自校正結果的 run 目錄（D2 需要）')
     ap.add_argument('--weights', default='outputs/cache/droid/droid.pth')
+    ap.add_argument('--buffer', type=int, default=None,
+                    help='keyframe 容量（預先配置的儲存空間，不是演算法參數）；Track2 有 4206 幀，keyframe 超過預設 1024')
     a = ap.parse_args()
     exp = EXPERIMENTS[a.experiment]
     data = ROOT / ('data/data_VSLAM-T1/Track1/data' if a.track == '01' else 'data/data_VSLAM-T2/Track2/data')
@@ -89,7 +91,7 @@ def main():
         w.writerow(['idx', 'timestamp_ns', 'image', 'ply'])
         for i, name in enumerate(ts):
             w.writerow([i, name, 'images/%s.jpg' % name, 'raw_ply/%s.ply' % name])
-    droid_cfg = dict(DROID_DEFAULTS, buffer=exp.get('buffer', DROID_DEFAULTS['buffer']))
+    droid_cfg = dict(DROID_DEFAULTS, buffer=a.buffer or exp.get('buffer', DROID_DEFAULTS['buffer']))
     params = dict(experiment=a.experiment, alt_corr=bool(exp.get('alt_corr')), image_scale=s, image_size=[w1, h1], intrinsics=intr.tolist(),
                   calibration=calib, calib_from=a.calib_from, droid=droid_cfg, droid_commit='2dfd39f',
                   weights=a.weights, weights_sha256=digest(ROOT / a.weights))

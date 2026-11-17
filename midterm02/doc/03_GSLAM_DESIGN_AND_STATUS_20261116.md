@@ -840,6 +840,46 @@ BA 用多視角幾何決定尺度，不使用 LoGeR 的尺度，局部尺度穩�
 - 最終兩份提交建議：一份我們自己的 BA（E21／E22／E25 中 Public 與獨立證據都好的），一份融合或 D2。
 - D2、F、M 的重現需要 `docker/droid`、`docker/mast3r` 的映像與權重（README 要寫清楚）。
 
+## Track02 第一輪（2026-11-17）：用 Track1 最佳方法 D2
+
+**資料**：4206 張、10 Hz、約 2.1 km、終點回到起點、無 IMU，內參與 Track1 相同（`data/data_VSLAM-T2/`）。Public 421／Private 3785。
+
+**流程**：和 Track1 相同，先跑 E21 取得相機自校正，再用這組校正跑 D2（DROID＋畸變校正）。
+
+| run（`outputs/run/…`） | 實驗 | 結果 | 頭尾距離／路長 |
+| --- | --- | --- | --- |
+| track02_full_2611171739 | `E21_selfcalib` | 自校正 k1 −0.0543、k2 +0.0903、cx 722.3、cy 452.9（Track1：−0.0557／+0.0869／719.9／455.1），**同一顆相機的獨立估計彼此一致** | **27.9%（壞掉，不提交）**；odometry 7.2% |
+| track02_full_2611171743 | `D1_droid`（`--buffer 2560`） | DROID 原樣，D2 的成對對照 | — |
+| **track02_full_2611171900** | **`D2_droid_selfcalib`**（`--buffer 2560 --calib-from …1739`） | **建議提交的 `result_2.csv`**，格式檢查 OK | **1.6%**，符合「終點回到起點」 |
+
+- **DROID 的 buffer**：Track2 的 keyframe 有 1387–1393 個，超過預設 buffer 1024（第一次 D1 `…1740` 因此 IndexError，標 failed）。`scripts/run_droid.py` 新增 `--buffer`：它只是預先配置的 keyframe 儲存空間，keyframe 數沒超過時不影響結果。2560 在 0.5 倍解析度下特徵圖約 1.7×10⁹ 元素，低於 int32 上限。
+- **E21 在 Track2 失敗**：回程直路在最佳化後被壓到去程上，終點停在路線中段；尺度圖的 log 尺度範圍 −0.74～+2.75（局部尺度 0.5～15 倍）。閉環只出現在繞街區的不同圈之間（第 1500–2100 幀對 600–1200、3000–3600 對 2100–2700），回程直路沒有閉環。假說：尺度圖在沒有閉環約束的長直路上失控，BA 又被它的初值帶偏。待查（下一步）；目前 Track2 的提交以 D2 為準，E21 只提供相機校正。
+- `scripts/analyze_external_run.py` 改成依 Track 選參考軌跡：Track2 參考 E21（`…1739`），沒有 IMU 無法換算公尺，用參考軌跡自己的單位，視窗 421 幀（Public 長度）。因為 E21 在 Track2 本身壞掉，D1／D2 的 `04_compare_reference` 只能看出「和壞掉的 E21 差多少」，不能當誤差。
+
+## 速度改動（gslam 0.10.1，2026-11-17，只改速度、不改結果）
+
+**觀察**：Track2 的 E21 共 80 分鐘（前端 3029 s、最後 BA 1758 s），GPU 使用率約 1%。`frames.csv` 拆解：SIFT 637 s（主執行緒單核，每幀約 150 ms）、配準 116 s，其餘 2271 s 是「其他」，集中在約每 10 幀一次、耗時隨時間線性成長到約 8 s 的幀。
+
+**原因**：RViz bridge 每 10 幀在接收執行緒裡用全部 keyframe 點雲重組並發佈整張地圖（Track2 有 1170 個 keyframe），這段時間不讀 socket，SLAM 的 `sendall` 塞住等待。
+
+| 改動 | 檔案 | 效果 |
+| --- | --- | --- |
+| SLAM 端送出改背景執行緒；bridge 來不及時丟掉還沒送出的舊畫面幀（keyframe／graph／final 不丟），結束前 flush | `vslam/gslam/viz_stream.py` | SLAM 不再等 RViz |
+| bridge 接收執行緒只更新狀態；路徑每 1 s、地圖每 5 s 由定時執行緒發佈，地圖上限 300 萬點 | `scripts/rviz_bridge.py`（要 `scripts/dev.sh rviz` 重啟才生效） | 同上 |
+| 背景執行緒池（預設 8）預先讀圖＋抽 SIFT，每個執行緒各自一個 detector | `vslam/gslam/visual.py`、`pipeline.py`、`run_slam.py`；參數 `runtime.prefetch_workers`（0＝關閉） | SIFT 不再佔主執行緒 |
+
+**驗證**（Track2 前 300 幀，E21 設定）：
+
+| run | 設定 | 前端秒數 |
+| --- | --- | --- |
+| track02_test_2611171904 | 關掉預先抽取（`Z21_selfcalib_no_prefetch`） | 67.2 |
+| track02_test_2611171906 | 預先抽取 | 20.2 |
+| track02_test_2611171909 | 預先抽取＋RViz（新 bridge） | 21.6 |
+
+- 每幀的特徵數、匹配數、PnP 內點、fitness 完全相同；位姿差 ≤2×10⁻¹¹。關掉預先抽取的同設定重跑（`…1907`）彼此也差 3×10⁻¹¹，是程式原本就有的浮點非確定性，所以兩者等價。
+- 開 RViz 時，bridge 跟不上會略過部分畫面幀（300 幀中 190 幀），只影響顯示。
+- 預估 Track2 full 從 80 分鐘降到約 35 分鐘；剩下主要是最後的 BA（gtsam 單核，3 輪各約 6 分鐘，加上每輪用 Python 逐一加入 124 萬個因子），尚未處理。
+
 ## IMU 陀螺儀與 BA 轉角的比較（離線檢查，`outputs/cache/dev15_imu.py`）
 
 把陀螺儀角速度用 `R_cam_imu` 轉到相機座標，在相鄰兩幀的時間區間內積分，和基本 BA（`track01_full_2611161129`）的相鄰幀轉角比較：

@@ -1,6 +1,6 @@
 # 01｜Midterm02 Visual SLAM 官方規則整理（2026-11-13）
 
-來源：課程投影片《SDC Midterm II Visual SLAM》（25 頁）。Track02 資訊官方尚未公布（TBA），公布後補在本檔末「待更新」。
+來源：課程投影片《SDC Midterm II Visual SLAM》（25 頁）。2026-11-17 換成教授更新版（補上 Track02 資訊），更新內容見本檔末「投影片更新紀錄」。
 
 ## 一句話
 
@@ -20,7 +20,7 @@
 | Track | 影像數 | 頻率 | 路線 | IMU | Public／Private |
 | --- | --- | --- | --- | --- | --- |
 | Track01 | 1314 | 10 Hz | 約 247 m，同方向繞 3 圈 | 有（100 Hz） | 132／1182 |
-| Track02 | TBA | TBA | TBA | 無 | TBA |
+| Track02 | 4206 | 10 Hz | 約 2.1 km，終點回到起點 | 無 | 421／3785 |
 
 ## 要找出什麼
 
@@ -108,13 +108,13 @@ timestamp,m00,m01,m02,m03,m10,m11,m12,m13,m20,m21,m22,m23,m30,m31,m32,m33
 | 3 | Task | 估計每張前鏡頭影像的相機 pose（位置＋方向），用相機、可選 IMU。輸入：影像、每張一份 LoGeR 點雲、內參、IMU（僅 Track01）。要自己做：掃描匹配（odometry）、keyframe、loop closure、pose graph 最佳化。輸出：每張一個 4×4 camera-to-world，CSV 上傳 Kaggle。**不提供 LiDAR** |
 | 4 | Flow | 前端（每張）：2D 影像 → LoGeR 3D 點雲（官方給）→ 前處理（降採樣、距離裁切、去雜訊）→ 掃描匹配（ICP、GICP、NDT）得 odometry。後端（keyframe）：keyframe（例如每 1 m 一個，附局部 submap）→ 閉環（找回訪地點、估計轉換）→ pose graph（一起最佳化所有 keyframe pose）→ 每張影像的 pose → `submission.csv`。starter 程式照這個流程寫 |
 | 5 | 章節頁 | Dataset & Code |
-| 6 | Dataset | 兩條 Track，各自一個 Kaggle 競賽。Track01：1314 張、10 Hz、約 247 m、同方向 3 圈、IMU 100 Hz；Track02：TBA、無 IMU。影像 1440×928。world frame 與軌跡尺度可任意 |
+| 6 | Dataset | 兩條 Track，各自一個 Kaggle 競賽。Track01：1314 張、10 Hz、約 247 m、同方向 3 圈、IMU 100 Hz；Track02：4206 張、10 Hz、約 2.1 km、終點回到起點、無 IMU。影像 1440×928。world frame 與軌跡尺度可任意 |
 | 7 | Dataset · files | `images/`、`raw_ply/`、`camera_info.json`、`imu.csv`（僅 Track01）、`sample_submission.csv`；檔名＝奈秒時間戳。raw_ply：相機座標、OpenCV 軸、xyz＋RGB；**只大約是公尺、尺度不精確且逐幀略異、含天空**。`camera_info.json` 含內參與 `R_cam_imu`；`imu.csv` 時間戳是 bag 接收時間。細節見 starter README |
 | 8 | Provided code | `main.py`：整條流程 → `submission.csv`；`utils/ICP.py`＝TODO 1（當前點雲對局部 submap 配準）；`utils/loopclosure.py`＝TODO 2（找候選、驗證、估計閉環轉換）；另有 keyframe、submap、posegraph、io、viz；`process/build_map.py` 用你的 pose 拼接點雲。環境 Python 3.9＋numpy、open3d、gtsam、small_gicp、opencv-python。**用 build_map.py 看地圖：軌跡錯誤會出現重影的牆或彎曲的牆** |
 | 9 | 章節頁 | Competition |
 | 10 | Competition | 團隊賽，最多 2 人。設計自己的 visual SLAM：可改任何範本、可用其他套件／公開預訓練模型／開源系統當起點，也可從零寫。**必須在 Private 榜贏過 baseline 才有分**；贏過 baseline 得分，名次越好分越多。baseline 是 Kaggle 榜上的 baseline benchmark 列 |
 | 11 | Allowed / Not allowed | 允許：Kaggle 頁提供的所有資料；公開預訓練模型（LoGeR、MapAnything、VGGT、特徵匹配器）與開源函式庫；開源系統當起點（ORB-SLAM3、MASt3R-SLAM、VGGT-SLAM、DROID-SLAM）；AI 程式工具。禁止：其他感測器、外部地圖、GPS、衛星影像、往年資料；手改 pose；跨隊分享程式或提交。只用現成系統沒有自己的想法：貢獻 0 分、不排名。**要呈現改了什麼、每項改動讓分數進步多少**。助教可能重跑，無法重現的結果不算 |
-| 12 | Join | Track01 Kaggle 連結；Track02 TBA。每人一個 Kaggle 帳號，隊名 `<學號1>_<學號2>`；先建隊、邀隊友再提交。每日最多 10 次（台灣 08:00 重置）。最多選 2 份最終提交，取較好者，兩份都要能用 E3 程式重現。截止 2026/11/26 09:00（UTC+8） |
+| 12 | Join | Track01、Track02 各自的 Kaggle 連結（見投影片）。每人一個 Kaggle 帳號，隊名 `<學號1>_<學號2>`；先建隊、邀隊友再提交。每日最多 10 次（台灣 08:00 重置）。最多選 2 份最終提交，取較好者，兩份都要能用 E3 程式重現。截止 2026/11/26 09:00（UTC+8） |
 | 13 | Submission file | 每列：timestamp（影像檔名去 `.jpg`）＋ 4×4 camera-to-world 按列攤平。OpenCV 相機軸。每張都要有 pose（不管是不是 keyframe），缺列／重複／非數值會被拒。只評位置 `m03,m13,m23`，旋轉仍須是合法 pose。從 `sample_submission.csv` 開始改 |
 | 14 | 章節頁 | Evaluation：Sim(3) 對齊的 ATE |
 | 15 | 提交與比較 | 你提交每張影像的相機位置與朝向，連起來就是車子走的路線。GT 是用 LiDAR 量的真實路線，轉換到每張影像時刻的相機位置（**GT＝影像時刻的 LiDAR pose × LiDAR-to-camera 外參**），學生看不到。分數衡量路線「形狀」多接近，單位公尺，越低越好，只看位置 |
@@ -122,7 +122,7 @@ timestamp,m00,m01,m02,m03,m10,m11,m12,m13,m20,m21,m22,m23,m30,m31,m32,m33
 | 17 | 步驟 ①–③（往年 Track1 範例） | ① 原始兩條路線：學生的較小、轉了約 120°、位置不同、有漂移。② 兩條各減去平均位置，中心都移到原點。③ 用一次 SVD 求讓兩個形狀最重合的旋轉 R，方向對了但仍太小。方法：Umeyama (1991)，封閉解，每次答案相同 |
 | 18 | 步驟 ④–⑤ | ④ 最佳尺度 s＝兩形狀重疊程度 ÷ 學生形狀大小，範例 s＝2.12。⑤ 平移 t 把學生中心放到 GT 中心，量每張的位置誤差。`e_i = ‖s·R·p_i + t − g_i‖`，`ATE = sqrt(Σe_i²/N)`；平方使少數離很遠的影像代價很大。範例（往年資料）ATE＝0.64 m。s、R、t 整條路線只算一次，不是每張各算 |
 | 19 | 對齊會／不會消除什麼 | 免費消除：world 起點、軸向、整體尺度，只動這 7 個數。仍會扣分：沿路累積的漂移、轉角角度錯、路段被拉長或壓縮、繞圈沒閉合。對每隊都是最佳擬合，所以公平：評的是路線形狀 |
-| 20 | Public／Private | Public 約 10%，全部來自路線的某一段，比賽中可見，僅供參考；Private 約 90%，截止後公布，**期末評分用 Private**。兩部分**各自對齊**（各自的 s、R、t）、各自計分。短段容易擬合，Public 好不代表 Private 好。用 build_map.py 看整條路線來判斷方法好壞。Track01：132 Public／1182 Private |
+| 20 | Public／Private | Public 約 10%，全部來自路線的某一段，比賽中可見，僅供參考；Private 約 90%，截止後公布，**期末評分用 Private**。兩部分**各自對齊**（各自的 s、R、t）、各自計分。短段容易擬合，Public 好不代表 Private 好。用 build_map.py 看整條路線來判斷方法好壞。Track01：132 Public／1182 Private；Track02：421 Public／3785 Private |
 | 21 | Grading | 競賽排名最高 56、報告（TA 評）30、簡報 20。每 Track 依 Private ATE：第 1／2／3 名 56r／52r／48r；前 50% 42r；前 75% 36r；其他贏 baseline 30r；遲交且贏 baseline 22r；未贏 baseline 0。每 Track r＝0.5，兩 Track 相加；名次只計贏 baseline 的隊伍。遲交至 12/03 23:59；**同分取較高名次** |
 | 22 | 使用現成系統的評分 | 有自己的想法 → 排名：可從任何開源系統或預訓練模型出發，找出它在本資料哪裡失敗並修正；依 Private 排名；報告寫改了什麼、為什麼、每項改動前後分數。沒有自己的東西 → 不排名：原樣執行、只調參數／config、多跑挑最好；貢獻 0 分；該 Track 以遲交計（贏 baseline 22r，否則 0）；後面的隊伍名次往前遞補。選定提交必須能用 E3 上的程式重現，助教會重跑核對分數。不確定是否算自己的想法，到 E3 QA 問 |
 | 23 | 報告與簡報 | 報告：Pipeline（程式怎麼運作）、Contributions（原創想法與改進）、問題與解法（附實驗證明什麼有效）、使用的系統／模型／函式庫與版本、若從現成系統出發則列原始分數 → 每項改動後分數、Workload（每位組員工作與比例）。簡報：4–6 分鐘、11/26 課堂、介紹成果與貢獻、11/26 09:00 前寄簡報或連結到 pj.ee14@nycu.edu.tw。貢獻依原創性與解決問題能力評分 |
@@ -131,5 +131,21 @@ timestamp,m00,m01,m02,m03,m10,m11,m12,m13,m20,m21,m22,m23,m30,m31,m32,m33
 
 ## 待更新
 
-- Track02 影像數、頻率、路線、Public／Private 比例與 Kaggle 連結：官方 TBA。
 - baseline ATE 數值：見各 Kaggle leaderboard 的 baseline 列，取得後記錄於此。
+
+## 投影片更新紀錄
+
+**2026-11-17 教授更新版**（`doc/SDC Midterm II Visual SLAM.pdf` 已直接換成新版；舊版 SHA256 `64bfe3a8…c003`，新版 `0b6a3325…302b`）。兩版文字逐頁比對，只有下面三處不同，其他規則（評分、允許／禁止、截止日、交付）都沒變：
+
+| 頁 | 舊版 | 新版 |
+| --- | --- | --- |
+| 6 Dataset | Track02：TBA | Track02：4206 張、10 Hz、約 2.1 km、終點回到起點、無 IMU |
+| 12 Join | Track02 Kaggle 連結：TBA | 加上 Track02 的 Kaggle 連結 |
+| 20 頁尾 | Track01：132 Public／1182 Private | 加上 Track02：421 Public／3785 Private |
+
+對我們的影響：
+
+- Track02 是**一趟約 2.1 km、只在最後回到起點**的路線，不像 Track01 同一條路繞 3 圈。中途沒有重複經過的地方可以閉環，只有頭尾一次；所以前段累積的漂移大部分要靠里程計與 BA 本身壓低，閉環只能把頭尾拉合。
+- 沒有 IMU，Track01 用 IMU 做的獨立檢查（陀螺儀轉角、加速度局部尺度）在 Track02 都不能用。
+- Public 421 張（約 10%）仍是同一段連續路線，約 200 m；Private 3785 張。
+- 官方資料包（`data/data_VSLAM-T2/`，2026-11-17 匯入）的實際內容和投影片一致：4206 張影像與點雲、無 `imu.csv`，內參與 Track01 相同。

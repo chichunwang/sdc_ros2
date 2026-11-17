@@ -14,7 +14,7 @@
 - 已建立目錄架構、run 建立工具與提交格式檢查工具（含單元測試）。
 - 已從 `Project Assets/Midterm02_data/` 複製官方資料到 `data/data_VSLAM-T1/`，保留素材原件；包含 1,314 張影像、1,314 份點雲、相機內參、IMU 與提交範本。逐檔 SHA256 核對紀錄見 `data/import_manifest.json`。
 - starter 原檔保留於資料包，工作副本已放入 `vslam/`；每個來源檔的路徑與 SHA256 見 [vslam/origin.json](vslam/origin.json)。尚未修改算法、執行 SLAM 或取得分數。
-- Track02 官方尚未公布。
+- Track02 已公布（2026-11-17 教授更新投影片）：4206 張、10 Hz、約 2.1 km、終點回到起點、無 IMU，Public 421／Private 3785。資料已原樣解壓到 `data/data_VSLAM-T2/`（`Track2/data/` 與 `image_slam_starter/`）。Track1 最佳方法 D2 的 Track2 結果：`outputs/run/track02_full_2611171900/result_2.csv`（待提交）；我們自己的 E21 在 Track2 軌跡壞掉，不提交。詳見 [doc/03](doc/03_GSLAM_DESIGN_AND_STATUS_20261116.md)「Track02 第一輪」與「速度改動」。
 
 ## 下一步（使用者）
 

@@ -24,8 +24,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from lap_consistency import umeyama  # noqa: E402
 
-REFERENCE = 'outputs/run/track01_full_2611161931'   # E21_selfcalib（我們的 BA＋自校正）
-UNIT_TO_M = 1.25                                    # E21 單位 → 約公尺（IMU 擬合的 λ）
+# 各 Track 的參考軌跡（同 Track 的 E21_selfcalib：我們的 BA＋自校正）、單位換算與比較視窗長度
+# Track01：E21 單位 ×1.25 ≈ 公尺（IMU 擬合的 λ）；視窗 132 幀＝Public 長度
+# Track02：沒有 IMU，無法換算公尺，差值以參考軌跡自己的單位表示；視窗取全長約 10%（Public 比例，實際切法未公布）
+REFERENCES = {
+    '01': dict(run='outputs/run/track01_full_2611161931', unit_to_m=1.25, window=132),
+    '02': dict(run='outputs/run/track02_full_2611171739', unit_to_m=None, window=421),
+}
 
 
 def sha256(p):
@@ -113,28 +118,32 @@ def analyze(run):
     save(fig, '03_registration_timing')
 
     # 04 和參考軌跡比較
-    refp = ROOT / REFERENCE / 'result_1.csv'
+    ref = REFERENCES[str(info.get('track', '01'))]
+    REFERENCE, W = ref['run'], ref['window']
+    UNIT_TO_M = ref['unit_to_m'] or 1.0
+    unit = 'm' if ref['unit_to_m'] else 'ref units'
+    refp = sorted((ROOT / REFERENCE).glob('result_*.csv'))[0]
     _, Rf = load(refp)
     A = Rf[:, :3, 3]
     s, R, t = umeyama(P, A)
     Pa = s * P @ R.T + t
-    starts = np.arange(0, len(P) - 132 + 1, 11)
+    starts = np.arange(0, len(P) - W + 1, 11)
     win = []
     for i in starts:
-        s2, R2, t2 = umeyama(P[i:i + 132], A[i:i + 132])
-        win.append(np.sqrt(np.mean(np.sum((s2 * P[i:i + 132] @ R2.T + t2 - A[i:i + 132]) ** 2, 1))) * UNIT_TO_M)
+        s2, R2, t2 = umeyama(P[i:i + W], A[i:i + W])
+        win.append(np.sqrt(np.mean(np.sum((s2 * P[i:i + W] @ R2.T + t2 - A[i:i + W]) ** 2, 1))) * UNIT_TO_M)
     per = np.linalg.norm(Pa - A, axis=1) * UNIT_TO_M
     fig, ax = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
-    ax[0].plot(per, lw=0.8); ax[0].set_ylabel('per-frame distance after\nglobal Sim3 [m]')
-    ax[1].plot(starts + 66, win, lw=1.0, color='tab:green'); ax[1].set_ylabel('132-frame window\nSim3 RMS [m]')
+    ax[0].plot(per, lw=0.8); ax[0].set_ylabel('per-frame distance after\nglobal Sim3 [%s]' % unit)
+    ax[1].plot(starts + W // 2, win, lw=1.0, color='tab:green'); ax[1].set_ylabel('%d-frame window\nSim3 RMS [%s]' % (W, unit))
     ax[1].set_xlabel('frame idx (window centre)')
     for a in ax:
         a.grid(alpha=0.3)
-    ax[0].set_title('%s vs reference E21 (%s): global RMS %.3f m, window median %.3f m (not ground truth)' % (
-        exp, Path(REFERENCE).name, np.sqrt(np.mean(per ** 2)), np.median(win)), fontsize=9)
+    ax[0].set_title('%s vs reference E21 (%s): global RMS %.3f %s, window median %.3f %s (not ground truth)' % (
+        exp, Path(REFERENCE).name, np.sqrt(np.mean(per ** 2)), unit, np.median(win), unit), fontsize=9)
     save(fig, '04_compare_reference')
 
-    man = {result.name: sha256(result), 'reference_result': {str(REFERENCE): sha256(refp)}}
+    man = {result.name: sha256(result), 'reference_result': {str(refp.relative_to(ROOT)): sha256(refp)}}
     for name, _ in sources:
         man.setdefault('fusion_sources', []).append(name)
     (out / 'manifest.json').write_text(json.dumps(dict(sources_sha256=man, experiment=exp,
@@ -146,11 +155,13 @@ def analyze(run):
         '- `01_trajectory`：俯視軌跡（x–z 平面，run 自己的單位與世界座標）。融合 run 另畫各來源（Sim(3) 對齊後）。\n'
         '- `02_pose_changes`：逐幀位移與轉角。\n'
         '- `03_registration_timing`：各階段耗時與 summary（外部系統沒有逐幀計時）。\n'
-        '- `04_compare_reference`：和 E21（`%s`）的位置差：上圖為全域 Sim(3) 對齊後逐幀距離，下圖為 132 幀滑動視窗（與 Public 同長度）各自對齊後的 RMS。'
-        '單位以 E21 ×1.25 換算成約公尺。E21 不是真值，這只是「兩個估計彼此差多少」。\n\n'
+        '- `04_compare_reference`：和同 Track 的 E21（`%s`）的位置差：上圖為全域 Sim(3) 對齊後逐幀距離，下圖為 %d 幀滑動視窗各自對齊後的 RMS。'
+        '單位：%s。E21 不是真值，這只是「兩個估計彼此差多少」。\n\n'
         '圖表只讀取本 run 的輸出（SHA 見 manifest.json），不修改 pose；沒有 ground truth，不能當作精度證明。\n'
-        % (exp, result.name, Path(REFERENCE).name))
-    print('%s：%s 圖表完成（全域差 %.3f m、視窗中位數 %.3f m）' % (run.name, exp, np.sqrt(np.mean(per ** 2)), np.median(win)))
+        % (exp, result.name, Path(REFERENCE).name, W,
+           'E21 ×1.25 換算成約公尺' if ref['unit_to_m'] else '參考軌跡自己的單位（Track02 沒有 IMU，無法換算公尺）'))
+    print('%s：%s 圖表完成（全域差 %.3f %s、視窗中位數 %.3f %s）' % (
+        run.name, exp, np.sqrt(np.mean(per ** 2)), unit, np.median(win), unit))
 
 
 def main():

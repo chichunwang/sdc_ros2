@@ -28,6 +28,9 @@ class Keyframe:
         self.feats, self.pts3d, self.valid3d = feats, pts3d, valid3d
 
 
+_NOT_DETECTED = object()   # 預先抽取沒有算特徵（學習式前端或沒有影像）：在 process 裡照原本方式計算
+
+
 class Slam:
     def __init__(self, dataset, params, debug_dir=None, log=print, viz=None):
         self.ds, self.p, self.debug_dir, self.log = dataset, params, debug_dir, log
@@ -149,13 +152,52 @@ class Slam:
                 reasons.append('visual_rotation_disagreement')
         return reasons
 
+    # ------------------------------------------------------------ 預先讀圖＋抽特徵（CPU，背景執行緒）
+    def prefetch(self, indices, workers=None, ahead=None):
+        """之後要處理的幀依序交給執行緒池先讀圖、抽 SIFT（每張影像只和自己有關，結果與逐幀計算相同）。
+
+        原本 SIFT 在主執行緒單核計算，每幀約 150 ms（Track2 合計約 11 分鐘）；GPU 部分（描述子正規化、比對）仍在主執行緒。
+        """
+        import os
+        from concurrent.futures import ThreadPoolExecutor
+        need_image = self.frontend is not None or self.viz is not None
+        if not need_image:
+            return
+        workers = workers or max(1, min(8, (os.cpu_count() or 2) - 2))
+        self._pf_ahead = ahead or 2 * workers
+        self._pf_pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix='prefetch')
+        self._pf_queue = list(indices)
+        self._pf_futures = {}
+        self._pf_fill()
+
+    def _pf_job(self, i):
+        image = self.ds.load_image(i)
+        cpu = getattr(self.frontend, 'cpu_parallel', False)
+        det = self.frontend.detect_cpu(image) if (cpu and image is not None) else _NOT_DETECTED
+        return image, det
+
+    def _pf_fill(self):
+        while self._pf_queue and len(self._pf_futures) < self._pf_ahead:
+            i = self._pf_queue.pop(0)
+            self._pf_futures[i] = self._pf_pool.submit(self._pf_job, i)
+
+    def _take_prefetched(self, i):
+        """回傳 (影像, CPU 特徵)；沒有預先抽取時退回原本的逐幀讀圖（特徵在 process 裡計算）。"""
+        fut = getattr(self, '_pf_futures', {}).pop(i, None)
+        if fut is not None:
+            out = fut.result()
+            self._pf_fill()
+            return out
+        need_image = self.frontend is not None or self.viz is not None
+        return (self.ds.load_image(i) if need_image else None), _NOT_DETECTED
+
     # ------------------------------------------------------------ 每幀
     def process(self, local, i):
         p = self.p
         t_start = time.perf_counter()
         self.frame_ds_index.append(i)
         xyz, rgb = self.ds.load_cloud(i)
-        image = self.ds.load_image(i) if (self.frontend is not None or self.viz is not None) else None
+        image, det = self._take_prefetched(i)
         # ---- 逐幀尺度正規化（相機離地高度）：之後所有幾何（配準、PnP 的 3D 點）都用正規化後的點雲
         height, cloud_scale = '', 1.0
         if p['scale']['mode'] == 'ground_height':
@@ -183,7 +225,7 @@ class Slam:
         feature_ms = 0.0
         if image is not None and self.frontend is not None:
             t0 = time.perf_counter()
-            feats = self.frontend.extract(image)
+            feats = self.frontend.from_cpu(det) if det is not _NOT_DETECTED else self.frontend.extract(image)
             pix = vis_mod.PixelCloud(xyz, self.ds.K, self.ds.size, p['visual']['assoc_stride_px'], p['visual']['max_depth_m'])
             pts3d, valid3d = pix.lookup(feats.kpts)
             sync()

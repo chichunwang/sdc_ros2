@@ -4,6 +4,7 @@
 哪些在 CPU：SIFT／ORB 特徵抽取（pip 版 OpenCV 沒有 CUDA 模組）、RANSAC（Essential、PnP，資料量很小）。
 選用的 SuperPoint + LightGlue 則抽取與比對都在 GPU（PyTorch），見 LearnedFrontend。
 """
+import threading
 import time
 
 import cv2
@@ -31,23 +32,42 @@ class Features:
 class ClassicFrontend:
     """SIFT（RootSIFT）或 ORB 抽取（CPU）＋ CuPy 比對（GPU）。"""
 
+    cpu_parallel = True    # detect_cpu 可在多個執行緒同時跑（每個執行緒各自一個 detector），供 pipeline 預先抽取
+
     def __init__(self, cfg):
         self.cfg = cfg
         self.kind = cfg['frontend']
-        if self.kind == 'sift':
-            self.detector = cv2.SIFT_create(nfeatures=cfg['max_keypoints'])
-        elif self.kind == 'orb':
-            self.detector = cv2.ORB_create(nfeatures=cfg['max_keypoints'])
-        else:
+        if self.kind not in ('sift', 'orb'):
             raise ValueError('未知的傳統前端：%s' % self.kind)
+        self._local = threading.local()
+        self.detector = self._detector()
+
+    def _detector(self):
+        """每個執行緒一個 detector（OpenCV 的 Feature2D 物件不保證可跨執行緒共用）；參數相同，輸出相同。"""
+        det = getattr(self._local, 'det', None)
+        if det is None:
+            det = (cv2.SIFT_create(nfeatures=self.cfg['max_keypoints']) if self.kind == 'sift'
+                   else cv2.ORB_create(nfeatures=self.cfg['max_keypoints']))
+            self._local.det = det
+        return det
+
+    def detect_cpu(self, image_bgr):
+        """CPU 部分（可在背景執行緒）：回傳 (像素座標, 原始描述子, 尺度)。"""
+        gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+        kp, desc = self._detector().detectAndCompute(gray, None)
+        if desc is None or len(kp) == 0:
+            return None
+        return np.array([k.pt for k in kp], dtype=np.float64), desc, [k.size for k in kp]
+
+    def from_cpu(self, det):
+        """GPU 部分（主執行緒）：描述子正規化後放上 GPU。"""
+        if det is None:
+            return Features(np.zeros((0, 2)), cp.zeros((0, 128 if self.kind == 'sift' else 256), dtype=cp.float32))
+        pts, desc, size = det
+        return Features(pts, normalize_descriptors(desc, self.kind), size=size)
 
     def extract(self, image_bgr):
-        gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-        kp, desc = self.detector.detectAndCompute(gray, None)
-        if desc is None or len(kp) == 0:
-            return Features(np.zeros((0, 2)), cp.zeros((0, 128 if self.kind == 'sift' else 256), dtype=cp.float32))
-        pts = np.array([k.pt for k in kp], dtype=np.float64)
-        return Features(pts, normalize_descriptors(desc, self.kind), size=[k.size for k in kp])
+        return self.from_cpu(self.detect_cpu(image_bgr))
 
     def match(self, fa, fb):
         return match_descriptors(fa.desc, fb.desc, self.cfg['ratio'], self.cfg['mutual'])
