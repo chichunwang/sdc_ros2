@@ -65,7 +65,7 @@ EXPERIMENTS = {
 # 相鄰邊（每 √單位）：Track2 約 1700 單位沒有閉環的路段累積約 25 m 偏差 → 平移 0.6；回程約 1000 單位偏斜約 4° → 旋轉 0.0022 rad。
 # 閉環邊：E21 的 PnP 與 ICP 相差 4–8 cm、0.15–0.3° → 平移 0.1、旋轉 0.005 rad。
 PGO_SIGMAS = dict(sigma_rot_per_unit=0.0022, sigma_trans_per_unit=0.6, loop_sigma_rot=0.005, loop_sigma_trans=0.1)
-LOOP_REASONS = ('accepted', 'registration_quality')   # 影像幾何（Essential＋PnP）已通過的閉環候選
+LOOP_REASONS = ('accepted', 'accepted_agreement', 'registration_quality')   # 影像幾何（Essential＋PnP）已通過的閉環候選
 
 
 def loop_frame_pairs(calib_run):

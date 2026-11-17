@@ -49,6 +49,22 @@ class PoseGraphTest(unittest.TestCase):
         d1 = np.linalg.norm(out[:, :3, 3] - gt[:, :3, 3], axis=1).max()
         self.assertLess(d1, 0.5 * d0)
 
+    def test_per_edge_sigma_only_tight_axes(self):
+        """P1 的反向約束：每條邊自己的 6 維標準差。只約束垂直（b 相機 y）時，量測的前進方向（z）誤差不應被拉過去。"""
+        est = route()
+        N = len(est)
+        a, b = 50, N - 51                     # 去程與回程同一處（反向）
+        Z = inv(est[a]) @ est[b]
+        Z[1, 3] += 0.5 * np.sign(Z[1, 3] or 1.0)   # 量測說 b 比目前低／高 0.5（垂直）
+        Zt = Z.copy()
+        Zt[:3, 3] += Z[:3, :3] @ np.array([0.0, 0.0, 3.0])   # 另外在 b 的前進方向多 3（不可信的分量）
+        sigma = [0.01, 0.3, 0.01, 0.5, 0.02, 50.0]
+        out, _ = pose_graph(est, [(a, b, Zt, sigma)], 0.002, 0.05, 0.005, 0.05, max_nfev=100)
+        cur = inv(out[a]) @ out[b]
+        res = inv(Zt) @ cur
+        self.assertLess(abs(res[1, 3]), 0.05)            # 垂直被拉到量測值
+        self.assertGreater(abs(res[2, 3]), 2.0)          # 前進方向幾乎沒動（σ 50）
+
     def test_no_loop_no_change(self):
         est = route(yaw_drift=0.001)
         out, info = pose_graph(est, [], 0.002, 0.01, 0.005, 0.05)

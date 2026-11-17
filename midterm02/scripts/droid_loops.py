@@ -104,7 +104,8 @@ def pose_graph(Twc, loops, sigma_rot_per_unit, sigma_trans_per_unit, loop_sigma_
     """SE(3) pose graph：相鄰節點的邊＝目前估計的相對位姿（標準差 ∝ √移動距離，隨機漫步漂移），閉環邊＝量測的 T_ab。
     sigma_*_per_unit 是每 √單位 的標準差。
 
-    Twc：(N,4,4) 初值。loops：[(a, b, T_ab)]。回傳 (修正後 Twc, info)。節點 0 固定。
+    Twc：(N,4,4) 初值。loops：[(a, b, T_ab)] 或 [(a, b, T_ab, σ6)]（σ6：這條邊自己的 6 維標準差，
+    順序 [旋轉 x,y,z, 平移 x,y,z]，表示在 b 的相機座標；沒給就用 loop_sigma_*）。回傳 (修正後 Twc, info)。節點 0 固定。
     參數化：Twc_i = Twc_i⁰ · Exp(δ_i)（右乘局部擾動）；殘差 r = Log(Z⁻¹ · Twc_a⁻¹ · Twc_b) / σ；閉環邊用 Huber。
     """
     N = len(Twc)
@@ -113,14 +114,15 @@ def pose_graph(Twc, loops, sigma_rot_per_unit, sigma_trans_per_unit, loop_sigma_
     Z_odo = inv(T0[:-1]) @ T0[1:]
     d = np.sqrt(np.maximum(np.linalg.norm(Z_odo[:, :3, 3], axis=1), floor_unit))   # 隨機漫步：變異數與距離成正比
     s_odo = np.c_[np.repeat((sigma_rot_per_unit * d)[:, None], 3, 1), np.repeat((sigma_trans_per_unit * d)[:, None], 3, 1)]
-    la = np.array([a for a, _, _ in loops], dtype=int)
-    lb = np.array([b for _, b, _ in loops], dtype=int)
-    Z_loop = np.stack([T for _, _, T in loops]) if loops else np.zeros((0, 4, 4))
-    s_loop = np.array([loop_sigma_rot] * 3 + [loop_sigma_trans] * 3)
+    la = np.array([e[0] for e in loops], dtype=int)
+    lb = np.array([e[1] for e in loops], dtype=int)
+    Z_loop = np.stack([e[2] for e in loops]) if loops else np.zeros((0, 4, 4))
+    s_default = np.array([loop_sigma_rot] * 3 + [loop_sigma_trans] * 3)
+    s_loop = np.array([np.asarray(e[3], dtype=float) if len(e) > 3 else s_default for e in loops]).reshape(-1, 6)
     A = np.r_[ia, la]
     B = np.r_[ia + 1, lb]
     Z = np.concatenate([Z_odo, Z_loop])
-    S = np.concatenate([s_odo, np.repeat(s_loop[None], len(la), 0)])
+    S = np.concatenate([s_odo, s_loop])
     n_odo = len(ia)
     Zi = inv(Z)
 

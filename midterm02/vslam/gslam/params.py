@@ -108,6 +108,9 @@ PARAMS = dict(
         max_translation_disagreement_m=1.0,   # 影像估計 vs 點雲配準 的一致性
         max_rotation_disagreement_deg=4.0,
         min_keyframes_between_loops=1,   # 1 = 每個 keyframe 都嘗試閉環（密集跨圈約束）
+        # 點雲品質門檻（fitness／RMSE）沒過、但影像估計與點雲配準兩個獨立估計幾乎一致時仍接受（None = 關閉）。
+        # 由來（2026-11-17，Track2）：起點／終點三個閉環 fitness 0.38（停車起步、重疊少），兩估計卻只差 4–8 cm、0.15–0.3°
+        agreement_accept=None,
     ),
     scale_graph=dict(             # 結束時用相鄰幀深度比＋閉環尺度比解每幀尺度，修正里程計長度
         enabled=True,
@@ -115,6 +118,10 @@ PARAMS = dict(
         loop_sigma=0.03,          # 閉環尺度比（log）的標準差
         missing_sigma=0.05,       # 沒有量測的相鄰幀：假設尺度不變，但信心低
         min_ratio=0.8,            # 深度比超出 [0.8, 1.25] 視為離群
+        # 'graph'：上述相鄰幀深度比＋閉環尺度比；'height'：每幀 log 尺度＝log(LoGeR 相機離地高度／中位數)，
+        # 高度取 ±height_median_half 幀中位數。Track2 上 'graph' 的相鄰幀深度比有 +0.25%／幀 的偏差，4206 幀累積發散（見 doc/03）
+        mode='graph',
+        height_median_half=15,
     ),
     graph=dict(
         prior_sigma=1e-4,
@@ -252,6 +259,11 @@ EXPERIMENTS = {
         'bundle.cloud_overlap': dict(enabled=True, radius_m=3.0, max_angle_deg=30.0, window_keyframes=6,
                                      min_fitness=0.6, max_rmse_m=0.25, max_correction_m=2.0, scale_prior_weight=0.5,
                                      rot_sigma_deg=0.1, trans_sigma_m=0.02, huber_k=1000.0)},
+    # E21 修正（Track2）：尺度圖改用相機離地高度（不漂移的絕對尺度）＋兩個獨立估計一致時接受低 fitness 的閉環
+    'E27_selfcalib_height': {
+        'bundle.calibration': dict(enabled=True, solves=3, sigmas=[1e-6, 1e-6, 1e-6, 5.0, 5.0, 0.5, 0.5, 1e-6, 1e-6]),
+        'scale_graph.mode': 'height',
+        'loop.agreement_accept': dict(max_translation_m=0.25, max_rotation_deg=1.0, min_fitness=0.3)},
     'E15_more_features': {'visual.max_keypoints': 6000},   # 每張影像的 SIFT 特徵數加倍，BA 的觀測更多
     'E14a_bundle_skip_only': {'bundle.skip_frames': 3, 'bundle.resolve_conflicts': True},
     'E14b_bundle_revisit_only': {'bundle.revisit_links': True, 'bundle.resolve_conflicts': True},

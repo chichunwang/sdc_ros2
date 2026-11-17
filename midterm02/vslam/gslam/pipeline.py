@@ -213,6 +213,9 @@ class Slam:
                 cloud_scale = self.cloud_scale_prev
             self.cloud_scale_prev = cloud_scale
             xyz = xyz * cloud_scale
+        elif p['scale_graph']['enabled'] and p['scale_graph']['mode'] == 'height':
+            h, _ = ground_height(xyz, p['scale'], seed=p['seed'] + local)   # 只記錄，結束時給尺度圖用；點雲不縮放
+            height = '' if h is None else h
         load_ms = (time.perf_counter() - t_start) * 1000
 
         t0 = time.perf_counter()
@@ -480,14 +483,19 @@ class Slam:
             dt, dr = se3.relative_error(T_init, result['T'])
             row.update(fitness=result['fitness'], inlier_rmse=result['inlier_rmse'], translation_disagreement_m=dt,
                        rotation_disagreement_deg=float(np.rad2deg(dr)))
+            agree = cfg['agreement_accept']
             if result['fitness'] < cfg['min_fitness'] or not result['inlier_rmse'] <= cfg['max_inlier_rmse_m']:
-                row['reason'] = 'registration_quality'
-                continue
+                # 兩個獨立估計（影像 PnP 與點雲配準）幾乎一致時，品質門檻沒過也接受：一致本身就是正確性的直接證據
+                if not (agree and result['fitness'] >= agree['min_fitness'] and dt <= agree['max_translation_m']
+                        and np.rad2deg(dr) <= agree['max_rotation_deg']):
+                    row['reason'] = 'registration_quality'
+                    continue
+                row['reason'] = 'accepted_agreement'
             if dt > cfg['max_translation_disagreement_m'] or np.rad2deg(dr) > cfg['max_rotation_disagreement_deg']:
                 row['reason'] = 'visual_geometric_disagreement'
                 continue
             T_rel = se3.normalize(se3.inv(cand.T) @ result['T'])
-            row.update(accepted=1, reason='accepted', T_rel=' '.join('%.9g' % x for x in T_rel[:3].ravel()))
+            row.update(accepted=1, reason=row['reason'] or 'accepted', T_rel=' '.join('%.9g' % x for x in T_rel[:3].ravel()))
             self.loops.append((c, kf.id, T_rel))
             self.loop_scale[(c, kf.id)] = float(row['relative_scale'])
             link_mask = v['essential_mask'] if v['mode'] == 'essential' else v['pnp_mask']
@@ -553,6 +561,8 @@ class Slam:
         """
         cfg = self.p['scale_graph']
         n = len(self.odom)
+        if cfg['mode'] == 'height':
+            return self._height_scales(cfg['height_median_half'])
         rows = []
         for i in range(1, n):
             r = self.records[i]['visual_scale_ratio']
@@ -569,6 +579,22 @@ class Slam:
         A[-1, 0] = 1e3
         sigma = np.linalg.lstsq(A, b, rcond=None)[0]
         return sigma - np.median(sigma)
+
+    def _height_scales(self, half):
+        """每幀 log 尺度 σ_i = log(h̃_i / median h̃)：h̃ 是 LoGeR 相機離地高度的 ±half 幀中位數（壓掉單幀地面擬合的離群值）。
+
+        相機固定在車上、離地高度不變，所以 LoGeR 點雲裡的高度直接量到該幀的尺度偏差，是每幀獨立的絕對量測、不會累積漂移。
+        地面擬合失敗的幀：視窗內全失敗時用最近的有效值。
+        """
+        h = np.array([np.nan if r['ground_height'] == '' else float(r['ground_height']) for r in self.records])
+        if np.all(np.isnan(h)):
+            raise RuntimeError('尺度圖（height）：所有幀的地面擬合都失敗')
+        hs = np.array([np.nanmedian(h[max(0, i - half):i + half + 1]) if np.any(np.isfinite(h[max(0, i - half):i + half + 1]))
+                       else np.nan for i in range(len(h))])
+        ok = np.flatnonzero(np.isfinite(hs))
+        if len(ok) < len(hs):
+            hs = hs[ok[np.abs(np.arange(len(hs))[:, None] - ok[None]).argmin(1)]]
+        return np.log(hs / np.median(hs))
 
     def _skip_links(self, local, feats):
         """BA 用：目前這幀再和前第 2…skip_frames 幀比對，讓同一個特徵點的軌跡更長、中間斷掉時接得回來。"""

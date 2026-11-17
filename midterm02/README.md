@@ -14,7 +14,7 @@
 - 已建立目錄架構、run 建立工具與提交格式檢查工具（含單元測試）。
 - 已從 `Project Assets/Midterm02_data/` 複製官方資料到 `data/data_VSLAM-T1/`，保留素材原件；包含 1,314 張影像、1,314 份點雲、相機內參、IMU 與提交範本。逐檔 SHA256 核對紀錄見 `data/import_manifest.json`。
 - starter 原檔保留於資料包，工作副本已放入 `vslam/`；每個來源檔的路徑與 SHA256 見 [vslam/origin.json](vslam/origin.json)。尚未修改算法、執行 SLAM 或取得分數。
-- Track02 已公布（2026-11-17 教授更新投影片）：4206 張、10 Hz、約 2.1 km、終點回到起點、無 IMU，Public 421／Private 3785。資料已原樣解壓到 `data/data_VSLAM-T2/`（`Track2/data/` 與 `image_slam_starter/`）。Track2 Public：D2 3.318 → D6（相機高度正規化的 LoGeR 深度先驗）2.481；目前最佳 **D8** Public **1.466**（D6＋閉環 pose graph，`outputs/run/track02_full_2611172006/result_2.csv`）。E21 自己的軌跡在 Track2 壞掉，只提供相機校正與閉環。詳見 [doc/03](doc/03_GSLAM_DESIGN_AND_STATUS_20261116.md)「Track02 第一輪」到「D8 分數與後續檢查」。
+- Track02 已公布（2026-11-17 教授更新投影片）：4206 張、10 Hz、約 2.1 km、終點回到起點、無 IMU，Public 421／Private 3785。資料已原樣解壓到 `data/data_VSLAM-T2/`（`Track2/data/` 與 `image_slam_starter/`）。Track2 Public：D2 3.318 → D6（相機高度正規化的 LoGeR 深度先驗）2.481；目前最佳 **F1** Public **0.254**（DROID＋閉環＋反向重訪約束＋全解析度 SIFT BA，`outputs/run/track02_full_2611172344/result_2.csv`，低於 baseline 0.658）。其他：P1 0.457（`track02_full_2611172340`）、D8 1.466、E27（E21 修正版）2.201。詳見 [doc/03](doc/03_GSLAM_DESIGN_AND_STATUS_20261116.md)「Track02 第一輪」到「修好 E21（E27）、反向重訪約束（P1）、DROID＋SIFT BA（F1）」。
 
 ## 下一步（使用者）
 
