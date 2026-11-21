@@ -21,6 +21,7 @@ Topics（frame）：
 以前每 10 幀就在接收執行緒裡重組並發佈整張地圖：Track2 到 1000 多個 keyframe 時一次要約 8 秒，
 這段時間不讀 socket，SLAM 的送出就被卡住，整體慢了一倍以上。
 """
+import array
 import json
 import socket
 import struct
@@ -175,7 +176,7 @@ class Bridge(Node):
             fields.append(PointField(name='rgb', offset=12, datatype=PointField.FLOAT32, count=1))
         msg.fields = fields
         msg.point_step, msg.row_step = 16, 16 * n
-        msg.data = data.tobytes()
+        msg.data = array.array('B', data.tobytes())   # 見 image_msg：bytes 會被逐元素檢查，array.array 直接接受
         return msg
 
     def image_msg(self, bgr, stamp):
@@ -184,7 +185,9 @@ class Bridge(Node):
         msg.header.stamp = stamp
         msg.height, msg.width = int(bgr.shape[0]), int(bgr.shape[1])
         msg.encoding, msg.is_bigendian, msg.step = 'bgr8', 0, int(bgr.shape[1]) * 3
-        msg.data = bgr.tobytes()
+        # rosidl 的 setter 收到 bytes 會用 Python 迴圈逐元素檢查 0..255（720×464 影像約 53 ms、250 萬點地圖約 2.1 s）；
+        # array.array('B') 走快速路徑（0.3 ms／83 ms，outputs/cache/dev74_bridge_bench.py）。只影響顯示速度
+        msg.data = array.array('B', bgr.tobytes())
         return msg
 
     def path_msg(self, poses):

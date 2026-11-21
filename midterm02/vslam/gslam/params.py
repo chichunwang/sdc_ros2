@@ -264,6 +264,14 @@ EXPERIMENTS = {
         'bundle.calibration': dict(enabled=True, solves=3, sigmas=[1e-6, 1e-6, 1e-6, 5.0, 5.0, 0.5, 0.5, 1e-6, 1e-6]),
         'scale_graph.mode': 'height',
         'loop.agreement_accept': dict(max_translation_m=0.25, max_rotation_deg=1.0, min_fitness=0.3)},
+    # E27＋SuperPoint／LightGlue 軌跡（與 SIFT 合併）。Track2 給 F1 用：scripts/droid_ba.py --experiment 這個名稱時，
+    # 在 BA 輸入的同一組影像對上抽學習式特徵（不用重跑 gslam）。Track1 的 E22 比 E21 差 0.009，這裡重測 Track2
+    'E28_selfcalib_height_learned': {
+        'bundle.calibration': dict(enabled=True, solves=3, sigmas=[1e-6, 1e-6, 1e-6, 5.0, 5.0, 0.5, 0.5, 1e-6, 1e-6]),
+        'scale_graph.mode': 'height',
+        'loop.agreement_accept': dict(max_translation_m=0.25, max_rotation_deg=1.0, min_fitness=0.3),
+        'bundle.learned': dict(enabled=True, extractor='superpoint', max_keypoints=4096, skip_frames=1,
+                               combine_sift=True, ransac_px=1.0, min_inliers=30)},
     'E15_more_features': {'visual.max_keypoints': 6000},   # 每張影像的 SIFT 特徵數加倍，BA 的觀測更多
     'E14a_bundle_skip_only': {'bundle.skip_frames': 3, 'bundle.resolve_conflicts': True},
     'E14b_bundle_revisit_only': {'bundle.revisit_links': True, 'bundle.resolve_conflicts': True},

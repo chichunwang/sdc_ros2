@@ -2,26 +2,41 @@
 
 用前鏡頭影像與官方 LoGeR 點雲，估計 Track01／Track02 每張影像的 camera-to-world pose，提交 Kaggle（Sim(3) 對齊後 ATE，越低越好）。規則重點見 [AGENTS.md](AGENTS.md)，官方規則完整整理見 [doc/01](doc/01_COMPETITION_RULES_20261113.md)。
 
-## 目前狀態（2026-11-16）
+## 目前狀態（2026-11-21）
 
-- 新增自寫的 GPU 視覺引導幾何 SLAM `vslam/gslam/`（入口 `vslam/run_slam.py`）、GPU 版 Dockerfile／compose、`scripts/gpu_check.py`、`scripts/inspect_data.py` 與測試。設計、GPU／CPU 分工、執行順序見 [doc/03](doc/03_GSLAM_DESIGN_AND_STATUS_20261116.md)。
-- 容器 `midterm02_vslam:py39-gpu` 已建置；GPU 驗證與 34 項合成測試通過。第一版 full（`track01_full_2611160111`）Kaggle Public **0.369**（baseline 0.955）。第二版（密集閉環＋尺度處理，`track01_full_2611160533`）Public **0.144**。第三版（加上多幀重投影最佳化 bundle adjustment，`track01_full_2611161129`）Public **0.085**。第四版（BA 再加跨幀與跨圈配對，`outputs/run/track01_full_2611161431/result_1.csv`）**尚未提交**。
-- **手動執行一律用 `./scripts/dev.sh slam --track 01`**：會自動開 RViz 視窗（相機影像、特徵匹配、點雲地圖、軌跡、keyframe、閉環），說明見 doc/03 的「用 RViz 觀看執行過程」。
-- 參數集中在 `vslam/gslam/params.py`；容器映像改名為 `midterm02_vslam:py39-gpu`。
+| Track | 目前最佳（Public） | 檔案 | baseline |
+| --- | --- | --- | --- |
+| Track1（1314 張，有 IMU） | **D2** 0.068：DROID-SLAM＋我們估出的畸變校正 | `outputs/run/track01_full_2611161954/result_1.csv` | 0.955 |
+| Track2（4206 張、約 2.1 km，無 IMU） | **F1** 0.254：DROID＋閉環＋反向重訪約束＋全解析度 SIFT BA | `outputs/run/track02_full_2611172344/result_2.csv` | 0.658 |
 
-## 先前狀態（2026-11-15）
+- **分數演進**：Track1 0.369 → 0.144 → 0.085（自寫 gslam＋BA）→ 0.068（D2）；Track2 3.318（D2）→ 2.481（D6）→ 1.466（D8）→ 0.457（P1）→ 0.254（F1）。
+- **11/18 之後的 Track2 實驗**（F2、MASt3R、P2、學習式特徵、D10、反向邊 σ 交叉驗證、`--weak-odom`、低視差深度先驗）都沒有比 F1 明顯更好。
+  其中 σ ×0.03（0.255，交叉驗證較好）與 `--weak-odom`（修掉物理上不可能的位姿，未提交）可當最終提交候選。
+- **最終提交候選、SHA256 與所有未解決的問題**：見 [doc/03](doc/03_GSLAM_DESIGN_AND_STATUS_20261116.md) 文末「目前遇到的問題（2026-11-21）」與「你接下來要做的事」。
 
-- 已建立目錄架構、run 建立工具與提交格式檢查工具（含單元測試）。
-- 已從 `Project Assets/Midterm02_data/` 複製官方資料到 `data/data_VSLAM-T1/`，保留素材原件；包含 1,314 張影像、1,314 份點雲、相機內參、IMU 與提交範本。逐檔 SHA256 核對紀錄見 `data/import_manifest.json`。
-- starter 原檔保留於資料包，工作副本已放入 `vslam/`；每個來源檔的路徑與 SHA256 見 [vslam/origin.json](vslam/origin.json)。尚未修改算法、執行 SLAM 或取得分數。
-- Track02 已公布（2026-11-17 教授更新投影片）：4206 張、10 Hz、約 2.1 km、終點回到起點、無 IMU，Public 421／Private 3785。資料已原樣解壓到 `data/data_VSLAM-T2/`（`Track2/data/` 與 `image_slam_starter/`）。Track2 Public：D2 3.318 → D6（相機高度正規化的 LoGeR 深度先驗）2.481；目前最佳 **F1** Public **0.254**（DROID＋閉環＋反向重訪約束＋全解析度 SIFT BA，`outputs/run/track02_full_2611172344/result_2.csv`，低於 baseline 0.658）。其他：P1 0.457（`track02_full_2611172340`）、D8 1.466、E27（E21 修正版）2.201。詳見 [doc/03](doc/03_GSLAM_DESIGN_AND_STATUS_20261116.md)「Track02 第一輪」到「修好 E21（E27）、反向重訪約束（P1）、DROID＋SIFT BA（F1）」。從 3.318 到 0.254 的推理過程（怎麼在沒有 GT 下判斷對錯、哪些猜錯了）見 [doc/06](doc/06_TRACK2_LEARNING_JOURNEY_20261118.md)。
+## 文件導覽
+
+| 文件 | 內容 |
+| --- | --- |
+| [doc/01](doc/01_COMPETITION_RULES_20261113.md)、[doc/02](doc/02_KAGGLE_RULES_TRACK01_20261113.md) | 官方規則、Kaggle 規則與資料原文 |
+| [doc/03](doc/03_GSLAM_DESIGN_AND_STATUS_20261116.md) | gslam 設計、每個版本的做法與實驗數字（依日期）、目前問題、最終候選 |
+| [doc/04](doc/04_HANDOFF_PROMPT_20261116.md) | 11/16 的交接說明（歷史；現況以 doc/03 為準） |
+| [doc/05](doc/05_MANUAL_RUNS_20261118.md) | 手動跑各版本的命令（E、D、P1、F1 與變體）、RViz 重播、驗證腳本 |
+| [doc/06](doc/06_TRACK2_LEARNING_JOURNEY_20261118.md) | Track2 從 3.318 到 0.254 的推理過程，以及之後失敗的嘗試 |
+| [deliverables/README.md](deliverables/README.md) | 交付期限與內容 |
 
 ## 下一步（使用者）
 
-1. 將本機忽略的 `midterm02/data/` 另行複製到 Ubuntu 工作區相同位置；Git 不會同步資料。
-2. 依 [starter README](vslam/README.md) 準備 Ubuntu Docker 環境，再於 `vslam/` 實作 TODO。starter 列出的安裝套件另含 pandas、scipy、tqdm；套件版本與容器環境尚待建立及驗證。
+1. commit 目前的程式與文件（`droid_ba.py` droid_ba-5～8、`bundle.py`、`opposite_pgo.py`、`rviz_replay.py` 等尚未 commit）。
+2. 11/26 09:00 前在 Kaggle 選定兩份最終提交、寄出簡報；12/03 前上傳 E3（見 [deliverables/README.md](deliverables/README.md)）。
 
-starter README 最後一段禁止完整 SLAM／SfM 系統產生提交，與已保存的 Kaggle 規則／投影片允許以現成系統為起點的文字有差異；兩份原文均保留，採用此類系統前需釐清。此次僅匯入資料及未修改的 starter。
+## 開發歷程（2026-11-15～16）
+
+- 已建立目錄架構、run 建立工具與提交格式檢查工具（含單元測試）。官方資料原樣放在 `data/data_VSLAM-T1/`、`data/data_VSLAM-T2/`；starter 工作副本在 `vslam/`，來源與 SHA256 見 [vslam/origin.json](vslam/origin.json)。
+- 自寫的 GPU 視覺引導幾何 SLAM `vslam/gslam/`（入口 `vslam/run_slam.py`），參數集中在 `vslam/gslam/params.py` 的 `EXPERIMENTS`。gslam 第一版 Public 0.369、第二版（密集閉環＋尺度處理）0.144、第三版（BA）0.085。
+- 另接 DROID-SLAM（`docker/droid/`、`scripts/run_droid.py`）、MASt3R-SLAM（`docker/mast3r/`）、VGGT（`docker/vggt/`）、深度模型評估（`docker/depth/`）；後處理 `scripts/opposite_pgo.py`（P1）、`scripts/droid_ba.py`（F1）。
+- gslam 執行時用 `./scripts/dev.sh slam --track 0X` 會自動開 RViz；跑完的外部系統 run 用 `./scripts/dev.sh replay outputs/run/<run>` 重播（見 doc/03「用 RViz 觀看執行過程」、doc/05）。
+- starter README 禁止「完整 SLAM／SfM 系統產生提交」，與 Kaggle 規則／投影片的文字不同；使用者 2026-11-16 依官方規則決定可直接使用公開預訓練模型與開源 SLAM 系統，報告須列出名稱、版本、授權與自己的改動（見 [AGENTS.md](AGENTS.md)）。
 
 `data/`、`outputs/` 皆被 `.gitignore` 忽略，不進 Git、不會跨電腦同步。資料只供本課程使用，不得散布（見 [doc/02](doc/02_KAGGLE_RULES_TRACK01_20261113.md)）。
 
@@ -33,6 +48,9 @@ starter README 最後一段禁止完整 SLAM／SfM 系統產生提交，與已�
 | `Dockerfile`、`docker-compose.yml`、`scripts/dev.sh` | Ubuntu 專用容器 `midterm02_vslam` |
 | `scripts/create_run.py` | 建立唯一 run 目錄並凍結程式快照、SHA、Git 差異 |
 | `scripts/check_submission.py` | 檢查提交 CSV 格式與 timestamp 是否與 sample 完全一致 |
+| `scripts/run_droid.py`、`scripts/opposite_pgo.py`、`scripts/droid_ba.py` | D 系列（DROID）、P1（反向重訪約束）、F1（DROID＋SIFT BA）；參數在各檔開頭或 `EXPERIMENTS` |
+| `scripts/analyze_external_run.py`、`scripts/rviz_replay.py` | 外部系統 run 的 analysis 圖表；把跑完的 run 重播到 RViz |
+| `docker/{droid,mast3r,vggt,depth}/` | 外部模型的一次性容器（`run.sh`） |
 | `tests/` | 工具與算法的單元測試 |
 | `doc/` | 規則、算法說明、實驗紀錄（編號＋日期命名） |
 | `deliverables/` | 報告、簡報、E3 交付草稿 |
@@ -41,17 +59,17 @@ starter README 最後一段禁止完整 SLAM／SfM 系統產生提交，與已�
 
 ## 環境（Ubuntu＋Docker）
 
-執行一律在 Ubuntu 主機的專用容器 `midterm02_vslam`（Python 3.9，CPU）內進行；Windows 只用於編輯。`requirements.txt` 目前未固定版本，取得 starter README 後要改成固定版本。
+執行一律在 Ubuntu 主機的專用容器 `midterm02_vslam`（映像 `midterm02_vslam:py39-gpu`，Python 3.9＋CUDA；學習式特徵要用 `./scripts/dev.sh build-learned`）內進行；DROID／MASt3R／VGGT 各有一次性容器（`docker/*/run.sh`）。Windows 只用於編輯。出現 `permission denied … docker.sock` 時，命令前加 `sg docker -c '…'`。
 
 ```bash
 cd ~/sdc_ros2/midterm02          # 依你 Ubuntu 上的 repo 位置調整，需在 midterm02/main 分支
 ./scripts/dev.sh build
 ./scripts/dev.sh up
-./scripts/dev.sh test             # 單元測試
+./scripts/dev.sh test             # 單元測試（tests/，47 項）
 ./scripts/dev.sh shell            # 進入容器
 ```
 
-**手動跑各版本（E27、D8、P1、F1）**：見 [doc/05](doc/05_MANUAL_RUNS_20261118.md)。
+**手動跑各版本（E27、D8、P1、F1 與變體）、RViz 重播與驗證腳本**：見 [doc/05](doc/05_MANUAL_RUNS_20261118.md)。
 
 ## 常用命令（容器內）
 

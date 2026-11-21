@@ -11,7 +11,15 @@
 不可信：沿行進方向（兩側視線相反，深度比例誤差加倍成系統偏差，實測全部偏 +2 m）與航向，給很大的標準差（等於不約束）。
 最後做逐幀 SE(3) pose graph；同方向閉環的邊保持 D8 目前的相對位姿（D8 已用稠密光流融合，見 main 內註解）。
 
-    python scripts/opposite_pgo.py --from outputs/run/<D8 run>    （vslam 容器：需要 small_gicp）
+P2（--along，2026-11-19，outputs/cache/dev70_along_sym.py）：沿線的系統偏差不是點雲尺度造成的（尺度 ±5% 只變 ±0.25 m），
+而是兩次經過看到同一區域的「相反兩半」（去程相機在前、近側點密而準；回程相反），街道方向本來又缺少約束，GICP 被不對稱拉偏。
+兩側都只留近距離（深度 < 12 m）看到、以兩次經過中點為中心半徑 8 m 內的點，不對稱就消失：F1 位姿上沿線中位數 −1.25 → −0.06 m，
+點雲尺度 ±5% 只變 −0.05／−0.15。而且這個量測在 D8 → P1 → F1 一路變小（−0.27 → −0.10 → −0.06），這些方法都沒有用到它。
+所以沿線分量改用這個對稱子圖量測（其他分量照舊），標準差 0.3（F1 上的 IQR 0.35）。
+**留出驗證失敗**（outputs/cache/dev71_p2_holdout_eval.py，doc/03）：留出配對的沿線殘差 0.129 → 0.195 m、橫向 0.152 → 0.178 m（對照 P1 holdout），
+各組位姿都殘留 −0.1～−0.17 m 的同號偏差，代表對稱子圖仍有假象。保留為選項、預設關閉，正式結果不用。
+
+    python scripts/opposite_pgo.py --from outputs/run/<D8 run> [--along]   （vslam 容器：需要 small_gicp）
 """
 import argparse
 import csv
@@ -39,6 +47,8 @@ APPROACH, STRIDE, RADIUS, MAX_DEPTH, MAX_ABOVE = 45, 3, 20.0, 30.0, 2.5
 MIN_INLIER_FRAC, MAX_ROT_DEG, MAX_VERT, MAX_LAT = 0.03, 5.0, 2.0, 4.0
 # 邊的標準差（b 相機座標）：[俯仰 x, 航向 y, 側傾 z] rad、[橫向 x, 垂直 y, 前進 z] 單位
 OPP_SIGMA = [0.01, 0.3, 0.01, 0.5, 0.1, 50.0]
+# P2 的沿線量測：對稱子圖（以兩次經過的中點為中心、半徑 8 m、只留深度 < 12 m 的點）；沿線標準差 0.3；修正量上限 2.0
+ALONG_RADIUS, ALONG_MAX_DEPTH, ALONG_SIGMA, MAX_ALONG, ALONG_MIN_POINTS = 8.0, 12.0, 0.3, 2.0, 500
 # 逐幀 pose graph 的相鄰邊：DROID 的局部位移很準（逐幀平移的誤差遠小於 D8 keyframe 層級的 0.6／√單位），
 # 大範圍漂移主要來自航向誤差累積（旋轉沿用 0.0022 rad／√單位：回程約 1000 單位偏斜約 4°）。
 # 平移 0.05／√單位：100 單位的路段允許約 0.5% 的長度變化。這樣反向約束的雜訊不會讓軌跡局部扭動，修正以平滑方式分攤。
@@ -56,7 +66,7 @@ class Ctx:
     unit = 1.0
 
 
-def _cloud(i):
+def _cloud(i, max_depth=MAX_DEPTH):
     """第 i 幀的 LoGeR 點（相機高度正規化）→ 世界座標。
 
     LoGeR 點是用官方針孔 K0 從原始（有畸變）像素反投影的；DROID 位姿屬於自校正的相機（cy 差 11 px ≈ 俯仰 0.63°）。
@@ -65,7 +75,7 @@ def _cloud(i):
     """
     x = read_ply_xyz(Ctx.data / 'raw_ply' / ('%s.ply' % Ctx.ts[i]))
     z = x[:, 2]
-    keep = np.isfinite(z) & (z > 1.0) & (z < MAX_DEPTH)
+    keep = np.isfinite(z) & (z > 1.0) & (z < max_depth)
     x, z = x[keep], z[keep]
     uv = (x @ Ctx.K0.T)[:, :2] / z[:, None]
     n = cv2.undistortPoints(uv.reshape(-1, 1, 2), Ctx.Kc, Ctx.dist).reshape(-1, 2)
@@ -74,9 +84,10 @@ def _cloud(i):
     return x @ Ctx.T[i, :3, :3].T + Ctx.T[i, :3, 3]
 
 
-def _submap(c):
-    P = np.concatenate([_cloud(i) for i in range(max(0, c - APPROACH), c + 1, STRIDE)])
-    return P[np.linalg.norm(P - Ctx.T[c, :3, 3], axis=1) < RADIUS * Ctx.unit]
+def _submap(c, centre=None, radius=RADIUS, max_depth=MAX_DEPTH):
+    P = np.concatenate([_cloud(i, max_depth) for i in range(max(0, c - APPROACH), c + 1, STRIDE)])
+    centre = Ctx.T[c, :3, 3] if centre is None else centre
+    return P[np.linalg.norm(P - centre, axis=1) < radius * Ctx.unit]
 
 
 def _register(pair):
@@ -89,6 +100,23 @@ def _register(pair):
     r = small_gicp.align(A, B, r.T_target_source, registration_type='GICP', downsampling_resolution=0.2,
                          max_correspondence_distance=0.6, num_threads=1, max_iterations=30)
     return a, b, r.T_target_source, r.num_inliers / max(len(B), 1), bool(r.converged)
+
+
+def _register_along(pair):
+    """P2：對稱子圖（兩側同一個中心與半徑、只留近距離的點）的配準，只取沿線分量用。"""
+    import small_gicp
+    a, b = pair
+    ca = Ctx.T[a, :3, 3]
+    m = 0.5 * (Ctx.T[a, :3, 3] + Ctx.T[b, :3, 3])
+    A = _submap(a, m, ALONG_RADIUS, ALONG_MAX_DEPTH) - ca
+    B = _submap(b, m, ALONG_RADIUS, ALONG_MAX_DEPTH) - ca
+    if len(A) < ALONG_MIN_POINTS or len(B) < ALONG_MIN_POINTS:
+        return None, 0.0
+    r = small_gicp.align(A, B, registration_type='GICP', downsampling_resolution=0.25, max_correspondence_distance=1.0,
+                         num_threads=1, max_iterations=30)
+    r = small_gicp.align(A, B, r.T_target_source, registration_type='GICP', downsampling_resolution=0.2,
+                         max_correspondence_distance=0.6, num_threads=1, max_iterations=30)
+    return r.T_target_source, r.num_inliers / max(len(B), 1)
 
 
 def opposite_pairs(T):
@@ -109,10 +137,61 @@ def opposite_pairs(T):
     return pairs, up
 
 
+def measure_opposite(T, holdout=False, along=False, block=1):
+    """目前位姿 T 下的反向重訪配準 → (rows, opp)。Ctx 的 data／ts／hs／K0／Kc／dist 要先設好（T 由這裡設定）。
+
+    rows：每對的配準結果（寫 debug/opposite_registration.csv）；opp：通過閘門的邊 [(a, b, Z_ab, σ6)]。
+    holdout：只用偶數編號的配對當邊（奇數留著評估）。block > 1 時改成整塊：第 k 對屬於第 k // block 塊，偶數塊當邊、奇數塊留著評估
+    （相鄰配對相隔 10 幀、子圖重疊很多，量測誤差彼此相關；整塊留出才算獨立的驗證）。
+    along（P2）：另外用對稱子圖量沿線分量；通過閘門的配對，邊的沿線分量換成這個量測、標準差 ALONG_SIGMA。
+    """
+    Ctx.T = T
+    pairs, _ = opposite_pairs(T)
+    with Pool(12) as pool:
+        regs = pool.map(_register, pairs, chunksize=2) if pairs else []
+        alongs = pool.map(_register_along, pairs, chunksize=2) if (pairs and along) else [(None, 0.0)] * len(pairs)
+    rows, opp = [], []
+    for k, ((fa, fb, Tc, frac, conv), (Ta, frac_a)) in enumerate(zip(regs, alongs)):
+        ca = T[fa, :3, 3]
+        S = np.eye(4); S[:3, 3] = ca
+        Rb = T[fb, :3, :3]
+        loc = Rb.T @ Tc[:3, 3]                         # 修正量表示在 b 的相機座標：x 橫向、y 垂直、z 前進
+        rot = float(np.degrees(np.arccos(np.clip((np.trace(Tc[:3, :3]) - 1) / 2, -1, 1))))
+        ok = frac >= MIN_INLIER_FRAC and rot <= MAX_ROT_DEG and abs(loc[1]) <= MAX_VERT and abs(loc[0]) <= MAX_LAT
+        al, al_ok = np.nan, False
+        if Ta is not None:
+            al = float((Rb.T @ Ta[:3, 3])[2])
+            rot_a = float(np.degrees(np.arccos(np.clip((np.trace(Ta[:3, :3]) - 1) / 2, -1, 1))))
+            al_ok = ok and frac_a >= MIN_INLIER_FRAC and rot_a <= MAX_ROT_DEG and abs(al) <= MAX_ALONG
+        use = ok and (not holdout or (k // block) % 2 == 0)
+        rows.append(dict(frame_a=fa, frame_b=fb, inlier_frac=frac, converged=int(conv), rot_deg=rot, lateral=loc[0],
+                         vertical=loc[1], along=loc[2], accepted=int(ok), used=int(use),
+                         along_sym=al, along_inlier_frac=frac_a, along_accepted=int(al_ok)))
+        if use:
+            sigma = list(OPP_SIGMA)
+            if al_ok:                                  # 沿線分量換成對稱子圖的量測（橫向、垂直、旋轉照舊）
+                Tc = Tc.copy()
+                Tc[:3, 3] = Rb @ np.array([loc[0], loc[1], al])
+                sigma[5] = ALONG_SIGMA
+            Tw = S @ Tc @ np.linalg.inv(S)             # 世界座標下「把 b 那側搬到 a 那側」的修正
+            opp.append((fa, fb, dl.inv(T[fa]) @ Tw @ T[fb], sigma))
+    return rows, opp
+
+
+def write_rows(path, rows):
+    with open(path, 'w', newline='') as f:
+        w = csv.DictWriter(f, ['frame_a', 'frame_b', 'inlier_frac', 'converged', 'rot_deg', 'lateral', 'vertical', 'along',
+                               'accepted', 'used', 'along_sym', 'along_inlier_frac', 'along_accepted'])   # Track1 沒有反向重訪：只有表頭
+        w.writeheader()
+        w.writerows(rows)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--from', dest='src', required=True, help='DROID D8 的 run 目錄')
     ap.add_argument('--holdout', action='store_true', help='驗證用：只用偶數編號的反向配對當約束，奇數留著評估（正式結果不用）')
+    ap.add_argument('--holdout-block', type=int, default=1, help='--holdout 時每塊的配對數（1＝偶數／奇數交錯）')
+    ap.add_argument('--along', action='store_true', help='P2：沿線分量也約束（對稱子圖量測，見檔頭說明）')
     a = ap.parse_args()
     src = (ROOT / a.src) if not Path(a.src).is_absolute() else Path(a.src)
     sinfo = json.loads((src / 'test_info.json').read_text())
@@ -160,36 +239,16 @@ def main():
     t1 = time.time()
 
     # ---- 反向重訪的點雲配準
-    pairs, up = opposite_pairs(T)
-    with Pool(12) as pool:
-        regs = pool.map(_register, pairs, chunksize=2) if pairs else []
-    rows, opp = [], []
-    for k, (fa, fb, Tc, frac, conv) in enumerate(regs):
-        ca = T[fa, :3, 3]
-        S = np.eye(4); S[:3, 3] = ca
-        Tw = S @ Tc @ np.linalg.inv(S)                 # 世界座標下「把 b 那側搬到 a 那側」的修正
-        Rb = T[fb, :3, :3]
-        loc = Rb.T @ Tc[:3, 3]                         # 修正量表示在 b 的相機座標：x 橫向、y 垂直、z 前進
-        rot = float(np.degrees(np.arccos(np.clip((np.trace(Tc[:3, :3]) - 1) / 2, -1, 1))))
-        ok = frac >= MIN_INLIER_FRAC and rot <= MAX_ROT_DEG and abs(loc[1]) <= MAX_VERT and abs(loc[0]) <= MAX_LAT
-        use = ok and (not a.holdout or k % 2 == 0)
-        rows.append(dict(frame_a=fa, frame_b=fb, inlier_frac=frac, converged=int(conv), rot_deg=rot, lateral=loc[0],
-                         vertical=loc[1], along=loc[2], accepted=int(ok), used=int(use)))
-        if use:
-            Z = dl.inv(T[fa]) @ Tw @ T[fb]
-            opp.append((fa, fb, Z, OPP_SIGMA))
+    rows, opp = measure_opposite(T, a.holdout, a.along, a.holdout_block)
     (run / 'debug').mkdir(exist_ok=True)
-    with open(run / 'debug' / 'opposite_registration.csv', 'w', newline='') as f:
-        w = csv.DictWriter(f, ['frame_a', 'frame_b', 'inlier_frac', 'converged', 'rot_deg', 'lateral', 'vertical', 'along',
-                               'accepted', 'used'])   # Track1 沒有反向重訪：只有表頭
-        w.writeheader()
-        w.writerows(rows)
+    write_rows(run / 'debug' / 'opposite_registration.csv', rows)
     # 量測到的邊另存，供後續（F1 的 BA）直接使用：same＝同方向閉環（預設標準差），opp＝反向約束（各自的標準差）
     np.savez(run / 'debug' / 'edges.npz',
              same_ij=np.array([(i, j) for i, j, _ in same], dtype=np.int64).reshape(-1, 2),
              same_T=np.array([Tm for _, _, Tm in same]).reshape(-1, 4, 4), same_T_pnp=np.array(same_pnp).reshape(-1, 4, 4),
              opp_ij=np.array([(i, j) for i, j, _, _ in opp], dtype=np.int64).reshape(-1, 2),
-             opp_T=np.array([Z for _, _, Z, _ in opp]).reshape(-1, 4, 4), opp_sigma=np.array(OPP_SIGMA),
+             opp_T=np.array([Z for _, _, Z, _ in opp]).reshape(-1, 4, 4),
+             opp_sigma=np.array([s for _, _, _, s in opp]).reshape(-1, 6) if a.along else np.array(OPP_SIGMA),
              same_sigma=np.array([PGO_SIGMAS['loop_sigma_rot']] * 3 + [PGO_SIGMAS['loop_sigma_trans']] * 3))
     t2 = time.time()
 
@@ -209,18 +268,24 @@ def main():
     chk = subprocess.run([sys.executable, str(ROOT / 'scripts/check_submission.py'), str(run / result_name),
                           str(data / 'sample_submission.csv')], capture_output=True, text=True)
     acc = [r for r in rows if r['accepted']]
+    exp_name = ('P2_opposite_revisit_along' if a.along else 'P1_opposite_revisit') + ('_holdout' if a.holdout else '')
     info.update(
-        status='success' if chk.returncode == 0 else 'failed', experiment='P1_opposite_revisit' + ('_holdout' if a.holdout else ''),
-        version='opposite_pgo-2', frame_count=len(ts),
+        status='success' if chk.returncode == 0 else 'failed', experiment=exp_name,
+        version='opposite_pgo-3', frame_count=len(ts),
         parameters=dict(source_run=str(src.relative_to(ROOT)), source_result_sha256=digest(src / result_name),
                         step=STEP, min_gap=MIN_GAP, max_dist=MAX_DIST, min_cos=MIN_COS, approach=APPROACH, stride=STRIDE,
                         radius=RADIUS, max_depth=MAX_DEPTH, max_above=MAX_ABOVE, min_inlier_frac=MIN_INLIER_FRAC,
                         max_rot_deg=MAX_ROT_DEG, max_vertical=MAX_VERT, max_lateral=MAX_LAT, opposite_sigma=OPP_SIGMA,
-                        pgo_sigmas=P1_SIGMAS, unit=Ctx.unit, holdout=a.holdout, calibration=calib),
+                        pgo_sigmas=P1_SIGMAS, unit=Ctx.unit, holdout=a.holdout, holdout_block=a.holdout_block, calibration=calib,
+                        along=dict(enabled=a.along, radius=ALONG_RADIUS, max_depth=ALONG_MAX_DEPTH, sigma=ALONG_SIGMA,
+                                   max_along=MAX_ALONG, min_points=ALONG_MIN_POINTS)),
         timings_seconds=dict(same_direction_pnp=t1 - t0, opposite_registration=t2 - t1, pose_graph=t3 - t2),
         summary=dict(same_direction_loops=len(same), opposite_pairs=len(rows), opposite_accepted=len(acc), opposite_used=len(opp),
                      opposite_vertical_abs_median=float(np.median([abs(r['vertical']) for r in acc])) if acc else None,
                      opposite_lateral_abs_median=float(np.median([abs(r['lateral']) for r in acc])) if acc else None,
+                     opposite_along_accepted=int(sum(r['along_accepted'] for r in rows)),
+                     opposite_along_sym_median=float(np.nanmedian([r['along_sym'] for r in rows if r['along_accepted']]))
+                     if any(r['along_accepted'] for r in rows) else None,
                      pose_graph=pg),
         submission=dict(check_returncode=chk.returncode, check_output=chk.stdout[-2000:] + chk.stderr[-2000:]))
     info_path.write_text(json.dumps(info, ensure_ascii=False, indent=2) + '\n')

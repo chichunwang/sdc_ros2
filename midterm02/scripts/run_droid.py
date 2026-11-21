@@ -58,6 +58,10 @@ EXPERIMENTS = {
     'D6_droid_selfcalib_depth_hnorm': dict(scale=0.5, calib=True, depth=True, height_norm=True),   # D5＋相機高度正規化
     'D7_droid_selfcalib_depth_hnorm_loops': dict(scale=0.5, calib=True, depth=True, height_norm=True, loops=True),   # D6＋閉環邊
     'D8_droid_selfcalib_depth_hnorm_loops_pgo': dict(scale=0.5, calib=True, depth=True, height_norm=True, loops=True, pgo=True),
+    # D8 提高解析度（Track2）：0.5 → 0.625 倍（896×576）。F1 的全解析度 BA 讓 Track2 大幅進步，假說是 DROID 在 0.5 倍的局部誤差在長路線上累積；
+    # Track1 的 D3／D4 沒有幫助（路線短）。0.625 倍時每張特徵圖 112×72×128，buffer 2048 剛好低於 int32 元素上限；keyframe 預估約 1900
+    'D10_droid_selfcalib_depth_hnorm_loops_pgo_s0625': dict(scale=0.625, calib=True, depth=True, height_norm=True, loops=True, pgo=True,
+                                                            alt_corr=True, buffer=2048),
     'D9_droid_selfcalib_depth_hnorm_loops_pgo_below': dict(scale=0.5, calib=True, depth=True, height_norm=True, loops=True, pgo=True,
                                                            depth_below_axis=True),
 }

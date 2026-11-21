@@ -185,14 +185,75 @@ def _per_track_median(values, obs_track, n_tracks):
     return values[order][np.minimum(start + count // 2, len(values) - 1)]
 
 
-def select(obs_track, obs_frame, uv, X, err, z, parallax, cfg):
-    """篩選可用的軌跡：視差夠、所有觀測都在相機前方、重投影誤差中位數夠小。回傳重新編號後的觀測與點。"""
+def select(obs_track, obs_frame, uv, X, err, z, parallax, cfg, extra_ok=None):
+    """篩選可用的軌跡：視差夠、所有觀測都在相機前方、重投影誤差中位數夠小。回傳重新編號後的觀測與點。
+    extra_ok：視差不夠也保留的軌跡（low_parallax_points 用 LoGeR 深度放好初值的軌跡；其餘條件照舊）。"""
     n = len(X)
     med = _per_track_median(err, obs_track, n)
     behind = np.bincount(obs_track, z < 0.1, n) > 0
-    keep = (parallax >= cfg['min_parallax_deg']) & (~behind) & (med <= cfg['triangulation_gate_px']) \
+    par_ok = parallax >= cfg['min_parallax_deg']
+    if extra_ok is not None:
+        par_ok = par_ok | extra_ok
+    keep = par_ok & (~behind) & (med <= cfg['triangulation_gate_px']) \
         & np.all(np.isfinite(X), axis=1)
     return _compact(keep, obs_track, obs_frame, uv, X, np.ones(len(obs_track), dtype=bool), cfg['min_track_length'])
+
+
+def low_parallax_points(K, poses, obs_track, obs_frame, uv, X, parallax, depth_obs, cfg):
+    """視差 < min_parallax_deg 的軌跡：三角化定不出深度，改用 LoGeR 深度放初值（各觀測沿光線反投影到世界座標的中位數）。
+    這些軌跡仍能約束旋轉（遠處的點幾乎不動），深度由 BA 的 LoGeR 深度因子撐住（只加在這些軌跡上）。
+    depth_obs：每個觀測的 LoGeR 深度（相機 z，NaN＝沒有）。回傳 (新的 X, 這些軌跡的遮罩)。"""
+    n = len(X)
+    low = parallax < cfg['min_parallax_deg']
+    m = low[obs_track] & np.isfinite(depth_obs) & (depth_obs > 0)
+    lp = np.zeros(n, dtype=bool)
+    if not np.any(m):
+        return X, lp
+    R, t = _world_to_camera(poses, obs_frame[m])
+    xn = np.c_[(uv[m, 0] - K[0, 2]) / K[0, 0], (uv[m, 1] - K[1, 2]) / K[1, 1], np.ones(int(m.sum()))]
+    pc = xn * depth_obs[m, None]                                   # 相機座標
+    pw = np.einsum('nji,nj->ni', R, pc - t)                        # 世界座標（R、t 是 world→camera）
+    tr = obs_track[m]
+    order = np.argsort(tr, kind='stable')
+    tr, pw = tr[order], pw[order]
+    starts = np.flatnonzero(np.r_[True, tr[1:] != tr[:-1]])
+    ends = np.r_[starts[1:], len(tr)]
+    X = X.copy()
+    for a, b in zip(starts, ends):
+        X[tr[a]] = np.median(pw[a:b], axis=0)
+    lp[tr[starts]] = True
+    return X, lp
+
+
+def adjacent_shared(obs_track, obs_frame, n_frames):
+    """每幀與前一幀共同的軌跡數（[0] 無意義）。"""
+    key = obs_track.astype(np.int64) * (n_frames + 1) + obs_frame
+    nxt = set((key + 1).tolist())
+    both = np.array([k in nxt for k in key.tolist()], dtype=bool)
+    return np.bincount(obs_frame[both], minlength=n_frames)
+
+
+def pair_support(K, poses, kpts, links, cfg, depths=None):
+    """每對相鄰幀 (i−1, i) 在 BA 實際會用的軌跡（建軌跡、三角化、select 篩選後）裡共同看到的軌跡數。
+    靜止或剛起步時視差不到 min_parallax_deg，軌跡全被篩掉，這些幀在 BA 裡只剩相鄰幀邊撐著。回傳長度 len(poses) 的陣列（[0] 無意義）。"""
+    counts = [len(k) for k in kpts]
+    links = sorted(links, key=lambda link: link[1] - link[0])
+    obs_track, obs_frame, obs_feat, n_tracks = build_tracks(counts, links, cfg['min_track_length'],
+                                                            cfg.get('resolve_conflicts', True))
+    offsets = np.concatenate([[0], np.cumsum(counts)]).astype(np.int64)
+    all_kpts = np.concatenate([np.asarray(k, dtype=np.float64).reshape(-1, 2) for k in kpts])
+    uv = np.c_[all_kpts[offsets[obs_frame] + obs_feat], np.ones(len(obs_track)), np.zeros(len(obs_track))]
+    X, err, z, parallax = triangulate(K, poses, obs_track, obs_frame, uv[:, :2], n_tracks)
+    extra_ok = None
+    if (cfg.get('low_parallax_depth') or {}).get('enabled') and depths is not None:   # 與 run() 相同的低視差保留
+        raw = np.concatenate([np.asarray(d, dtype=np.float64).ravel() for d in depths])
+        X, extra_ok = low_parallax_points(K, poses, obs_track, obs_frame, uv[:, :2], X, parallax,
+                                          raw[offsets[obs_frame] + obs_feat], cfg)
+        R_, t_ = _world_to_camera(poses, obs_frame)
+        proj, z = project(K, R_, t_, X[obs_track])
+        err = np.linalg.norm(proj - uv[:, :2], axis=1)
+    obs_track, obs_frame, _, _ = select(obs_track, obs_frame, uv, X, err, z, parallax, cfg, extra_ok)
+    return adjacent_shared(obs_track, obs_frame, len(poses))
 
 
 def _compact(keep_track, obs_track, obs_frame, uv, X, keep_obs, min_length):
@@ -321,7 +382,27 @@ def run(K, poses, kpts, links, between, cfg, log=print, sizes=None, descs=None, 
     # 第三欄：每個觀測的 sigma 倍數；第四欄：特徵的全域索引。兩欄跟著篩選一起走；幾何運算只用前兩欄
     uv = np.c_[uv, all_rel[node] if weighted else np.ones(len(uv)), node]
     X, err, z, parallax = triangulate(K, poses, obs_track, obs_frame, uv[:, :2], n_tracks)
-    obs_track, obs_frame, uv, X = select(obs_track, obs_frame, uv, X, err, z, parallax, cfg)
+    lcfg = cfg.get('low_parallax_depth') or {}
+    use_lp = bool(lcfg.get('enabled')) and depths is not None
+    extra_ok, lp_depth = None, None
+    if use_lp:
+        # 低視差軌跡：用 LoGeR 深度放初值、保留下來；深度因子只加在這些軌跡的觀測上（其他軌跡照舊，不受 LoGeR 偏差影響）
+        raw_depth = np.concatenate([np.asarray(d, dtype=np.float64).ravel() for d in depths])
+        X, extra_ok = low_parallax_points(K, poses, obs_track, obs_frame, uv[:, :2], X, parallax, raw_depth[node], cfg)
+        R_, t_ = _world_to_camera(poses, obs_frame)
+        proj, z = project(K, R_, t_, X[obs_track])
+        err = np.linalg.norm(proj - uv[:, :2], axis=1)
+        lp_depth = np.full(len(raw_depth), np.nan)
+        on = extra_ok[obs_track]
+        lp_depth[node[on]] = raw_depth[node[on]]
+    obs_track, obs_frame, uv, X = select(obs_track, obs_frame, uv, X, err, z, parallax, cfg, extra_ok)
+    if use_lp:
+        sh = adjacent_shared(obs_track, obs_frame, len(poses))
+        n_lp = int(np.sum(np.isfinite(lp_depth[uv[:, 3].astype(np.int64)])))
+        info['low_parallax'] = dict(candidates=int(extra_ok.sum()), observations_kept=n_lp,
+                                    pairs_without_shared_tracks=[int(i) for i in np.flatnonzero(sh[1:] == 0) + 1])
+        log('BA 低視差軌跡：候選 %d 條，保留後 %d 個觀測有深度因子；與前一幀沒有共同軌跡的幀：%s' % (
+            int(extra_ok.sum()), n_lp, info['low_parallax']['pairs_without_shared_tracks']))
     if cfg['max_observations'] and len(obs_track) > cfg['max_observations']:
         # 觀測太多時等間隔抽掉整條軌跡（固定規則，結果可重現）
         step = int(np.ceil(len(obs_track) / cfg['max_observations']))
@@ -345,6 +426,9 @@ def run(K, poses, kpts, links, between, cfg, log=print, sizes=None, descs=None, 
     dcfg = cfg.get('depth') or {}
     use_depth = bool(dcfg.get('enabled')) and depths is not None
     all_depth = np.concatenate([np.asarray(d, dtype=np.float64).ravel() for d in depths]) if use_depth else None
+    if use_lp and not use_depth:
+        # 只對低視差軌跡加深度因子；標準差等沿用 bundle.depth 的設定（gslam 既有、Track1 實測）
+        use_depth, all_depth = True, lp_depth
     state = dict(s=None)
     icfg = cfg.get('imu') or {}
     use_imu = bool(icfg.get('enabled')) and imu_windows is not None

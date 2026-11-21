@@ -1,3 +1,7 @@
+> **2026-11-21 註記：這是 11/16 交接時的歷史文件，內容停在 Track1 gslam 階段，不要依它行動。**
+> 現況（Track1 最佳 D2 0.068、Track2 最佳 F1 0.254）、未解決的問題與最終提交候選，以 [doc/03](03_GSLAM_DESIGN_AND_STATUS_20261116.md) 開頭的「現況」與文末「目前遇到的問題」「你接下來要做的事」為準；
+> 執行命令見 [doc/05](05_MANUAL_RUNS_20261118.md)。規則仍以 `midterm02/AGENTS.md` 為準。
+
 你要接手 SDC Midterm02 Visual SLAM 比賽（Kaggle Track01）的演算法改進工作。請用繁體中文溝通與寫文件。
 
 ## 開工先讀
